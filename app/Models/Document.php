@@ -190,16 +190,20 @@ class Document extends Model implements HasMedia
     }
 
     /**
-     * Collezioni media associate al documento.
+     * Registra le collection Media Library del documento.
      *
-     * original_file: file originale caricato dall'utente.
-     * processed_file: eventuale immagine/PDF preprocessato per OCR o preview.
+     * I documenti caricati dagli utenti sono sensibili:
+     * non devono essere salvati sul disco public.
      */
     public function registerMediaCollections(): void
     {
-        $this->addMediaCollection('original_file')
+        $this
+            ->addMediaCollection('original_file')
+            ->useDisk('local')
             ->singleFile();
 
-        $this->addMediaCollection('processed_file');
+        $this
+            ->addMediaCollection('processed_file')
+            ->useDisk('local');
     }
 }

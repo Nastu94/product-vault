@@ -14,14 +14,19 @@
             </div>
 
             {{-- Il link verrà attivato nello step successivo, quando creeremo DocumentUpload. --}}
-            <button
-                type="button"
-                disabled
-                class="inline-flex items-center px-4 py-2 bg-gray-300 border border-transparent rounded-md font-semibold text-xs text-gray-600 uppercase tracking-widest cursor-not-allowed"
+            <a
+                href="{{ route('documents.upload') }}"
+                class="inline-flex items-center px-4 py-2 bg-gray-800 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
             >
                 Carica documento
-            </button>
+            </a>
         </div>
+
+        @if (session()->has('success'))
+            <div class="mb-4 rounded-md bg-green-50 p-4 text-sm text-green-700">
+                {{ session('success') }}
+            </div>
+        @endif
 
         <div class="bg-white overflow-hidden shadow-xl sm:rounded-lg">
             @if ($documents->isEmpty())
@@ -80,8 +85,43 @@
                                         {{ $document->documentType?->name ?? 'Non classificato' }}
                                     </td>
 
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                                        {{ $document->status ?? 'uploaded' }}
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                        @php
+                                            $status = $document->status ?? 'uploaded';
+
+                                            $statusLabels = [
+                                                'uploaded' => 'Caricato',
+                                                'processing' => 'In elaborazione',
+                                                'text_extracted' => 'Testo estratto',
+                                                'classified' => 'Classificato',
+                                                'parsed' => 'Analizzato',
+                                                'needs_review' => 'Da revisionare',
+                                                'low_confidence' => 'Bassa affidabilità',
+                                                'linked_to_product' => 'Collegato a prodotto',
+                                                'unsupported' => 'Non supportato',
+                                                'failed' => 'Fallito',
+                                            ];
+
+                                            $statusClasses = [
+                                                'uploaded' => 'bg-blue-50 text-blue-700 ring-blue-600/20',
+                                                'processing' => 'bg-yellow-50 text-yellow-800 ring-yellow-600/20',
+                                                'text_extracted' => 'bg-indigo-50 text-indigo-700 ring-indigo-600/20',
+                                                'classified' => 'bg-purple-50 text-purple-700 ring-purple-600/20',
+                                                'parsed' => 'bg-cyan-50 text-cyan-700 ring-cyan-600/20',
+                                                'needs_review' => 'bg-orange-50 text-orange-700 ring-orange-600/20',
+                                                'low_confidence' => 'bg-amber-50 text-amber-800 ring-amber-600/20',
+                                                'linked_to_product' => 'bg-green-50 text-green-700 ring-green-600/20',
+                                                'unsupported' => 'bg-gray-100 text-gray-700 ring-gray-500/20',
+                                                'failed' => 'bg-red-50 text-red-700 ring-red-600/20',
+                                            ];
+
+                                            $label = $statusLabels[$status] ?? ucfirst(str_replace('_', ' ', $status));
+                                            $classes = $statusClasses[$status] ?? 'bg-gray-100 text-gray-700 ring-gray-500/20';
+                                        @endphp
+
+                                        <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $classes }}">
+                                            {{ $label }}
+                                        </span>
                                     </td>
 
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">

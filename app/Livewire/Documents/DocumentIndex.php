@@ -3,6 +3,7 @@
 namespace App\Livewire\Documents;
 
 use App\Models\Document;
+use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
@@ -21,21 +22,36 @@ class DocumentIndex extends Component
     /**
      * Mostra l'elenco dei documenti appartenenti al team/workspace corrente.
      */
-    public function render()
+    public function render(): View
     {
         $user = Auth::user();
 
-        // Verifica che l'utente abbia il permesso documents.view
-        // nel workspace/team corrente.
+        /*
+        |--------------------------------------------------------------------------
+        | Autorizzazione
+        |--------------------------------------------------------------------------
+        |
+        | Il permesso documents.view permette di accedere alla sezione documenti.
+        | La policy dovrà comunque limitare i singoli record al team corrente.
+        |
+        */
         $this->authorize('viewAny', Document::class);
 
+        $teamId = $user->current_team_id ?? $user->currentTeam?->id;
+
         $documents = Document::query()
-            ->where('team_id', $user->current_team_id)
+            ->with([
+                'documentType',
+                'merchant',
+                'currency',
+                'uploadedBy',
+            ])
+            ->where('team_id', $teamId)
             ->latest()
             ->paginate($this->perPage);
 
         return view('livewire.documents.document-index', [
             'documents' => $documents,
-        ]);
+        ])->layout('layouts.app');
     }
 }

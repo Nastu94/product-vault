@@ -1,58 +1,429 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Product Vault
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Product Vault è una web app Laravel pensata per aiutare utenti privati, famiglie e, in futuro, negozi o piccoli business a conservare e organizzare documenti legati a prodotti fisici: scontrini, fatture, certificati di garanzia, manuali, documenti di riparazione e prove d'acquisto.
 
-## About Laravel
+L'obiettivo dell'MVP non è identificare automaticamente ogni prodotto in modo perfetto, ma creare un flusso affidabile in cui il sistema conserva il documento originale, prova a estrarre i dati utili e permette all'utente di revisionare e completare le informazioni mancanti.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## Stato del progetto
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+Progetto in fase iniziale di sviluppo.
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Funzionalità già impostate:
 
-## Learning Laravel
+- Laravel installato
+- Laravel Jetstream con Livewire
+- Team Jetstream usati come workspace/account
+- Autenticazione utente
+- Ruoli e permessi con Spatie Permission
+- Permessi contestuali rispetto al team/workspace corrente
+- Middleware per collegare il team Jetstream corrente al contesto Spatie
+- Model `Document`
+- Policy `DocumentPolicy`
+- Integrazione iniziale con Spatie Media Library sul model `Document`
+- Repository GitHub collegata
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+Funzionalità non ancora completate:
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+- Upload documenti tramite Livewire
+- Lista documenti
+- Dettaglio documento
+- Estrazione testo da PDF
+- OCR immagini
+- Classificazione documento
+- Parsing dati
+- Revisione manuale post-upload
+- Creazione prodotti
+- Gestione garanzie
+- Barcode
+- Notifiche
+- Audit log completo
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+## Visione MVP
 
-## Agentic Development
+Product Vault vuole trasformare documenti passivi in schede prodotto revisionabili.
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+Esempio di flusso previsto:
 
-```bash
-composer require laravel/boost --dev
+1. L'utente carica un documento.
+2. Il sistema salva il file originale.
+3. Il sistema prova a estrarre testo e metadati.
+4. Il documento viene classificato.
+5. Se possibile, viene proposta una bozza prodotto.
+6. L'utente revisiona e conferma i dati.
+7. Il prodotto può essere collegato a garanzie, documenti e storico eventi.
 
-php artisan boost:install
+## Principi di progetto
+
+### Documento diverso da prodotto
+
+Uno scontrino o una fattura non sono il prodotto, ma una prova o un documento collegato.
+Il prodotto è una entità separata e può avere più documenti associati.
+
+### Workspace prima dell'utente
+
+Documenti e prodotti appartengono a un workspace/account, non direttamente a un singolo utente.
+
+Nel progetto attuale, il team Jetstream rappresenta il workspace/account.
+
+### Non inventare dati
+
+Se il sistema non riesce a identificare un prodotto con sufficiente affidabilità, deve salvare il documento e chiedere conferma all'utente, non creare dati falsi.
+
+### Revisione manuale centrale
+
+L'automazione deve aiutare l'utente, non sostituirlo completamente.
+La schermata di revisione sarà una parte centrale dell'MVP.
+
+### Privacy by design
+
+I documenti possono contenere dati personali, fiscali o commerciali.
+Per questo motivo l'accesso ai file dovrà essere protetto tramite autorizzazioni e policy.
+
+## Stack tecnico
+
+- PHP 8.4
+- Laravel 13
+- MySQL
+- Laravel Jetstream
+- Laravel Fortify
+- Laravel Sanctum
+- Livewire
+- Spatie Laravel Permission
+- Spatie Laravel Media Library
+- Smalot PDF Parser
+- Intervention Image
+- Tailwind CSS
+- Vite
+- Laragon per sviluppo locale
+
+## Architettura applicativa
+
+Il progetto seguirà una struttura orientata a componenti Livewire, Action, Service e Job.
+
+### Controller
+
+I controller saranno usati il meno possibile e solo quando realmente utili, ad esempio per rotte specifiche, download protetti o endpoint particolari.
+
+### Livewire Components
+
+I componenti Livewire gestiranno la UI e l'interazione utente.
+
+Esempi previsti:
+
+- lista documenti
+- upload documento
+- dettaglio documento
+- revisione documento
+- gestione prodotti
+- gestione garanzie
+
+### Actions
+
+Le Action conterranno operazioni applicative specifiche.
+
+Esempi:
+
+- salvare un documento caricato
+- creare una bozza prodotto
+- confermare un prodotto
+- associare un documento a un prodotto
+
+### Services
+
+I Service coordineranno logiche più ampie o riutilizzabili.
+
+Esempi:
+
+- pipeline di estrazione testo
+- classificazione documento
+- parsing dati
+- calcolo affidabilità
+- gestione garanzie
+
+### Jobs
+
+I Job gestiranno operazioni asincrone o potenzialmente lente.
+
+Esempi:
+
+- elaborazione documento
+- OCR
+- parsing
+- generazione anteprime
+- notifiche
+
+### Policies
+
+Le Policy Laravel proteggeranno l'accesso alle risorse sensibili.
+
+Un utente potrà accedere solo ai documenti appartenenti al proprio workspace/team corrente.
+
+## Workspace e permessi
+
+Il progetto usa Jetstream Teams come base per il concetto di workspace/account.
+
+Relazione logica attuale:
+
+```text
+User
+ -> currentTeam
+ -> Documents
+ -> Products
+ -> Warranties
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Spatie Permission viene usato con supporto teams abilitato.
 
-## Contributing
+Ruolo iniziale:
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```text
+account_owner
+```
 
-## Code of Conduct
+Permessi iniziali:
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+```text
+documents.view
+documents.upload
+```
 
-## Security Vulnerabilities
+Permessi futuri previsti:
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+```text
+documents.update
+documents.delete
+documents.review
 
-## License
+products.view
+products.create
+products.update
+products.delete
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+warranties.view
+warranties.create
+warranties.update
+warranties.delete
+
+barcodes.create
+barcodes.delete
+
+account.members.view
+account.members.invite
+account.members.remove
+account.settings.update
+```
+
+## Model principali previsti
+
+### Già avviati
+
+- `User`
+- `Team`
+- `Document`
+
+### Da implementare
+
+- `Product`
+- `Warranty`
+- `DocumentLine`
+- `DocumentTextExtraction`
+- `DocumentClassification`
+- `ProductIdentificationCandidate`
+- `BarcodeScan`
+- `AuditLog`
+
+## Document model
+
+Il model `Document` rappresenta un documento caricato dall'utente.
+
+Tipologie previste:
+
+- scontrino
+- fattura
+- certificato di garanzia
+- manuale
+- documento di riparazione
+- foto prodotto
+- foto seriale
+- documento sconosciuto
+- documento non supportato
+
+Stati previsti:
+
+- uploaded
+- processing
+- text_extracted
+- classified
+- parsed
+- needs_review
+- low_confidence
+- linked_to_product
+- unsupported
+- failed
+
+## Roadmap MVP
+
+### 1. Setup base
+
+- Laravel
+- Jetstream
+- Livewire
+- GitHub
+- Spatie Permission
+- Team/workspace
+
+### 2. Area documenti
+
+- lista documenti
+- upload documento
+- salvataggio file originale
+- storage privato
+- policy di accesso
+- dettaglio documento
+
+### 3. Processing documenti
+
+- job asincrono
+- estrazione testo PDF
+- fallback parser
+- OCR immagini
+- salvataggio testo grezzo
+
+### 4. Classificazione e parsing
+
+- classificazione documento
+- parsing venditore
+- parsing data
+- parsing totale
+- parsing righe candidate
+
+### 5. Revisione manuale
+
+- schermata di revisione
+- correzione dati
+- conferma documento
+- creazione bozza prodotto
+
+### 6. Prodotti e garanzie
+
+- model prodotto
+- collegamento documenti/prodotti
+- garanzie stimate
+- scadenze
+- affidabilità dati
+
+### 7. Funzioni evolutive
+
+- barcode
+- notifiche
+- audit log
+- backoffice
+- supporto multi-account avanzato
+- supporto negozi
+
+## Installazione locale
+
+Clonare la repository:
+
+```bash
+git clone https://github.com/Nastu94/product-vault.git
+cd product-vault
+```
+
+Installare dipendenze PHP:
+
+```bash
+composer install
+```
+
+Installare dipendenze frontend:
+
+```bash
+npm install
+```
+
+Copiare il file ambiente:
+
+```bash
+cp .env.example .env
+```
+
+Generare la chiave applicativa:
+
+```bash
+php artisan key:generate
+```
+
+Configurare database e variabili nel file `.env`.
+
+Eseguire le migration:
+
+```bash
+php artisan migrate
+```
+
+Eseguire i seeder:
+
+```bash
+php artisan db:seed --class=PermissionSeeder
+```
+
+Avviare il server locale:
+
+```bash
+php artisan serve
+```
+
+Avviare Vite:
+
+```bash
+npm run dev
+```
+
+## Comandi utili
+
+Pulizia cache:
+
+```bash
+php artisan optimize:clear
+```
+
+Tinker:
+
+```bash
+php artisan tinker
+```
+
+Esecuzione migration:
+
+```bash
+php artisan migrate
+```
+
+Rollback ultimo batch migration:
+
+```bash
+php artisan migrate:rollback
+```
+
+Build frontend:
+
+```bash
+npm run build
+```
+
+## Note di sviluppo
+
+Il progetto è in fase attiva di costruzione.
+
+Per evitare complessità premature:
+
+- non verrà aggiunto OCR finché il flusso upload non sarà stabile;
+- non verranno creati controller pieni di logica;
+- non verranno implementate funzioni marketplace nell'MVP;
+- non verranno automatizzate decisioni incerte senza revisione utente;
+- non verranno salvati documenti sensibili in cartelle pubbliche senza controllo autorizzativo.
+
+## Licenza
+
+Progetto privato in sviluppo.

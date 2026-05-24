@@ -5,3 +5,121 @@
 [x-cloak] {
     display: none;
 }
+
+/*
+|--------------------------------------------------------------------------
+| Product Vault - Welcome animations
+|--------------------------------------------------------------------------
+|
+| Micro-animazioni leggere per migliorare la percezione della welcome page.
+| Sono volutamente sobrie e rispettano le preferenze di accessibilità
+| tramite prefers-reduced-motion.
+|
+*/
+
+@layer utilities {
+    @keyframes pv-fade-up {
+        from {
+            opacity: 0;
+            transform: translateY(18px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    @keyframes pv-fade-left {
+        from {
+            opacity: 0;
+            transform: translateX(24px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+
+    @keyframes pv-float {
+        0%, 100% {
+            transform: translateY(0);
+        }
+
+        50% {
+            transform: translateY(-8px);
+        }
+    }
+
+    .pv-animate-fade-up {
+        animation: pv-fade-up 700ms ease-out both;
+    }
+
+    .pv-animate-fade-left {
+        animation: pv-fade-left 800ms ease-out both;
+    }
+
+    .pv-animate-delay-100 {
+        animation-delay: 100ms;
+    }
+
+    .pv-animate-delay-200 {
+        animation-delay: 200ms;
+    }
+
+    .pv-animate-delay-300 {
+        animation-delay: 300ms;
+    }
+
+    .pv-animate-float {
+        animation: pv-float 5s ease-in-out infinite;
+    }
+
+    .pv-card-hover {
+        transition:
+            transform 180ms ease,
+            box-shadow 180ms ease,
+            border-color 180ms ease;
+    }
+
+    .pv-card-hover:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 18px 45px rgb(15 23 42 / 0.10);
+        border-color: rgb(148 163 184);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .pv-animate-fade-up,
+        .pv-animate-fade-left,
+        .pv-animate-float {
+            animation: none;
+        }
+
+        .pv-card-hover,
+        .pv-card-hover:hover {
+            transition: none;
+            transform: none;
+        }
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Product Vault - Smooth scroll
+|--------------------------------------------------------------------------
+|
+| Migliora la navigazione interna della welcome page quando l’utente clicca
+| sui link di ancoraggio della navbar.
+|
+*/
+
+html {
+    scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+}

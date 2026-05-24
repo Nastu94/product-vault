@@ -20,6 +20,27 @@ class PermissionSeeder extends Seeder
         $permissions = [
             'documents.view',
             'documents.upload',
+            'documents.update',
+            'documents.delete',
+            'documents.review',
+
+            'products.view',
+            'products.create',
+            'products.update',
+            'products.delete',
+
+            'warranties.view',
+            'warranties.create',
+            'warranties.update',
+            'warranties.delete',
+
+            'barcodes.create',
+            'barcodes.delete',
+
+            'account.members.view',
+            'account.members.invite',
+            'account.members.remove',
+            'account.settings.update',
         ];
 
         foreach ($permissions as $permissionName) {

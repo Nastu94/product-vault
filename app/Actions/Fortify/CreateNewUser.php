@@ -4,6 +4,8 @@ namespace App\Actions\Fortify;
 
 use App\Models\Team;
 use App\Models\User;
+use App\Models\Plan;
+use App\Models\TeamType;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
@@ -44,10 +46,53 @@ class CreateNewUser implements CreatesNewUsers
                     ->first();
 
                 if ($team) {
+                    // Assegna il piano gratuito al team personale.
+                    $freePlan = Plan::query()
+                        ->where('code', 'free')
+                        ->first();
+
+                    if ($freePlan) {
+                        $team->forceFill([
+                            'plan_id' => $freePlan->id,
+                        ])->save();
+                    }
+
+                    // Assegna il tipo "personal" al workspace personale appena creato.
+                    $personalTeamType = TeamType::query()
+                        ->where('code', 'personal')
+                        ->first();
+
+                    if ($personalTeamType) {
+                        $team->forceFill([
+                            'team_type_id' => $personalTeamType->id,
+                        ])->save();
+                    }
+
                     // Permessi base necessari per iniziare il flusso documenti.
                     $permissions = [
                         'documents.view',
                         'documents.upload',
+                        'documents.update',
+                        'documents.delete',
+                        'documents.review',
+
+                        'products.view',
+                        'products.create',
+                        'products.update',
+                        'products.delete',
+
+                        'warranties.view',
+                        'warranties.create',
+                        'warranties.update',
+                        'warranties.delete',
+
+                        'barcodes.create',
+                        'barcodes.delete',
+
+                        'account.members.view',
+                        'account.members.invite',
+                        'account.members.remove',
+                        'account.settings.update',
                     ];
 
                     // Imposta il team personale Jetstream come contesto dei permessi Spatie.

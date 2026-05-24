@@ -17,6 +17,8 @@ class DatabaseSeeder extends Seeder
             PermissionSeeder::class,
             LookupSeeder::class,
             TeamTypeSeeder::class,
+            CategorySeeder::class,
+            WarrantyRuleSeeder::class,
             PlanSeeder::class,
         ]);
     }

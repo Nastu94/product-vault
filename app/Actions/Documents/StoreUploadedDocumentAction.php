@@ -2,6 +2,7 @@
 
 namespace App\Actions\Documents;
 
+use App\Jobs\ProcessDocumentJob;
 use App\Models\Document;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
@@ -91,6 +92,23 @@ class StoreUploadedDocumentAction
             ])
             ->toMediaCollection('original_file', 'local');
 
-        return $document->refresh();
+            $document = $document->refresh();
+
+            /*
+            |--------------------------------------------------------------------------
+            | Processing asincrono
+            |--------------------------------------------------------------------------
+            |
+            | Segniamo subito l'estrazione come "in attesa", così la UI capisce che
+            | il processing è già stato accodato anche prima che il worker lo esegua.
+            |
+            */
+            $document->update([
+                'text_extraction_status' => 'pending',
+            ]);
+
+            ProcessDocumentJob::dispatch($document->id);
+
+            return $document->refresh();
     }
 }

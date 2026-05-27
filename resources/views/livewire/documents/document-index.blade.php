@@ -77,8 +77,13 @@
                         <tbody class="bg-white divide-y divide-gray-200">
                             @foreach ($documents as $document)
                                 <tr>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                        {{ $document->original_filename ?? 'Documento #' . $document->id }}
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                        <a
+                                            href="{{ route('documents.show', $document) }}"
+                                            class="text-gray-900 hover:text-indigo-600"
+                                        >
+                                            {{ $document->original_filename ?? 'Documento #' . $document->id }}
+                                        </a>
                                     </td>
 
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">

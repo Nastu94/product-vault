@@ -37,6 +37,11 @@
                         Dettagli documento
                     </h2>
 
+                    {{--
+                        In questa sezione mostriamo tutte le informazioni disponibili sul documento, 
+                            sia quelle di base che quelle tecniche relative al processing, 
+                            all’estrazione testo e alla classificazione.
+                     --}}
                     <dl class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div>
                             <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
@@ -85,7 +90,7 @@
 
                         <div>
                             <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                Data acquisto
+                                Data rilevata
                             </dt>
                             <dd class="mt-1 text-sm text-gray-900">
                                 {{ $document->purchase_date?->format('d/m/Y') ?? '—' }}
@@ -457,6 +462,190 @@
                             <div class="mt-4 rounded-md border border-gray-200 bg-gray-50 p-4">
                                 <p class="text-sm text-gray-700">
                                     Nessuna classificazione disponibile per questo documento.
+                                </p>
+                            </div>
+                        @endif
+                    </div>
+
+                    {{-- Se il documento è stato classificato come fattura o scontrino, 
+                            mostriamo i dati estratti --}}
+                    <div class="mt-8 border-t border-gray-200 pt-6">
+                        <h3 class="text-base font-medium text-gray-900">
+                            Dati estratti
+                        </h3>
+
+                        <p class="mt-1 text-sm text-gray-600">
+                            Informazioni individuate automaticamente dal testo del documento. Saranno modificabili nella fase di revisione.
+                        </p>
+
+                        <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Data rilevata
+                                </dt>
+
+                                <dd class="mt-1 text-sm text-gray-900">
+                                    {{ $document->purchase_date?->format('d/m/Y') ?? '—' }}
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Totale rilevato
+                                </dt>
+
+                                <dd class="mt-1 text-sm text-gray-900">
+                                    @if ($document->total_amount)
+                                        {{ number_format($document->total_amount, 2, ',', '.') }}
+                                        {{ $document->currency?->code }}
+                                    @else
+                                        —
+                                    @endif
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Valuta
+                                </dt>
+
+                                <dd class="mt-1 text-sm text-gray-900">
+                                    {{ $document->currency?->code ?? '—' }}
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Stato parsing
+                                </dt>
+
+                                <dd class="mt-2">
+                                    @if ($document->status === 'parsed')
+                                        <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
+                                            Dati base estratti
+                                        </span>
+                                    @elseif ($document->status === 'classified')
+                                        <span class="inline-flex items-center rounded-full bg-yellow-50 px-2.5 py-1 text-xs font-medium text-yellow-800 ring-1 ring-inset ring-yellow-600/20">
+                                            In attesa di parsing
+                                        </span>
+                                    @elseif ($document->text_extraction_status === 'requires_ocr')
+                                        <span class="inline-flex items-center rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-600/20">
+                                            Richiede OCR
+                                        </span>
+                                    @else
+                                        <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20">
+                                            Non disponibile
+                                        </span>
+                                    @endif
+                                </dd>
+                            </div>
+                        </dl>
+
+                        @if ($document->status === 'parsed')
+                            <div class="mt-4 rounded-md border border-blue-200 bg-blue-50 p-4">
+                                <p class="text-sm text-blue-700">
+                                    Questi dati sono candidati automatici. Nel prossimo flusso di revisione l’utente potrà confermarli o correggerli prima di creare una scheda prodotto.
+                                </p>
+                            </div>
+                        @endif
+                    </div>
+
+                    {{-- Se il documento è stato classificato come fattura o scontrino, 
+                            mostriamo i dati del venditore rilevati --}}
+                    <div class="mt-8 border-t border-gray-200 pt-6">
+                        <h3 class="text-base font-medium text-gray-900">
+                            Venditore rilevato
+                        </h3>
+
+                        <p class="mt-1 text-sm text-gray-600">
+                            Informazioni sul venditore individuate automaticamente dal testo del documento.
+                        </p>
+
+                        @if ($document->merchant)
+                            <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Nome
+                                    </dt>
+
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        {{ $document->merchant->name }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        P.IVA
+                                    </dt>
+
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        {{ $document->merchant->vat_number ?? '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Email
+                                    </dt>
+
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        @if ($document->merchant->email)
+                                            <a
+                                                href="mailto:{{ $document->merchant->email }}"
+                                                class="text-indigo-600 hover:text-indigo-800"
+                                            >
+                                                {{ $document->merchant->email }}
+                                            </a>
+                                        @else
+                                            —
+                                        @endif
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Stato verifica
+                                    </dt>
+
+                                    <dd class="mt-2">
+                                        @if ($document->merchant->is_verified)
+                                            <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
+                                                Verificato
+                                            </span>
+                                        @else
+                                            <span class="inline-flex items-center rounded-full bg-yellow-50 px-2.5 py-1 text-xs font-medium text-yellow-800 ring-1 ring-inset ring-yellow-600/20">
+                                                Da verificare
+                                            </span>
+                                        @endif
+                                    </dd>
+                                </div>
+
+                                <div class="sm:col-span-2">
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Indirizzo
+                                    </dt>
+
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        {{ $document->merchant->address ?? '—' }}
+                                    </dd>
+                                </div>
+                            </dl>
+
+                            <div class="mt-4 rounded-md border border-blue-200 bg-blue-50 p-4">
+                                <p class="text-sm text-blue-700">
+                                    Il venditore è stato associato automaticamente. Nella fase di revisione potrà essere confermato, corretto o sostituito.
+                                </p>
+                            </div>
+                        @elseif ($document->text_extraction_status === 'requires_ocr')
+                            <div class="mt-4 rounded-md border border-orange-200 bg-orange-50 p-4">
+                                <p class="text-sm text-orange-800">
+                                    Il venditore potrà essere rilevato dopo l’OCR, perché il documento non ha ancora testo estraibile.
+                                </p>
+                            </div>
+                        @else
+                            <div class="mt-4 rounded-md border border-gray-200 bg-gray-50 p-4">
+                                <p class="text-sm text-gray-700">
+                                    Nessun venditore rilevato per questo documento.
                                 </p>
                             </div>
                         @endif

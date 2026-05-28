@@ -6,6 +6,8 @@ use App\Models\Document;
 use App\Models\DocumentProcessingAttempt;
 use App\Services\Documents\DocumentTextExtractionPipeline;
 use App\Services\Documents\DocumentClassifier;
+use App\Services\Documents\DocumentDataParser;
+use App\Services\Documents\MerchantParser;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
@@ -34,11 +36,15 @@ class ProcessDocumentJob implements ShouldQueue
      * Step attuali:
      * 1. bootstrap: verifica record, media e file fisico.
      * 2. text_extraction: prova estrazione testo o marca il documento come "richiede OCR".
-     * 3. classification: classifica il documento in base al testo estratto (se presente) o ai metadati.
+     * 3. classification: classifica il tipo documento se il testo è disponibile.
+     * 4. parsing: estrae dati base come data, totale e valuta.
+     * 5. merchant_parsing: prova a riconoscere o creare il venditore.
      */
     public function handle(
         DocumentTextExtractionPipeline $textExtractionPipeline,
-        DocumentClassifier $documentClassifier
+        DocumentClassifier $documentClassifier,
+        DocumentDataParser $documentDataParser,
+        MerchantParser $merchantParser
     ): void {
         $document = Document::query()->findOrFail($this->documentId);
 
@@ -47,6 +53,10 @@ class ProcessDocumentJob implements ShouldQueue
         $this->runTextExtractionStep($document->fresh(), $textExtractionPipeline);
 
         $this->runClassificationStep($document->fresh(), $documentClassifier);
+
+        $this->runParsingStep($document->fresh(), $documentDataParser);
+
+        $this->runMerchantParsingStep($document->fresh(), $merchantParser);
     }
 
     /**
@@ -229,6 +239,171 @@ class ProcessDocumentJob implements ShouldQueue
             ]);
 
             Log::error('Document classification failed.', [
+                'document_id' => $document->id,
+                'exception' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
+    }
+
+    /**
+     * Estrae dati base dal documento classificato.
+     */
+    private function runParsingStep(
+        Document $document,
+        DocumentDataParser $documentDataParser
+    ): void {
+        /*
+        |--------------------------------------------------------------------------
+        | Guard clause
+        |--------------------------------------------------------------------------
+        |
+        | Non facciamo parsing se non abbiamo testo estratto.
+        | Le immagini e i PDF scansionati resteranno in requires_ocr finché
+        | non implementeremo l'OCR.
+        |
+        */
+        if ($document->text_extraction_status !== 'completed' || blank($document->raw_text)) {
+            return;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Guard clause sullo stato
+        |--------------------------------------------------------------------------
+        |
+        | Il parsing ha senso dopo una classificazione. Se il documento è ancora
+        | text_extracted o classified va bene. Se è failed o unsupported, lo lasciamo stare.
+        |
+        */
+        if (! in_array($document->status, ['text_extracted', 'classified'], true)) {
+            return;
+        }
+
+        $attempt = $this->startAttempt($document, 'parsing', [
+            'document_status_before' => $document->status,
+            'text_extraction_status_before' => $document->text_extraction_status,
+            'document_type_code_before' => $document->documentType?->code,
+            'raw_text_length' => mb_strlen((string) $document->raw_text),
+        ]);
+
+        try {
+            $parsedDocument = $documentDataParser->parse($document->fresh());
+
+            $attempt->update([
+                'status' => 'completed',
+                'metadata' => array_merge($attempt->metadata ?? [], [
+                    'document_status_after' => $parsedDocument->status,
+                    'purchase_date' => $parsedDocument->purchase_date?->toDateString(),
+                    'total_amount' => $parsedDocument->total_amount,
+                    'currency_id' => $parsedDocument->currency_id,
+                    'currency_code' => $parsedDocument->currency?->code,
+                ]),
+                'completed_at' => now(),
+            ]);
+        } catch (Throwable $exception) {
+            $attempt->update([
+                'status' => 'failed',
+                'error_message' => $exception->getMessage(),
+                'exception_class' => $exception::class,
+                'completed_at' => now(),
+            ]);
+
+            $document->update([
+                'status' => 'failed',
+            ]);
+
+            Log::error('Document parsing failed.', [
+                'document_id' => $document->id,
+                'exception' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
+    }
+
+    /**
+     * Prova a riconoscere o creare il merchant/venditore del documento.
+     */
+    private function runMerchantParsingStep(
+        Document $document,
+        MerchantParser $merchantParser
+    ): void {
+        /*
+        |--------------------------------------------------------------------------
+        | Guard clause
+        |--------------------------------------------------------------------------
+        |
+        | Il riconoscimento merchant richiede testo estratto.
+        | Non ha senso eseguirlo su immagini o PDF scansionati prima dell'OCR.
+        |
+        */
+        if ($document->text_extraction_status !== 'completed' || blank($document->raw_text)) {
+            return;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Evita stati non processabili
+        |--------------------------------------------------------------------------
+        |
+        | Se il documento è fallito o non supportato, non proviamo a creare merchant.
+        |
+        */
+        if (in_array($document->status, ['failed', 'unsupported'], true)) {
+            return;
+        }
+
+        $attempt = $this->startAttempt($document, 'merchant_parsing', [
+            'document_status_before' => $document->status,
+            'text_extraction_status_before' => $document->text_extraction_status,
+            'document_type_code_before' => $document->documentType?->code,
+            'raw_text_length' => mb_strlen((string) $document->raw_text),
+        ]);
+
+        try {
+            $merchant = $merchantParser->parse($document->fresh());
+
+            $freshDocument = $document->fresh();
+
+            $attempt->update([
+                'status' => 'completed',
+                'metadata' => array_merge($attempt->metadata ?? [], [
+                    'merchant_found' => $merchant !== null,
+                    'merchant_id' => $merchant?->id,
+                    'merchant_name' => $merchant?->name,
+                    'merchant_vat_number' => $merchant?->vat_number,
+                    'merchant_email' => $merchant?->email,
+                    'document_merchant_id_after' => $freshDocument->merchant_id,
+                    'document_status_after' => $freshDocument->status,
+                    'text_extraction_status_after' => $freshDocument->text_extraction_status,
+                ]),
+                'completed_at' => now(),
+            ]);
+        } catch (Throwable $exception) {
+            $attempt->update([
+                'status' => 'failed',
+                'error_message' => $exception->getMessage(),
+                'exception_class' => $exception::class,
+                'completed_at' => now(),
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Nota
+            |--------------------------------------------------------------------------
+            |
+            | Il fallimento del merchant parsing non deve necessariamente invalidare
+            | tutto il documento. Per ora lo lasciamo come errore bloccante perché siamo
+            | in sviluppo e vogliamo accorgerci subito dei bug.
+            |
+            */
+            $document->update([
+                'status' => 'failed',
+            ]);
+
+            Log::error('Document merchant parsing failed.', [
                 'document_id' => $document->id,
                 'exception' => $exception->getMessage(),
             ]);

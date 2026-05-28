@@ -196,6 +196,7 @@ class DocumentShow extends Component
             'text_extraction' => 'Estrazione del testo',
             'classification' => 'Classificazione del documento',
             'parsing' => 'Analisi dei dati del documento',
+            'merchant_parsing' => 'Riconoscimento venditore',
             'product_draft' => 'Creazione bozza prodotto',
             'scoring' => 'Calcolo affidabilità',
             default => ucfirst(str_replace('_', ' ', $this->latestProcessingAttempt->step)),

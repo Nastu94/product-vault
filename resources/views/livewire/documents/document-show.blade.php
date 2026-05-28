@@ -106,7 +106,7 @@
                                 </p>
                             </div>
 
-                            @if ($document->status === 'parsed')
+                            @if (in_array($document->status, ['parsed', 'needs_review'], true))
                                 <span class="inline-flex shrink-0 items-center rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
                                     Dati base estratti
                                 </span>
@@ -159,7 +159,7 @@
                             </div>
                         </dl>
 
-                        @if ($document->status === 'parsed')
+                        @if (in_array($document->status, ['parsed', 'needs_review'], true))
                             <div class="mt-5 rounded-md border border-blue-200 bg-blue-50 p-4">
                                 <p class="text-sm text-blue-700">
                                     Questi dati sono candidati automatici. Nel flusso di revisione l’utente potrà confermarli o correggerli.
@@ -168,6 +168,231 @@
                         @endif
                     </div>
                 </section>
+
+                {{-- Righe prodotto candidate --}}
+                @php
+                    $documentLines = $document->lines->sortBy('line_number');
+                    $productCandidatesByLineId = $document->productIdentificationCandidates->keyBy('document_line_id');
+                @endphp
+
+                <details class="bg-white shadow-sm ring-1 ring-gray-200 sm:rounded-lg">
+                    <summary class="flex cursor-pointer list-none items-center justify-between gap-4 p-6">
+                        <div>
+                            <h2 class="text-lg font-medium text-gray-900">
+                                Righe prodotto candidate
+                            </h2>
+
+                            <p class="mt-1 text-sm text-gray-600">
+                                @if ($documentLines->count() > 0)
+                                    {{ $documentLines->count() }}
+                                    {{ $documentLines->count() === 1 ? 'riga individuata' : 'righe individuate' }}
+
+                                    @if ($productCandidatesByLineId->count() > 0)
+                                        · {{ $productCandidatesByLineId->count() }}
+                                        {{ $productCandidatesByLineId->count() === 1 ? 'candidato prodotto' : 'candidati prodotto' }}
+                                    @endif
+
+                                    @if ($documentLines->first()?->description)
+                                        · {{ $documentLines->first()->description }}
+                                    @endif
+                                @else
+                                    Nessuna riga prodotto individuata
+                                @endif
+                            </p>
+                        </div>
+
+                        <span class="text-sm text-gray-500">
+                            Apri
+                        </span>
+                    </summary>
+
+                    <div class="border-t border-gray-200 p-6">
+                        @if ($documentLines->isNotEmpty())
+                            <div class="overflow-hidden rounded-lg border border-gray-200">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Riga estratta
+                                            </th>
+
+                                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Candidato prodotto
+                                            </th>
+
+                                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Quantità
+                                            </th>
+
+                                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Totale
+                                            </th>
+
+                                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Affidabilità
+                                            </th>
+                                        </tr>
+                                    </thead>
+
+                                    <tbody class="divide-y divide-gray-200 bg-white">
+                                        @foreach ($documentLines as $line)
+                                            @php
+                                                $productCode = $line->metadata['product_code_candidate'] ?? null;
+                                                $mode = $line->metadata['mode'] ?? null;
+                                                $candidate = $productCandidatesByLineId->get($line->id);
+                                            @endphp
+
+                                            <tr>
+                                                <td class="px-4 py-3 text-sm text-gray-900">
+                                                    <div class="font-medium">
+                                                        {{ $line->description ?? '—' }}
+                                                    </div>
+
+                                                    @if ($productCode)
+                                                        <div class="mt-1 text-xs text-gray-500">
+                                                            Codice letto: {{ $productCode }}
+                                                        </div>
+                                                    @endif
+
+                                                    @if ($line->unit_price !== null)
+                                                        <div class="mt-1 text-xs text-gray-500">
+                                                            Prezzo unitario:
+                                                            {{ number_format((float) $line->unit_price, 2, ',', '.') }}
+                                                            {{ $document->currency?->code }}
+                                                        </div>
+                                                    @endif
+
+                                                    @if ($mode)
+                                                        <div class="mt-1 text-xs text-gray-400">
+                                                            Parser: {{ str_replace('_', ' ', $mode) }}
+                                                        </div>
+                                                    @endif
+                                                </td>
+
+                                                <td class="px-4 py-3 text-sm text-gray-900">
+                                                    @if ($candidate)
+                                                        <div class="font-medium">
+                                                            {{ $candidate->name ?? '—' }}
+                                                        </div>
+
+                                                        @if ($candidate->model)
+                                                            <div class="mt-1 text-xs text-gray-500">
+                                                                Modello: {{ $candidate->model }}
+                                                            </div>
+                                                        @endif
+
+                                                        @if ($candidate->ean_code)
+                                                            <div class="mt-1 text-xs text-gray-500">
+                                                                EAN: {{ $candidate->ean_code }}
+                                                            </div>
+                                                        @endif
+
+                                                        @if ($candidate->price !== null)
+                                                            <div class="mt-1 text-xs text-gray-500">
+                                                                Prezzo unitario candidato:
+                                                                {{ number_format((float) $candidate->price, 2, ',', '.') }}
+                                                                {{ $document->currency?->code }}
+                                                            </div>
+                                                        @endif
+
+                                                        <div class="mt-1 text-xs text-gray-400">
+                                                            Fonte: {{ str_replace('_', ' ', $candidate->source) }}
+                                                        </div>
+                                                    @else
+                                                        <span class="text-sm text-gray-500">
+                                                            Nessun candidato generato
+                                                        </span>
+                                                    @endif
+                                                </td>
+
+                                                <td class="px-4 py-3 text-sm text-gray-700">
+                                                    {{ $line->quantity !== null ? number_format((float) $line->quantity, 3, ',', '.') : '—' }}
+                                                </td>
+
+                                                <td class="px-4 py-3 text-sm text-gray-700">
+                                                    @if ($line->total_price !== null)
+                                                        {{ number_format((float) $line->total_price, 2, ',', '.') }}
+                                                        {{ $document->currency?->code }}
+                                                    @else
+                                                        —
+                                                    @endif
+                                                </td>
+
+                                                <td class="px-4 py-3 text-sm">
+                                                    <div class="space-y-2">
+                                                        @if ($line->confidence_score !== null)
+                                                            <div>
+                                                                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset
+                                                                    @if ($line->confidence_score >= 80)
+                                                                        bg-green-50 text-green-700 ring-green-600/20
+                                                                    @elseif ($line->confidence_score >= 50)
+                                                                        bg-yellow-50 text-yellow-800 ring-yellow-600/20
+                                                                    @else
+                                                                        bg-red-50 text-red-700 ring-red-600/20
+                                                                    @endif
+                                                                ">
+                                                                    Riga {{ $line->confidence_score }}/100
+                                                                </span>
+                                                            </div>
+                                                        @endif
+
+                                                        @if ($candidate?->confidence_score !== null)
+                                                            <div>
+                                                                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset
+                                                                    @if ($candidate->confidence_score >= 80)
+                                                                        bg-green-50 text-green-700 ring-green-600/20
+                                                                    @elseif ($candidate->confidence_score >= 50)
+                                                                        bg-yellow-50 text-yellow-800 ring-yellow-600/20
+                                                                    @else
+                                                                        bg-red-50 text-red-700 ring-red-600/20
+                                                                    @endif
+                                                                ">
+                                                                    Candidato {{ $candidate->confidence_score }}/100
+                                                                </span>
+                                                            </div>
+                                                        @endif
+
+                                                        @if ($candidate)
+                                                            <div>
+                                                                @if ($candidate->is_selected)
+                                                                    <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
+                                                                        Selezionato
+                                                                    </span>
+                                                                @else
+                                                                    <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20">
+                                                                        Da confermare
+                                                                    </span>
+                                                                @endif
+                                                            </div>
+                                                        @endif
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="mt-4 rounded-md border border-blue-200 bg-blue-50 p-4">
+                                <p class="text-sm text-blue-700">
+                                    Le righe e i candidati prodotto sono proposte automatiche. Nel flusso di revisione potranno essere confermati, corretti o esclusi prima di creare una scheda prodotto.
+                                </p>
+                            </div>
+                        @elseif ($document->text_extraction_status === 'requires_ocr')
+                            <div class="rounded-md border border-orange-200 bg-orange-50 p-4">
+                                <p class="text-sm text-orange-800">
+                                    Le righe prodotto potranno essere estratte dopo l’OCR, perché il documento non ha ancora testo estraibile.
+                                </p>
+                            </div>
+                        @else
+                            <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
+                                <p class="text-sm text-gray-700">
+                                    Nessuna riga prodotto candidata è stata individuata in questo documento.
+                                </p>
+                            </div>
+                        @endif
+                    </div>
+                </details>
 
                 {{-- Venditore --}}
                 <details class="bg-white shadow-sm ring-1 ring-gray-200 sm:rounded-lg">

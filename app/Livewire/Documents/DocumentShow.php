@@ -48,6 +48,8 @@ class DocumentShow extends Component
             'currency',
             'uploadedBy',
             'selectedClassification.documentType',
+            'lines.documentLineType',
+            'productIdentificationCandidates.documentLine',
         ]);
 
         $this->latestProcessingAttempt = $this->document
@@ -197,6 +199,8 @@ class DocumentShow extends Component
             'classification' => 'Classificazione del documento',
             'parsing' => 'Analisi dei dati del documento',
             'merchant_parsing' => 'Riconoscimento venditore',
+            'line_parsing' => 'Estrazione righe prodotto',
+            'product_candidate_generation' => 'Generazione candidati prodotto',
             'product_draft' => 'Creazione bozza prodotto',
             'scoring' => 'Calcolo affidabilità',
             default => ucfirst(str_replace('_', ' ', $this->latestProcessingAttempt->step)),

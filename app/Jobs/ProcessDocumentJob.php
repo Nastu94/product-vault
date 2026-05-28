@@ -4,10 +4,13 @@ namespace App\Jobs;
 
 use App\Models\Document;
 use App\Models\DocumentProcessingAttempt;
+use App\Models\ProductIdentificationCandidate;
+use App\Services\Documents\ProductCandidateGenerator;
 use App\Services\Documents\DocumentTextExtractionPipeline;
 use App\Services\Documents\DocumentClassifier;
 use App\Services\Documents\DocumentDataParser;
 use App\Services\Documents\MerchantParser;
+use App\Services\Documents\DocumentLineParser;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
@@ -39,12 +42,16 @@ class ProcessDocumentJob implements ShouldQueue
      * 3. classification: classifica il tipo documento se il testo è disponibile.
      * 4. parsing: estrae dati base come data, totale e valuta.
      * 5. merchant_parsing: prova a riconoscere o creare il venditore.
+     * 6. line_parsing: estrae righe prodotto candidate dal documento.
+     * 7. product_candidate_generation: genera candidati prodotto revisionabili.
      */
     public function handle(
         DocumentTextExtractionPipeline $textExtractionPipeline,
         DocumentClassifier $documentClassifier,
         DocumentDataParser $documentDataParser,
-        MerchantParser $merchantParser
+        MerchantParser $merchantParser,
+        DocumentLineParser $documentLineParser,
+        ProductCandidateGenerator $productCandidateGenerator
     ): void {
         $document = Document::query()->findOrFail($this->documentId);
 
@@ -57,6 +64,10 @@ class ProcessDocumentJob implements ShouldQueue
         $this->runParsingStep($document->fresh(), $documentDataParser);
 
         $this->runMerchantParsingStep($document->fresh(), $merchantParser);
+
+        $this->runLineParsingStep($document->fresh(), $documentLineParser);
+
+        $this->runProductCandidateGenerationStep($document->fresh(), $productCandidateGenerator);
     }
 
     /**
@@ -404,6 +415,180 @@ class ProcessDocumentJob implements ShouldQueue
             ]);
 
             Log::error('Document merchant parsing failed.', [
+                'document_id' => $document->id,
+                'exception' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
+    }
+
+    /**
+     * Estrae righe prodotto candidate dal documento.
+     */
+    private function runLineParsingStep(
+        Document $document,
+        DocumentLineParser $documentLineParser
+    ): void {
+        /*
+        |--------------------------------------------------------------------------
+        | Guard clause
+        |--------------------------------------------------------------------------
+        |
+        | Il parsing righe richiede testo estratto.
+        | Immagini e PDF scansionati resteranno in requires_ocr finché non avremo OCR.
+        |
+        */
+        if ($document->text_extraction_status !== 'completed' || blank($document->raw_text)) {
+            return;
+        }
+
+        if (in_array($document->status, ['failed', 'unsupported'], true)) {
+            return;
+        }
+
+        $attempt = $this->startAttempt($document, 'line_parsing', [
+            'document_status_before' => $document->status,
+            'text_extraction_status_before' => $document->text_extraction_status,
+            'document_type_code_before' => $document->documentType?->code,
+            'raw_text_length' => mb_strlen((string) $document->raw_text),
+        ]);
+
+        try {
+            $linesCount = $documentLineParser->parse($document->fresh());
+
+            $freshDocument = $document->fresh();
+
+            $attempt->update([
+                'status' => 'completed',
+                'metadata' => array_merge($attempt->metadata ?? [], [
+                    'lines_created' => $linesCount,
+                    'document_line_ids' => $freshDocument
+                        ->lines()
+                        ->orderBy('id')
+                        ->pluck('id')
+                        ->values()
+                        ->all(),
+                    'document_status_after' => $freshDocument->status,
+                    'text_extraction_status_after' => $freshDocument->text_extraction_status,
+                ]),
+                'completed_at' => now(),
+            ]);
+        } catch (Throwable $exception) {
+            $attempt->update([
+                'status' => 'failed',
+                'error_message' => $exception->getMessage(),
+                'exception_class' => $exception::class,
+                'completed_at' => now(),
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Nota MVP
+            |--------------------------------------------------------------------------
+            |
+            | Per ora trattiamo il fallimento del line parsing come bloccante,
+            | così emergono subito bug del parser durante lo sviluppo.
+            |
+            */
+            $document->update([
+                'status' => 'failed',
+            ]);
+
+            Log::error('Document line parsing failed.', [
+                'document_id' => $document->id,
+                'exception' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
+    }
+
+    /**
+     * Genera candidati prodotto partendo dalle righe documento estratte.
+     */
+    private function runProductCandidateGenerationStep(
+        Document $document,
+        ProductCandidateGenerator $productCandidateGenerator
+    ): void {
+        /*
+        |--------------------------------------------------------------------------
+        | Guard clause
+        |--------------------------------------------------------------------------
+        |
+        | La generazione candidati richiede testo estratto e almeno una riga prodotto.
+        |
+        */
+        if ($document->text_extraction_status !== 'completed' || blank($document->raw_text)) {
+            return;
+        }
+
+        if (in_array($document->status, ['failed', 'unsupported'], true)) {
+            return;
+        }
+
+        if ($document->lines()->count() === 0) {
+            return;
+        }
+
+        $attempt = $this->startAttempt($document, 'product_candidate_generation', [
+            'document_status_before' => $document->status,
+            'text_extraction_status_before' => $document->text_extraction_status,
+            'document_type_code_before' => $document->documentType?->code,
+            'document_lines_count_before' => $document->lines()->count(),
+        ]);
+
+        try {
+            $candidatesCount = $productCandidateGenerator->generate($document->fresh());
+
+            $freshDocument = $document->fresh();
+
+            /*
+            |--------------------------------------------------------------------------
+            | Stato finale MVP
+            |--------------------------------------------------------------------------
+            |
+            | Se abbiamo almeno un candidato prodotto, il documento passa a
+            | "needs_review": l'utente dovrà confermare/correggere i dati prima
+            | della creazione del prodotto definitivo.
+            |
+            */
+            if ($candidatesCount > 0) {
+                $freshDocument->update([
+                    'status' => 'needs_review',
+                ]);
+
+                $freshDocument = $freshDocument->fresh();
+            }
+
+            $attempt->update([
+                'status' => 'completed',
+                'metadata' => array_merge($attempt->metadata ?? [], [
+                    'candidates_created' => $candidatesCount,
+                    'product_candidate_ids' => ProductIdentificationCandidate::query()
+                        ->where('document_id', $document->id)
+                        ->orderBy('id')
+                        ->pluck('id')
+                        ->values()
+                        ->all(),
+                    'document_status_after' => $freshDocument->status,
+                    'text_extraction_status_after' => $freshDocument->text_extraction_status,
+                ]),
+                'completed_at' => now(),
+            ]);
+        } catch (Throwable $exception) {
+            $attempt->update([
+                'status' => 'failed',
+                'error_message' => $exception->getMessage(),
+                'exception_class' => $exception::class,
+                'completed_at' => now(),
+            ]);
+
+            $document->update([
+                'status' => 'failed',
+            ]);
+
+            Log::error('Product candidate generation failed.', [
                 'document_id' => $document->id,
                 'exception' => $exception->getMessage(),
             ]);

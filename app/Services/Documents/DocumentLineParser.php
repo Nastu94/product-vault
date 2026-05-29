@@ -111,6 +111,38 @@ class DocumentLineParser
                     continue;
                 }
 
+                /*
+                |--------------------------------------------------------------------------
+                | Scontrini OCR con righe spezzate
+                |--------------------------------------------------------------------------
+                |
+                | Esempio:
+                | 22,00%1.289,00
+                | iPhone13PraMax128
+                | 0194252697894
+                |
+                | La riga con importo non contiene descrizione, ma la descrizione è vicina.
+                | Questa strategia viene usata solo quando la riga importo contiene una
+                | percentuale IVA, così evitiamo di prendere subtotali, IVA o pagamenti.
+                |
+                */
+                $receiptLineCreated = $this->tryCreateReceiptOcrLineFromAmountContext(
+                    document: $document,
+                    lineTypeId: $lineTypeId,
+                    lines: $lines,
+                    currentIndex: $index,
+                    rawLine: $rawLine,
+                    amounts: $amounts,
+                );
+
+                if ($receiptLineCreated) {
+                    $created++;
+                    $pendingCandidate = null;
+                    $pendingCodeParts = [];
+
+                    continue;
+                }
+
                 $description = $this->extractDescription($rawLine);
 
                 if (! $description) {
@@ -239,6 +271,237 @@ class DocumentLineParser
         }
 
         return $created;
+    }
+
+    /**
+     * Prova a creare una riga prodotto da uno scontrino OCR in cui prezzo
+     * e descrizione sono stati estratti su righe diverse.
+     */
+    private function tryCreateReceiptOcrLineFromAmountContext(
+        Document $document,
+        ?int $lineTypeId,
+        array $lines,
+        int $currentIndex,
+        string $rawLine,
+        array $amounts
+    ): bool {
+        /*
+        |--------------------------------------------------------------------------
+        | Guard clause
+        |--------------------------------------------------------------------------
+        |
+        | Usiamo questa strategia solo per righe che sembrano una riga articolo
+        | da scontrino: IVA percentuale + importo.
+        |
+        */
+        if (! $this->lineLooksLikeReceiptItemAmountLine($rawLine)) {
+            return false;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Se la riga contiene già una descrizione utile, lasciamo lavorare
+        | il parser amount_based standard.
+        |--------------------------------------------------------------------------
+        */
+        if ($this->extractDescription($rawLine)) {
+            return false;
+        }
+
+        $description = $this->findNearbyProductDescription($lines, $currentIndex);
+
+        if (! $description) {
+            return false;
+        }
+
+        $productCode = $this->findNearbyProductCode($lines, $currentIndex);
+
+        $price = end($amounts);
+
+        DocumentLine::query()->create([
+            'document_id' => $document->id,
+            'document_line_type_id' => $lineTypeId,
+            'line_number' => $currentIndex + 1,
+            'raw_text' => trim($rawLine . ' ' . $description),
+            'description' => $description,
+            'quantity' => 1,
+            'unit_price' => $price,
+            'total_price' => $price,
+            'confidence_score' => $this->estimateConfidenceScore(
+                description: $description,
+                amounts: $amounts,
+                quantity: 1,
+                productCode: $productCode,
+            ),
+            'metadata' => [
+                'parser' => 'document_line_parser_v4',
+                'mode' => 'receipt_ocr_split_amount_description',
+                'amounts_found' => $amounts,
+                'product_code_candidate' => $productCode,
+                'amount_line' => $rawLine,
+            ],
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Riconosce righe scontrino tipo:
+     * 22,00%1.289,00
+     * 10% 49,99
+     */
+    private function lineLooksLikeReceiptItemAmountLine(string $line): bool
+    {
+        return (bool) preg_match('/\b\d{1,2}(?:,\d{2})?\s*%\s*\d{1,3}(?:[.\s]\d{3})*,\d{2}|\b\d{1,2}(?:,\d{2})?\s*%\s*\d+,\d{2}/u', $line);
+    }
+
+    /**
+     * Cerca una descrizione prodotto vicino alla riga importo OCR.
+     */
+    private function findNearbyProductDescription(array $lines, int $currentIndex): ?string
+    {
+        /*
+        |--------------------------------------------------------------------------
+        | Preferiamo le righe successive.
+        |--------------------------------------------------------------------------
+        |
+        | In molti scontrini OCR Paddle legge prima la colonna IVA/prezzo e poi
+        | la descrizione articolo. Se non troviamo nulla dopo, guardiamo prima.
+        |
+        */
+        $offsetGroups = [
+            [1, 2, 3, 4],
+            [-1, -2, -3, -4],
+        ];
+
+        foreach ($offsetGroups as $offsets) {
+            foreach ($offsets as $offset) {
+                $index = $currentIndex + $offset;
+
+                if (! isset($lines[$index])) {
+                    continue;
+                }
+
+                $candidate = $this->normalizeLine($lines[$index]);
+
+                if ($this->lineLooksLikeReceiptProductDescription($candidate)) {
+                    return $candidate;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Capisce se una riga OCR sembra una descrizione prodotto.
+     */
+    private function lineLooksLikeReceiptProductDescription(string $line): bool
+    {
+        if ($line === '') {
+            return false;
+        }
+
+        if ($this->lineShouldBeIgnored($line)) {
+            return false;
+        }
+
+        if ($this->lineIsStandaloneQuantity($line)) {
+            return false;
+        }
+
+        if (! empty($this->extractAmountsFromText($line))) {
+            return false;
+        }
+
+        if ($this->lineLooksLikeBarcode($line)) {
+            return false;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Deve contenere almeno lettere.
+        |--------------------------------------------------------------------------
+        */
+        if (! preg_match('/[a-zA-ZÀ-ÿ]/u', $line)) {
+            return false;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scarta rumore molto corto o troppo lungo.
+        |--------------------------------------------------------------------------
+        */
+        if (mb_strlen($line) < 4 || mb_strlen($line) > 80) {
+            return false;
+        }
+
+        $normalized = mb_strtolower($line);
+
+        $badSignals = [
+            'descrizione',
+            'subtotale',
+            'totale',
+            'pagamento',
+            'sconto',
+            'iva',
+            'punti',
+            'cashback',
+        ];
+
+        foreach ($badSignals as $signal) {
+            if (str_contains($normalized, $signal)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Cerca un codice prodotto/EAN vicino alla riga importo OCR.
+     */
+    private function findNearbyProductCode(array $lines, int $currentIndex): ?string
+    {
+        for ($offset = 1; $offset <= 6; $offset++) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                continue;
+            }
+
+            $candidate = $this->normalizeLine($lines[$index]);
+
+            if ($this->lineLooksLikeBarcode($candidate)) {
+                return preg_replace('/\D+/', '', $candidate) ?: $candidate;
+            }
+        }
+
+        for ($offset = 1; $offset <= 4; $offset++) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                continue;
+            }
+
+            $candidate = $this->normalizeLine($lines[$index]);
+
+            if ($this->lineLooksLikeProductCodePart($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Riconosce codici EAN/GTIN o barcode numerici comuni.
+     */
+    private function lineLooksLikeBarcode(string $line): bool
+    {
+        $digits = preg_replace('/\D+/', '', $line) ?: '';
+
+        return (bool) preg_match('/^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/', $digits);
     }
 
     /**

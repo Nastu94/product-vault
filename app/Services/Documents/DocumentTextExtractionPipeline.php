@@ -10,11 +10,20 @@ use Throwable;
 class DocumentTextExtractionPipeline
 {
     /**
+     * Inietta i service OCR immagini.
+     */
+    public function __construct(
+        private readonly ImageOcrExtractor $imageOcrExtractor,
+        private readonly PaddleOcrExtractor $paddleOcrExtractor
+    ) {
+    }
+
+    /**
      * Avvia il primo tentativo reale di estrazione testo.
      *
      * MVP attuale:
      * - PDF digitale: estrazione con Smalot PDF Parser.
-     * - Immagini: richiedono OCR, non ancora implementato.
+     * - Immagini: OCR con Tesseract.
      * - PDF senza testo utile: richiede OCR.
      */
     public function extract(Document $document): DocumentTextExtraction
@@ -46,12 +55,7 @@ class DocumentTextExtractionPipeline
         }
 
         if (str_starts_with((string) $mimeType, 'image/')) {
-            return $this->markAsRequiresOcr(
-                document: $document,
-                engine: 'image_ocr_pending',
-                mimeType: $mimeType,
-                reason: 'Il file è un’immagine. L’OCR verrà implementato nello step successivo.'
-            );
+            return $this->extractImageWithPaddleOcr($document, $path, $mimeType);
         }
 
         return $this->failExtraction(
@@ -138,7 +142,157 @@ class DocumentTextExtractionPipeline
     }
 
     /**
+     * Estrae testo da immagine usando PaddleOCR locale.
+     */
+    private function extractImageWithPaddleOcr(Document $document, string $path, ?string $mimeType): DocumentTextExtraction
+    {
+        $extraction = DocumentTextExtraction::query()->create([
+            'document_id' => $document->id,
+            'engine' => 'paddleocr',
+            'status' => 'running',
+            'metadata' => [
+                'mime_type' => $mimeType,
+                'path_exists' => is_file($path),
+            ],
+            'started_at' => now(),
+        ]);
+
+        try {
+            $result = $this->paddleOcrExtractor->extract($path);
+
+            $rawText = trim((string) $result['raw_text']);
+            $confidenceScore = (int) ($result['confidence_score'] ?? $this->estimateConfidenceScore($rawText));
+
+            if (mb_strlen($rawText) < 20) {
+                $extraction->update([
+                    'status' => 'failed',
+                    'raw_text' => $rawText !== '' ? $rawText : null,
+                    'confidence_score' => 0,
+                    'error_message' => 'PaddleOCR completato, ma non ha restituito testo utile.',
+                    'metadata' => array_merge($extraction->metadata ?? [], $result['metadata'] ?? []),
+                    'completed_at' => now(),
+                ]);
+
+                $document->update([
+                    'text_extraction_status' => 'failed',
+                ]);
+
+                return $extraction->refresh();
+            }
+
+            $extraction->update([
+                'status' => 'completed',
+                'raw_text' => $rawText,
+                'confidence_score' => $confidenceScore,
+                'metadata' => array_merge($extraction->metadata ?? [], [
+                    'ocr_lines' => $result['lines'] ?? [],
+                ], $result['metadata'] ?? []),
+                'completed_at' => now(),
+            ]);
+
+            $document->update([
+                'status' => 'text_extracted',
+                'text_extraction_status' => 'completed',
+                'raw_text' => $rawText,
+                'document_confidence_score' => $confidenceScore,
+            ]);
+
+            return $extraction->refresh();
+        } catch (\Throwable $exception) {
+            $extraction->update([
+                'status' => 'failed',
+                'error_message' => $exception->getMessage(),
+                'completed_at' => now(),
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Fallback Tesseract
+            |--------------------------------------------------------------------------
+            |
+            | Se PaddleOCR fallisce per motivi tecnici, proviamo Tesseract.
+            | Se Tesseract riesce, il documento non resta bloccato.
+            |
+            */
+            return $this->extractImageWithTesseract($document, $path, $mimeType);
+        }
+    }
+
+    /**
+     * Estrae testo da immagine usando Tesseract OCR.
+     */
+    private function extractImageWithTesseract(Document $document, string $path, ?string $mimeType): DocumentTextExtraction
+    {
+        $extraction = DocumentTextExtraction::query()->create([
+            'document_id' => $document->id,
+            'engine' => 'tesseract_ocr',
+            'status' => 'running',
+            'metadata' => [
+                'mime_type' => $mimeType,
+                'path_exists' => is_file($path),
+            ],
+            'started_at' => now(),
+        ]);
+
+        try {
+            $result = $this->imageOcrExtractor->extract($path);
+
+            $rawText = trim((string) $result['raw_text']);
+
+            if (mb_strlen($rawText) < 20) {
+                $extraction->update([
+                    'status' => 'failed',
+                    'raw_text' => $rawText !== '' ? $rawText : null,
+                    'confidence_score' => 0,
+                    'error_message' => 'OCR completato, ma non ha restituito testo utile.',
+                    'metadata' => array_merge($extraction->metadata ?? [], $result['metadata'] ?? []),
+                    'completed_at' => now(),
+                ]);
+
+                $document->update([
+                    'text_extraction_status' => 'failed',
+                ]);
+
+                return $extraction->refresh();
+            }
+
+            $confidenceScore = $this->estimateConfidenceScore($rawText);
+
+            $extraction->update([
+                'status' => 'completed',
+                'raw_text' => $rawText,
+                'confidence_score' => $confidenceScore,
+                'metadata' => array_merge($extraction->metadata ?? [], $result['metadata'] ?? []),
+                'completed_at' => now(),
+            ]);
+
+            $document->update([
+                'status' => 'text_extracted',
+                'text_extraction_status' => 'completed',
+                'raw_text' => $rawText,
+                'document_confidence_score' => $confidenceScore,
+            ]);
+
+            return $extraction->refresh();
+        } catch (Throwable $exception) {
+            $extraction->update([
+                'status' => 'failed',
+                'error_message' => $exception->getMessage(),
+                'completed_at' => now(),
+            ]);
+
+            $document->update([
+                'text_extraction_status' => 'failed',
+            ]);
+
+            return $extraction->refresh();
+        }
+    }
+
+    /**
      * Segna un documento come bisognoso di OCR.
+     *
+     * Per ora resta utile per PDF scansionati o futuri casi non gestiti.
      */
     private function markAsRequiresOcr(
         Document $document,

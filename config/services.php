@@ -35,4 +35,22 @@ return [
         ],
     ],
 
+    'tesseract' => [
+        'binary' => env('TESSERACT_BINARY', 'tesseract'),
+        'lang' => env('TESSERACT_LANG', 'ita+eng'),
+        'psm' => env('TESSERACT_PSM', 6),
+        'timeout' => env('TESSERACT_TIMEOUT', 60),
+    ],
+
+    'ocr' => [
+        'primary_engine' => env('OCR_PRIMARY_ENGINE', 'paddleocr'),
+    ],
+
+    'paddleocr' => [
+        'python' => env('PADDLE_OCR_PYTHON', base_path('tools/ocr/.venv/Scripts/python.exe')),
+        'script' => env('PADDLE_OCR_SCRIPT', base_path('tools/ocr/paddle_ocr_extract.py')),
+        'lang' => env('PADDLE_OCR_LANG', 'it'),
+        'timeout' => env('PADDLE_OCR_TIMEOUT', 180),
+        'min_confidence' => env('PADDLE_OCR_MIN_CONFIDENCE', 65),
+    ],
 ];

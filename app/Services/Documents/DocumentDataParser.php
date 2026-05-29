@@ -50,16 +50,31 @@ class DocumentDataParser
             | Stato parsed
             |--------------------------------------------------------------------------
             |
-            | Il documento è già stato classificato. Se troviamo almeno un dato utile,
-            | lo portiamo allo stato parsed. La revisione manuale arriverà dopo.
+            | Portiamo a "parsed" solo i documenti che sono ancora nelle fasi iniziali
+            | della pipeline. Non dobbiamo retrocedere documenti già in revisione,
+            | già collegati a prodotto, falliti o non supportati.
             |
             */
-            $updates['status'] = 'parsed';
+            if ($this->shouldMoveDocumentToParsed($document)) {
+                $updates['status'] = 'parsed';
+            }
 
             $document->update($updates);
         }
 
         return $document->refresh();
+    }
+
+    /**
+     * Decide se il parser può portare il documento allo stato parsed.
+     */
+    private function shouldMoveDocumentToParsed(Document $document): bool
+    {
+        return in_array($document->status, [
+            'uploaded',
+            'text_extracted',
+            'classified',
+        ], true);
     }
 
     /**
@@ -69,12 +84,43 @@ class DocumentDataParser
      * - 08/02/2026
      * - 08-02-2026
      * - 2026-02-08
+     * - 06/02/16 13:45
+     * - 06/02/1613:45, caso OCR dove "16" e "13:45" sono attaccati.
      */
     private function extractDate(string $text): ?Carbon
     {
+        /*
+        |--------------------------------------------------------------------------
+        | Caso OCR: data con anno a due cifre attaccato all'orario
+        |--------------------------------------------------------------------------
+        |
+        | Esempio reale:
+        | 06/02/1613:45
+        |
+        | Qui non vogliamo interpretare 1613 come anno.
+        | Interpretiamo invece:
+        | giorno = 06
+        | mese = 02
+        | anno breve = 16
+        | ora = 13:45
+        |
+        */
+        if (preg_match('/\b(?<day>\d{1,2})[\/\-.](?<month>\d{1,2})[\/\-.]?(?<year>\d{2})(?=\d{1,2}:\d{2}\b)/u', $text, $matches)) {
+            $date = $this->buildDateFromParts(
+                day: (int) $matches['day'],
+                month: (int) $matches['month'],
+                year: $this->normalizeTwoDigitYear((int) $matches['year']),
+            );
+
+            if ($date) {
+                return $date;
+            }
+        }
+
         $patterns = [
-            '/\b(?<day>\d{1,2})[\/\-.](?<month>\d{1,2})[\/\-.](?<year>\d{4})\b/',
-            '/\b(?<year>\d{4})[\/\-.](?<month>\d{1,2})[\/\-.](?<day>\d{1,2})\b/',
+            '/\b(?<day>\d{1,2})[\/\-.](?<month>\d{1,2})[\/\-.](?<year>\d{4})\b/u',
+            '/\b(?<year>\d{4})[\/\-.](?<month>\d{1,2})[\/\-.](?<day>\d{1,2})\b/u',
+            '/\b(?<day>\d{1,2})[\/\-.](?<month>\d{1,2})[\/\-.](?<year>\d{2})\b/u',
         ];
 
         foreach ($patterns as $pattern) {
@@ -82,31 +128,147 @@ class DocumentDataParser
                 continue;
             }
 
-            $day = (int) $matches['day'];
-            $month = (int) $matches['month'];
             $year = (int) $matches['year'];
 
-            if (! checkdate($month, $day, $year)) {
-                continue;
+            if ($year < 100) {
+                $year = $this->normalizeTwoDigitYear($year);
             }
 
-            return Carbon::createFromDate($year, $month, $day)->startOfDay();
+            $date = $this->buildDateFromParts(
+                day: (int) $matches['day'],
+                month: (int) $matches['month'],
+                year: $year,
+            );
+
+            if ($date) {
+                return $date;
+            }
         }
 
         return null;
     }
 
     /**
+     * Converte un anno a due cifre in anno completo.
+     *
+     * Regola MVP:
+     * - 00-49 => 2000-2049
+     * - 50-99 => 1950-1999
+     */
+    private function normalizeTwoDigitYear(int $year): int
+    {
+        return $year <= 49
+            ? 2000 + $year
+            : 1900 + $year;
+    }
+
+    /**
+     * Crea una data solo se valida e plausibile.
+     */
+    private function buildDateFromParts(int $day, int $month, int $year): ?Carbon
+    {
+        if (! checkdate($month, $day, $year)) {
+            return null;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Filtro anti-OCR
+        |--------------------------------------------------------------------------
+        |
+        | Evita anni assurdi come 1613, 3024, ecc.
+        | Per Product Vault ha senso accettare acquisti moderni.
+        |
+        */
+        $minimumYear = 1990;
+        $maximumYear = now()->addYear()->year;
+
+        if ($year < $minimumYear || $year > $maximumYear) {
+            return null;
+        }
+
+        return Carbon::createFromDate($year, $month, $day)->startOfDay();
+    }
+
+    /**
      * Estrae il totale candidato.
      *
-     * Strategia prudente:
-     * - cerca righe con parole forti: totale, tot. documento, importo totale
-     * - prende l'ultimo importo trovato vicino a quelle righe
+     * Strategia:
+     * - per righe "totale complessivo" usiamo una logica più prudente;
+     * - evitiamo di scambiare IVA, pagamenti o sconti per totale documento;
+     * - fallback: massimo importo nel testo.
      */
     private function extractTotalAmount(string $text): ?float
     {
         $lines = preg_split('/\R/u', $text) ?: [];
 
+        /*
+        |--------------------------------------------------------------------------
+        | Totale complessivo / totale documento
+        |--------------------------------------------------------------------------
+        |
+        | OCR e PDF parser possono mettere l'importo:
+        | - sulla stessa riga;
+        | - nella riga precedente;
+        | - nella riga successiva;
+        | - oppure separato da una riga sporca.
+        |
+        | Per questo analizziamo una finestra locale attorno alla riga totale,
+        | ma scartiamo righe chiaramente riferite a IVA, pagamento o sconto.
+        |
+        */
+        foreach ($lines as $index => $line) {
+            $normalizedLine = mb_strtolower(trim($line));
+
+            if (! $this->lineLooksLikeStrongTotal($normalizedLine)) {
+                continue;
+            }
+
+            $candidateAmounts = [];
+
+            for ($offset = -4; $offset <= 4; $offset++) {
+                $nearbyIndex = $index + $offset;
+
+                if (! isset($lines[$nearbyIndex])) {
+                    continue;
+                }
+
+                $nearbyLine = trim($lines[$nearbyIndex]);
+                $nearbyNormalizedLine = mb_strtolower($nearbyLine);
+
+                if ($this->lineLooksLikeAmountToIgnoreNearTotal($nearbyNormalizedLine)) {
+                    continue;
+                }
+
+                foreach ($this->extractAmountsFromText($nearbyLine) as $amount) {
+                    $candidateAmounts[] = $amount;
+                }
+            }
+
+            if (! empty($candidateAmounts)) {
+                /*
+                |--------------------------------------------------------------------------
+                | Scelta prudente
+                |--------------------------------------------------------------------------
+                |
+                | In uno scontrino il totale complessivo è quasi sempre maggiore di IVA,
+                | pagamento parziale, sconto o resto. Prendiamo quindi l'importo massimo
+                | nella finestra locale pulita.
+                |
+                */
+                return max($candidateAmounts);
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Altri totali meno specifici
+        |--------------------------------------------------------------------------
+        |
+        | Manteniamo compatibilità con DDT/fatture già funzionanti:
+        | Tot. documento €
+        | 2.080,00
+        */
         $candidateAmounts = [];
 
         foreach ($lines as $index => $line) {
@@ -116,16 +278,6 @@ class DocumentDataParser
                 continue;
             }
 
-            /*
-            |--------------------------------------------------------------------------
-            | Finestra locale
-            |--------------------------------------------------------------------------
-            |
-            | Alcuni PDF estratti mettono "Tot. documento €" su una riga
-            | e l'importo nella riga successiva. Per questo guardiamo anche
-            | una piccola finestra di righe successive.
-            |
-            */
             $window = implode(' ', array_slice($lines, $index, 3));
 
             foreach ($this->extractAmountsFromText($window) as $amount) {
@@ -134,17 +286,13 @@ class DocumentDataParser
         }
 
         if (! empty($candidateAmounts)) {
-            return end($candidateAmounts);
+            return max($candidateAmounts);
         }
 
         /*
         |--------------------------------------------------------------------------
-        | Fallback prudente
+        | Fallback
         |--------------------------------------------------------------------------
-        |
-        | Se non troviamo una riga "totale", prendiamo il massimo importo nel testo.
-        | Non è perfetto, ma spesso è corretto in documenti semplici.
-        |
         */
         $allAmounts = $this->extractAmountsFromText($text);
 
@@ -153,6 +301,57 @@ class DocumentDataParser
         }
 
         return max($allAmounts);
+    }
+
+    /**
+     * Riconosce righe forti di totale documento.
+     */
+    private function lineLooksLikeStrongTotal(string $line): bool
+    {
+        $signals = [
+            'totale complessivo',
+            'totale documento',
+            'tot. documento',
+            'tot documento',
+            'totale fattura',
+            'tot. fattura',
+            'importo totale',
+        ];
+
+        foreach ($signals as $signal) {
+            if (str_contains($line, $signal)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Esclude importi vicini al totale che non sono il totale documento.
+     */
+    private function lineLooksLikeAmountToIgnoreNearTotal(string $line): bool
+    {
+        $signals = [
+            'di cui iva',
+            'iva',
+            'pagamento',
+            'pagamento non riscosso',
+            'pagamento elettronico',
+            'pasamento elettronico',
+            'sconto',
+            'sconto a pagare',
+            'resto',
+            'subtotale',
+        ];
+
+        foreach ($signals as $signal) {
+            if (str_contains($line, $signal)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

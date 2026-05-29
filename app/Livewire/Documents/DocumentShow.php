@@ -7,6 +7,9 @@ use App\Models\Document;
 use App\Models\DocumentProcessingAttempt;
 use App\Models\DocumentTextExtraction;
 use App\Models\DocumentClassification;
+use App\Models\ProductIdentificationCandidate;
+use App\Services\Documents\ProductFromCandidateCreator;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Livewire\Component;
@@ -50,6 +53,7 @@ class DocumentShow extends Component
             'selectedClassification.documentType',
             'lines.documentLineType',
             'productIdentificationCandidates.documentLine',
+            'productIdentificationCandidates.product',
         ]);
 
         $this->latestProcessingAttempt = $this->document
@@ -257,6 +261,76 @@ class DocumentShow extends Component
             ->first();
 
         session()->flash('processing_success', 'Processing avviato correttamente.');
+    }
+
+    /**
+     * Conferma un candidato prodotto e crea la scheda prodotto definitiva.
+     */
+    public function confirmProductCandidate(
+        int $candidateId,
+        ProductFromCandidateCreator $productFromCandidateCreator
+    ): void {
+        $this->authorize('update', $this->document);
+
+        $this->document->refresh();
+
+        /*
+        |--------------------------------------------------------------------------
+        | MVP: un prodotto principale per documento
+        |--------------------------------------------------------------------------
+        |
+        | Per ora impediamo di creare più prodotti dallo stesso documento.
+        | Quando gestiremo documenti multi-prodotto, cambieremo questa regola.
+        |
+        */
+        if ($this->document->status === 'linked_to_product') {
+            session()->flash('product_warning', 'Questo documento è già collegato a un prodotto.');
+
+            return;
+        }
+
+        $candidate = ProductIdentificationCandidate::query()
+            ->where('document_id', $this->document->id)
+            ->whereKey($candidateId)
+            ->firstOrFail();
+
+        if ($candidate->product_id) {
+            session()->flash('product_warning', 'Questo candidato è già stato trasformato in prodotto.');
+
+            return;
+        }
+
+        $product = $productFromCandidateCreator->create(
+            candidate: $candidate,
+            userId: (int) Auth::id(),
+        );
+
+        $this->document = $this->document->fresh([
+            'documentType',
+            'merchant',
+            'currency',
+            'uploadedBy',
+            'selectedClassification.documentType',
+            'lines.documentLineType',
+            'productIdentificationCandidates.documentLine',
+            'productIdentificationCandidates.product',
+        ]);
+
+        $this->latestProcessingAttempt = $this->document
+            ->processingAttempts()
+            ->latest()
+            ->first();
+
+        $this->latestTextExtraction = $this->document
+            ->latestTextExtraction()
+            ->first();
+
+        $this->selectedClassification = $this->document
+            ->selectedClassification()
+            ->with('documentType')
+            ->first();
+
+        session()->flash('product_success', 'Prodotto creato correttamente: ' . $product->name);
     }
 
     /**

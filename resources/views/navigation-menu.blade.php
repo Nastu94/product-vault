@@ -27,11 +27,11 @@
                         Dashboard
                     </x-nav-link>
 
-                    <x-nav-link href="{{ url('/documents') }}" :active="request()->is('documents')">
+                    <x-nav-link href="{{ route('documents.index') }}" :active="request()->routeIs('documents.*')">
                         Documenti
                     </x-nav-link>
 
-                    <x-nav-link href="{{ url('/products') }}" :active="request()->is('products')">
+                    <x-nav-link href="{{ route('products.index') }}" :active="request()->routeIs('products.*')">
                         Prodotti
                     </x-nav-link>
 
@@ -203,15 +203,15 @@
                 Dashboard
             </x-responsive-nav-link>
 
-            <x-responsive-nav-link href="{{ url('/documents/create') }}" :active="request()->is('documents/create')">
+            <x-responsive-nav-link href="{{ route('documents.upload') }}" :active="request()->routeIs('documents.upload')">
                 Carica documento
             </x-responsive-nav-link>
 
-            <x-responsive-nav-link href="{{ url('/documents') }}" :active="request()->is('documents')">
+            <x-responsive-nav-link href="{{ route('documents.index') }}" :active="request()->routeIs('documents.*')">
                 Documenti
             </x-responsive-nav-link>
 
-            <x-responsive-nav-link href="{{ url('/products') }}" :active="request()->is('products')">
+            <x-responsive-nav-link href="{{ route('products.index') }}" :active="request()->routeIs('products.*')">
                 Prodotti
             </x-responsive-nav-link>
 

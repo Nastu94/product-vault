@@ -207,6 +207,17 @@
                     </summary>
 
                     <div class="border-t border-gray-200 p-6">
+                        @if (session()->has('product_success'))
+                            <div class="mb-4 rounded-md bg-green-50 p-4 text-sm text-green-700">
+                                {{ session('product_success') }}
+                            </div>
+                        @endif
+
+                        @if (session()->has('product_warning'))
+                            <div class="mb-4 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
+                                {{ session('product_warning') }}
+                            </div>
+                        @endif
                         @if ($documentLines->isNotEmpty())
                             <div class="overflow-hidden rounded-lg border border-gray-200">
                                 <table class="min-w-full divide-y divide-gray-200">
@@ -297,6 +308,36 @@
 
                                                         <div class="mt-1 text-xs text-gray-400">
                                                             Fonte: {{ str_replace('_', ' ', $candidate->source) }}
+                                                        </div>
+                                                        <div class="mt-3">
+                                                            @if ($candidate->product_id && $candidate->product)
+                                                                <div class="flex flex-col items-start gap-2">
+                                                                    <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
+                                                                        Prodotto creato
+                                                                    </span>
+
+                                                                    <a
+                                                                        href="{{ route('products.show', $candidate->product) }}"
+                                                                        class="text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                                                                    >
+                                                                        Apri scheda prodotto
+                                                                    </a>
+                                                                </div>
+                                                            @elseif ($document->status === 'linked_to_product')
+                                                                <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20">
+                                                                    Documento già collegato
+                                                                </span>
+                                                            @else
+                                                                <button
+                                                                    type="button"
+                                                                    wire:click="confirmProductCandidate({{ $candidate->id }})"
+                                                                    wire:loading.attr="disabled"
+                                                                    wire:target="confirmProductCandidate({{ $candidate->id }})"
+                                                                    class="inline-flex items-center rounded-md border border-transparent bg-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
+                                                                >
+                                                                    Conferma e crea prodotto
+                                                                </button>
+                                                            @endif
                                                         </div>
                                                     @else
                                                         <span class="text-sm text-gray-500">

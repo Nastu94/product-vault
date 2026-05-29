@@ -7,6 +7,8 @@ use App\Http\Controllers\Documents\DocumentFileDownloadController;
 use App\Livewire\Documents\DocumentIndex;
 use App\Livewire\Documents\DocumentUpload;
 use App\Livewire\Documents\DocumentShow;
+use App\Livewire\Products\ProductIndex;
+use App\Livewire\Products\ProductShow;
 
 Route::get('/', function () {
     return view('welcome');
@@ -17,8 +19,15 @@ Route::middleware([
     config('jetstream.auth_session'),
     'verified',
 ])->group(function () {
+    /**
+     * Dashboard
+     */
     Route::get('/dashboard', [DashboardController::class, 'index'])
         ->name('dashboard');
+
+    /**
+     * Rotte per la gestione dei documenti. Tutte le rotte sono protette da policy
+     */
     Route::get('/documents', DocumentIndex::class)
         ->name('documents.index');
     Route::get('/documents/upload', DocumentUpload::class)
@@ -32,4 +41,14 @@ Route::middleware([
     Route::get('/documents/{document}/download', DocumentFileDownloadController::class)
         ->whereNumber('document')
         ->name('documents.download');
+
+    /**
+     * Rotte per la gestione dei prodotti. Tutte le rotte sono protette da policy
+     */
+    Route::get('/products', ProductIndex::class)
+        ->name('products.index');
+
+    Route::get('/products/{product}', ProductShow::class)
+        ->whereNumber('product')
+        ->name('products.show');
 });

@@ -42,6 +42,11 @@ class DocumentShow extends Component
     public array $lineReviewForms = [];
 
     /**
+     * Campi modificabili per i candidati prodotto.
+     */
+    public array $candidateReviewForms = [];
+
+    /**
      * Ultimo tentativo di processing del documento.
      */
     public ?DocumentProcessingAttempt $latestProcessingAttempt = null;
@@ -90,6 +95,7 @@ class DocumentShow extends Component
 
         $this->fillDocumentReviewForm();
         $this->fillLineReviewForms();
+        $this->fillCandidateReviewForms();
     }
 
     /**
@@ -628,6 +634,7 @@ class DocumentShow extends Component
 
         $this->fillDocumentReviewForm();
         $this->fillLineReviewForms();
+        $this->fillCandidateReviewForms();
     }
 
     /**
@@ -725,7 +732,9 @@ class DocumentShow extends Component
         ]);
 
         $this->refreshDocumentState();
+        $this->fillDocumentReviewForm();
         $this->fillLineReviewForms();
+        $this->fillCandidateReviewForms();
 
         session()->flash('line_success', 'Riga documento aggiornata. Rigenera i candidati per applicare la modifica.');
     }
@@ -765,7 +774,9 @@ class DocumentShow extends Component
         $line->delete();
 
         $this->refreshDocumentState();
+        $this->fillDocumentReviewForm();
         $this->fillLineReviewForms();
+        $this->fillCandidateReviewForms();
 
         session()->flash('line_success', 'Riga eliminata. Rigenera i candidati per aggiornare la revisione.');
     }
@@ -792,7 +803,9 @@ class DocumentShow extends Component
         ]);
 
         $this->refreshDocumentState();
+        $this->fillDocumentReviewForm();
         $this->fillLineReviewForms();
+        $this->fillCandidateReviewForms();
 
         session()->flash(
             'line_success',
@@ -820,6 +833,134 @@ class DocumentShow extends Component
         }
 
         return round((float) $value, 3);
+    }
+
+    /**
+     * Popola il form di revisione candidati prodotto.
+     */
+    private function fillCandidateReviewForms(): void
+    {
+        $this->candidateReviewForms = [];
+
+        foreach ($this->document->productIdentificationCandidates as $candidate) {
+            $this->candidateReviewForms[$candidate->id] = [
+                'name' => (string) ($candidate->name ?? ''),
+                'model' => (string) ($candidate->model ?? ''),
+                'serial_number' => (string) ($candidate->serial_number ?? ''),
+                'ean_code' => (string) ($candidate->ean_code ?? ''),
+                'price' => $candidate->price !== null
+                    ? number_format((float) $candidate->price, 2, '.', '')
+                    : '',
+            ];
+        }
+    }
+
+    /**
+     * Salva le correzioni manuali di un candidato prodotto.
+     */
+    public function saveProductCandidateReviewData(int $candidateId): void
+    {
+        $this->authorize('update', $this->document);
+
+        if ($this->document->status === 'linked_to_product') {
+            session()->flash('candidate_warning', 'Non puoi modificare candidati dopo aver collegato il documento a un prodotto.');
+
+            return;
+        }
+
+        $candidate = ProductIdentificationCandidate::query()
+            ->where('document_id', $this->document->id)
+            ->whereKey($candidateId)
+            ->firstOrFail();
+
+        if ($candidate->product_id) {
+            session()->flash('candidate_warning', 'Questo candidato ha già generato un prodotto e non può essere modificato.');
+
+            return;
+        }
+
+        $form = $this->candidateReviewForms[$candidateId] ?? [];
+
+        $name = trim((string) ($form['name'] ?? ''));
+
+        if ($name === '') {
+            $this->addError("candidateReviewForms.{$candidateId}.name", 'Il nome prodotto è obbligatorio.');
+
+            return;
+        }
+
+        $price = $this->normalizeDecimalInput($form['price'] ?? null);
+
+        if (($form['price'] ?? '') !== '' && $price === null) {
+            $this->addError("candidateReviewForms.{$candidateId}.price", 'Il prezzo candidato non è valido.');
+
+            return;
+        }
+
+        $metadata = $candidate->metadata ?? [];
+
+        $metadata['manual_review'] = [
+            'reviewed' => true,
+            'reviewed_at' => now()->toISOString(),
+            'reviewed_by_user_id' => auth()->id(),
+        ];
+
+        $candidate->update([
+            'name' => $name,
+            'model' => trim((string) ($form['model'] ?? '')) ?: null,
+            'serial_number' => trim((string) ($form['serial_number'] ?? '')) ?: null,
+            'ean_code' => trim((string) ($form['ean_code'] ?? '')) ?: null,
+            'price' => $price,
+            'confidence_score' => 100,
+            'metadata' => $metadata,
+        ]);
+
+        $this->refreshDocumentState();
+
+        session()->flash('candidate_success', 'Candidato prodotto aggiornato correttamente.');
+    }
+
+    /**
+     * Elimina un candidato prodotto non ancora confermato.
+     */
+    public function deleteProductCandidate(int $candidateId): void
+    {
+        $this->authorize('update', $this->document);
+
+        if ($this->document->status === 'linked_to_product') {
+            session()->flash('candidate_warning', 'Non puoi eliminare candidati dopo aver collegato il documento a un prodotto.');
+
+            return;
+        }
+
+        $candidate = ProductIdentificationCandidate::query()
+            ->where('document_id', $this->document->id)
+            ->whereKey($candidateId)
+            ->firstOrFail();
+
+        if ($candidate->product_id) {
+            session()->flash('candidate_warning', 'Questo candidato ha già generato un prodotto e non può essere eliminato.');
+
+            return;
+        }
+
+        $candidate->delete();
+
+        $remainingCandidatesCount = $this->document
+            ->productIdentificationCandidates()
+            ->whereNull('product_id')
+            ->count();
+
+        $this->document->update([
+            'status' => $remainingCandidatesCount > 0 ? 'needs_review' : 'parsed',
+            'product_reliability_score' => $remainingCandidatesCount > 0
+                ? $this->document->product_reliability_score
+                : null,
+        ]);
+
+        $this->refreshDocumentState();
+
+        session()->flash('candidate_success', 'Candidato prodotto eliminato.');
     }
 
     /**

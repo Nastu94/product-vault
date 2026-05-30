@@ -282,6 +282,7 @@
                                 {{ session('product_warning') }}
                             </div>
                         @endif
+
                         @if (session()->has('line_success'))
                             <div class="mb-4 rounded-md bg-green-50 p-4 text-sm text-green-700">
                                 {{ session('line_success') }}
@@ -291,6 +292,18 @@
                         @if (session()->has('line_warning'))
                             <div class="mb-4 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
                                 {{ session('line_warning') }}
+                            </div>
+                        @endif
+
+                        @if (session()->has('candidate_success'))
+                            <div class="mb-4 rounded-md bg-green-50 p-4 text-sm text-green-700">
+                                {{ session('candidate_success') }}
+                            </div>
+                        @endif
+
+                        @if (session()->has('candidate_warning'))
+                            <div class="mb-4 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
+                                {{ session('candidate_warning') }}
                             </div>
                         @endif
 
@@ -342,7 +355,7 @@
                                                 $candidate = $productCandidatesByLineId->get($line->id);
                                             @endphp
 
-                                            <tr>
+                                            <tr wire:key="document-line-{{ $line->id }}">
                                                 <td class="px-4 py-3 text-sm text-gray-900">
                                                     <div class="font-medium">
                                                         {{ $line->description ?? '—' }}
@@ -526,6 +539,122 @@
                                                         <div class="mt-1 text-xs text-gray-400">
                                                             Fonte: {{ str_replace('_', ' ', $candidate->source) }}
                                                         </div>
+                                                        @if ($candidate->serial_number)
+                                                            <div class="mt-1 text-xs text-gray-500">
+                                                                Seriale: {{ $candidate->serial_number }}
+                                                            </div>
+                                                        @endif
+
+                                                        @if (! $candidate->product_id && $document->status !== 'linked_to_product')
+                                                            <details
+                                                                wire:key="candidate-review-details-{{ $candidate->id }}"
+                                                                class="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3"
+                                                            >
+                                                                <summary class="cursor-pointer text-xs font-medium text-gray-700">
+                                                                    Modifica candidato
+                                                                </summary>
+
+                                                                <form
+                                                                    wire:key="candidate-review-form-{{ $candidate->id }}"
+                                                                    wire:submit.prevent="saveProductCandidateReviewData({{ $candidate->id }})"
+                                                                    class="mt-3 space-y-3"
+                                                                >
+                                                                    <div>
+                                                                        <label class="block text-xs font-medium text-gray-500">
+                                                                            Nome prodotto
+                                                                        </label>
+
+                                                                        <input
+                                                                            type="text"
+                                                                            wire:model.defer="candidateReviewForms.{{ $candidate->id }}.name"
+                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                        >
+
+                                                                        @error("candidateReviewForms.{$candidate->id}.name")
+                                                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                        @enderror
+                                                                    </div>
+
+                                                                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                                                        <div>
+                                                                            <label class="block text-xs font-medium text-gray-500">
+                                                                                Modello
+                                                                            </label>
+
+                                                                            <input
+                                                                                type="text"
+                                                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.model"
+                                                                                class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                            >
+                                                                        </div>
+
+                                                                        <div>
+                                                                            <label class="block text-xs font-medium text-gray-500">
+                                                                                Prezzo
+                                                                            </label>
+
+                                                                            <input
+                                                                                type="text"
+                                                                                inputmode="decimal"
+                                                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.price"
+                                                                                class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                            >
+
+                                                                            @error("candidateReviewForms.{$candidate->id}.price")
+                                                                                <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                            @enderror
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                                                        <div>
+                                                                            <label class="block text-xs font-medium text-gray-500">
+                                                                                Seriale
+                                                                            </label>
+
+                                                                            <input
+                                                                                type="text"
+                                                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.serial_number"
+                                                                                class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                            >
+                                                                        </div>
+
+                                                                        <div>
+                                                                            <label class="block text-xs font-medium text-gray-500">
+                                                                                EAN
+                                                                            </label>
+
+                                                                            <input
+                                                                                type="text"
+                                                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.ean_code"
+                                                                                class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                            >
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <div class="flex flex-wrap gap-2">
+                                                                        <button
+                                                                            type="submit"
+                                                                            wire:loading.attr="disabled"
+                                                                            wire:target="saveProductCandidateReviewData({{ $candidate->id }})"
+                                                                            class="inline-flex items-center rounded-md border border-transparent bg-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
+                                                                        >
+                                                                            Salva candidato
+                                                                        </button>
+
+                                                                        <button
+                                                                            type="button"
+                                                                            wire:click="deleteProductCandidate({{ $candidate->id }})"
+                                                                            wire:loading.attr="disabled"
+                                                                            wire:target="deleteProductCandidate({{ $candidate->id }})"
+                                                                            class="inline-flex items-center rounded-md border border-red-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-50"
+                                                                        >
+                                                                            Elimina candidato
+                                                                        </button>
+                                                                    </div>
+                                                                </form>
+                                                            </details>
+                                                        @endif
                                                         <div class="mt-3">
                                                             @if ($candidate->product_id && $candidate->product)
                                                                 <div class="flex flex-col items-start gap-2">

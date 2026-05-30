@@ -22,6 +22,8 @@ class ProductCandidateGenerator
             ->get();
 
         if ($lines->isEmpty()) {
+            $this->updateDocumentProductReliabilityScore($document);
+
             return 0;
         }
 
@@ -35,10 +37,24 @@ class ProductCandidateGenerator
         | già confermati o modificati dall'utente.
         |
         */
-        ProductIdentificationCandidate::query()
-            ->where('document_id', $document->id)
-            ->whereNull('product_id')
-            ->delete();
+        $this->clearUnlinkedCandidates($document);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scontrini non durevoli / food service
+        |--------------------------------------------------------------------------
+        |
+        | Uno scontrino di ristorante, bar, trattoria o pizzeria può avere righe
+        | perfettamente leggibili, ma non rappresenta prodotti durevoli da inserire
+        | nel vault garanzie. In questo caso salviamo il documento, ma non generiamo
+        | candidati prodotto.
+        |
+        */
+        if ($this->documentLooksLikeFoodServiceReceipt($document)) {
+            $this->updateDocumentProductReliabilityScore($document);
+
+            return 0;
+        }
 
         $created = 0;
 
@@ -105,6 +121,120 @@ class ProductCandidateGenerator
                 ? (int) $bestCandidateScore
                 : null,
         ]);
+    }
+
+    /**
+     * Elimina candidati non ancora collegati a prodotti reali.
+     */
+    private function clearUnlinkedCandidates(Document $document): void
+    {
+        ProductIdentificationCandidate::query()
+            ->where('document_id', $document->id)
+            ->whereNull('product_id')
+            ->delete();
+    }
+
+    /**
+     * Capisce se il documento sembra uno scontrino di ristorante/bar/food service.
+     *
+     * Non stiamo dicendo che il documento non sia utile: viene salvato e parsato.
+     * Stiamo solo evitando di trasformare piatti, bevande o coperti in prodotti
+     * durevoli con garanzia.
+     */
+    private function documentLooksLikeFoodServiceReceipt(Document $document): bool
+    {
+        if ($document->documentType?->code !== 'receipt') {
+            return false;
+        }
+
+        $text = mb_strtolower((string) $document->raw_text);
+
+        if ($text === '') {
+            return false;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Segnali di prodotto durevole
+        |--------------------------------------------------------------------------
+        |
+        | Se compaiono segnali forti di prodotto fisico durevole, non applichiamo
+        | il filtro food service. Questo evita di bloccare scontrini elettronica
+        | che possono contenere parole generiche non rilevanti.
+        |
+        */
+        $durableSignals = [
+            'garanzia',
+            'seriale',
+            'barcode',
+            'ean',
+            'smartphone',
+            'telefono',
+            'iphone',
+            'tablet',
+            'notebook',
+            'laptop',
+            'pc ',
+            'computer',
+            'monitor',
+            'tv ',
+            'televisore',
+            'lavatrice',
+            'lavastoviglie',
+            'frigorifero',
+            'forno',
+            'asciugatrice',
+            'aspirapolvere',
+            'console',
+            'stampante',
+            'modello',
+        ];
+
+        foreach ($durableSignals as $signal) {
+            if (str_contains($text, $signal)) {
+                return false;
+            }
+        }
+
+        $foodServiceSignals = [
+            'ristorante',
+            'trattoria',
+            'pizzeria',
+            'osteria',
+            'bar ',
+            'caffe',
+            'caffè',
+            'tavolo',
+            'coperto',
+            'menu',
+            'menù',
+            'antipasto',
+            'primo',
+            'secondo',
+            'piatto',
+            'contorno',
+            'dolce',
+            'pizza',
+            'pasta',
+            'gnocchi',
+            'ravioli',
+            'vino',
+            'birra',
+            'acqua',
+            'bevanda',
+            'amaro',
+            'zabaione',
+        ];
+
+        $matches = 0;
+
+        foreach ($foodServiceSignals as $signal) {
+            if (str_contains($text, $signal)) {
+                $matches++;
+            }
+        }
+
+        return $matches >= 2;
     }
 
     /**

@@ -279,8 +279,32 @@ class DocumentDataParser
 
             if (! empty($candidateAmounts)) {
                 usort($candidateAmounts, function (array $a, array $b): int {
-                    return $a['distance'] <=> $b['distance']
-                        ?: abs($a['offset']) <=> abs($b['offset']);
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Priorità importi vicino a una riga forte di totale
+                    |--------------------------------------------------------------------------
+                    |
+                    | Ordine:
+                    | 1. distanza minore dalla riga "TOTALE FATTURA / TOTALE COMPLESSIVO";
+                    | 2. a parità di distanza, preferiamo la riga precedente;
+                    | 3. infine fallback sull'ordine naturale.
+                    |
+                    | Questo gestisce OCR a colonne come:
+                    | 597,99
+                    | TOTALE FATTURA
+                    | 30,36
+                    |
+                    */
+                    $distanceComparison = $a['distance'] <=> $b['distance'];
+
+                    if ($distanceComparison !== 0) {
+                        return $distanceComparison;
+                    }
+
+                    $aDirectionPriority = $a['offset'] < 0 ? 0 : 1;
+                    $bDirectionPriority = $b['offset'] < 0 ? 0 : 1;
+
+                    return $aDirectionPriority <=> $bDirectionPriority;
                 });
 
                 return $candidateAmounts[0]['amount'];
@@ -407,6 +431,13 @@ class DocumentDataParser
             'sconto a pagare',
             'resto',
             'subtotale',
+            'acconto',
+            'acconto gia pagato',
+            'acconto già pagato',
+            'netto a pagare',
+            'totale iva',
+            'totale imponibile',
+            'riepilogo iva',
         ];
 
         foreach ($signals as $signal) {

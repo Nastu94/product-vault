@@ -163,12 +163,37 @@ class MerchantParser
             'pagamento',
             'totale',
             'pag.',
+            'data documento',
+            'data doc',
+            'data fattura',
+            'fattura n',
+            'fattura nr',
+            'numero fattura',
+            'n. fattura',
+            'scadenza',
+            'valuta',
+            'pagamento carta',
+            'pagamento bancomat',
+            'pagamento',
         ];
 
         foreach ($excludedSignals as $signal) {
             if (str_contains($line, $signal)) {
                 return true;
             }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Date e riferimenti documento
+        |--------------------------------------------------------------------------
+        |
+        | Se una riga contiene una data ed è già semanticamente legata a documento,
+        | fattura, scadenza o pagamento, non può essere il nome merchant.
+        |
+        */
+        if (preg_match('/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/u', $line)) {
+            return true;
         }
 
         return false;

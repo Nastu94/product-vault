@@ -8,6 +8,11 @@ use App\Models\DocumentTextExtraction;
 
 class LayoutAwareInvoiceLineParser
 {
+    public function __construct(
+        private readonly DocumentOcrLayoutResolver $ocrLayoutResolver
+    ) {
+    }
+
     /**
      * Estrae righe fattura usando coordinate OCR.
      *
@@ -16,24 +21,16 @@ class LayoutAwareInvoiceLineParser
      */
     public function parse(Document $document, ?int $lineTypeId): int
     {
-        $extraction = DocumentTextExtraction::query()
-            ->where('document_id', $document->id)
-            ->where('status', 'completed')
-            ->whereNotNull('metadata')
-            ->latest('id')
-            ->first();
+        $layout = $this->ocrLayoutResolver->resolve($document);
 
-        if (! $extraction) {
-            return 0;
-        }
-
-        $items = $extraction->metadata['ocr_items'] ?? [];
+        $items = $layout['items'] ?? [];
+        $metadata = $layout['metadata'] ?? [];
 
         if (! is_array($items) || empty($items)) {
             return 0;
         }
 
-        $columns = $this->detectColumns($items, $extraction->metadata ?? []);
+        $columns = $this->detectColumns($items, $metadata);
 
         if (! $columns) {
             return 0;

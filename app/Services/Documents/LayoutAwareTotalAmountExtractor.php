@@ -7,6 +7,11 @@ use App\Models\DocumentTextExtraction;
 
 class LayoutAwareTotalAmountExtractor
 {
+    public function __construct(
+        private readonly DocumentOcrLayoutResolver $ocrLayoutResolver
+    ) {
+    }
+
     /**
      * Prova a estrarre il totale documento usando coordinate OCR.
      *
@@ -15,18 +20,9 @@ class LayoutAwareTotalAmountExtractor
      */
     public function extract(Document $document): ?float
     {
-        $extraction = DocumentTextExtraction::query()
-            ->where('document_id', $document->id)
-            ->where('status', 'completed')
-            ->whereNotNull('metadata')
-            ->latest('id')
-            ->first();
+        $layout = $this->ocrLayoutResolver->resolve($document);
 
-        if (! $extraction) {
-            return null;
-        }
-
-        $items = $extraction->metadata['ocr_items'] ?? [];
+        $items = $layout['items'] ?? [];
 
         if (! is_array($items) || empty($items)) {
             return null;

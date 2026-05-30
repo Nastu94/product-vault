@@ -409,7 +409,8 @@ class DocumentLineParser
             return false;
         }
 
-        $description = $this->findFollowingProductDescriptionForStandaloneAmount($lines, $currentIndex);
+        $description = $this->findFollowingProductDescriptionForStandaloneAmount($lines, $currentIndex)
+            ?: $this->findPreviousProductDescriptionForStandaloneAmount($lines, $currentIndex);
 
         if (! $description) {
             return false;
@@ -490,6 +491,57 @@ class DocumentLineParser
     private function findFollowingProductDescriptionForStandaloneAmount(array $lines, int $currentIndex): ?string
     {
         for ($offset = 1; $offset <= 3; $offset++) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                return null;
+            }
+
+            $candidate = $this->normalizeLine($lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if ($this->lineShouldBeIgnored($candidate)) {
+                return null;
+            }
+
+            if ($this->lineIsStandaloneQuantity($candidate)) {
+                return null;
+            }
+
+            if (! empty($this->extractAmountsFromText($candidate))) {
+                return null;
+            }
+
+            if ($this->lineLooksLikeBarcode($candidate)) {
+                return null;
+            }
+
+            if ($this->lineLooksLikeReceiptProductDescription($candidate)) {
+                return $candidate;
+            }
+
+            return null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Cerca una descrizione prodotto subito prima di una riga importo standalone.
+     *
+     * Serve per OCR a colonne dove PaddleOCR può leggere:
+     * CAVO USB-C 1M
+     * 12,90
+     *
+     * È volutamente prudente: se incontra subtotali, totali, IVA,
+     * pagamenti, sconti, barcode o importi, non crea nulla.
+     */
+    private function findPreviousProductDescriptionForStandaloneAmount(array $lines, int $currentIndex): ?string
+    {
+        for ($offset = -1; $offset >= -3; $offset--) {
             $index = $currentIndex + $offset;
 
             if (! isset($lines[$index])) {

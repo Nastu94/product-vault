@@ -240,23 +240,26 @@ class DocumentDataParser
                     continue;
                 }
 
+                if ($this->amountLineHasIgnoredContextNearTotal($lines, $nearbyIndex, $index)) {
+                    continue;
+                }
+
                 foreach ($this->extractAmountsFromText($nearbyLine) as $amount) {
-                    $candidateAmounts[] = $amount;
+                    $candidateAmounts[] = [
+                        'amount' => $amount,
+                        'distance' => abs($offset),
+                        'offset' => $offset,
+                    ];
                 }
             }
 
             if (! empty($candidateAmounts)) {
-                /*
-                |--------------------------------------------------------------------------
-                | Scelta prudente
-                |--------------------------------------------------------------------------
-                |
-                | In uno scontrino il totale complessivo è quasi sempre maggiore di IVA,
-                | pagamento parziale, sconto o resto. Prendiamo quindi l'importo massimo
-                | nella finestra locale pulita.
-                |
-                */
-                return max($candidateAmounts);
+                usort($candidateAmounts, function (array $a, array $b): int {
+                    return $a['distance'] <=> $b['distance']
+                        ?: abs($a['offset']) <=> abs($b['offset']);
+                });
+
+                return $candidateAmounts[0]['amount'];
             }
         }
 
@@ -301,6 +304,43 @@ class DocumentDataParser
         }
 
         return max($allAmounts);
+    }
+
+    /**
+     * Verifica se una riga importo vicina al totale appartiene in realtà
+     * a subtotale, IVA, pagamento, sconto o altre righe da ignorare.
+     */
+    private function amountLineHasIgnoredContextNearTotal(
+        array $lines, int $amountLineIndex, int $strongTotalLineIndex
+    ): bool
+    {
+        foreach ([-1, 0, 1] as $offset) {
+            $index = $amountLineIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                continue;
+            }
+
+            if ($index === $strongTotalLineIndex) {
+                continue;
+            }
+
+            $line = mb_strtolower(trim($lines[$index]));
+
+            if ($line === '') {
+                continue;
+            }
+
+            if ($this->lineLooksLikeStrongTotal($line)) {
+                continue;
+            }
+
+            if ($this->lineLooksLikeAmountToIgnoreNearTotal($line)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

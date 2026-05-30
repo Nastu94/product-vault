@@ -41,6 +41,21 @@ class DocumentLineParser
         $document->lines()->delete();
 
         $lines = preg_split('/\R/u', $text) ?: [];
+    
+        /*
+        |--------------------------------------------------------------------------
+        | Parser dedicato per fatture tabellari
+        |--------------------------------------------------------------------------
+        |
+        | Le fatture digitali hanno spesso righe strutturate con codice, descrizione,
+        | quantità, prezzo, sconto, IVA e imponibile. Non devono passare dalle
+        | euristiche OCR pensate per scontrini, altrimenti rischiamo associazioni
+        | errate tra prezzo e descrizione.
+        |
+        */
+        if ($document->documentType?->code === 'invoice') {
+            return $this->parseInvoiceLines($document, $lineTypeId, $lines);
+        }
 
         $created = 0;
         $pendingCodeParts = [];
@@ -302,6 +317,359 @@ class DocumentLineParser
         }
 
         return $created;
+    }
+
+    /**
+     * Estrae righe prodotto/servizio da una fattura tabellare digitale.
+     */
+    private function parseInvoiceLines(Document $document, ?int $lineTypeId, array $lines): int
+    {
+        $created = 0;
+        $pendingInvoiceItem = null;
+
+        foreach ($lines as $index => $line) {
+            $rawLine = $this->normalizeLine($line);
+
+            if ($rawLine === '') {
+                continue;
+            }
+
+            if ($this->invoiceLineShouldBeIgnored($rawLine)) {
+                $pendingInvoiceItem = null;
+
+                continue;
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Riga fattura completa su una sola riga
+            |--------------------------------------------------------------------------
+            |
+            | Esempio:
+            | EL-ACC CAVO USB-C 1M BIANCO 2 7,50 0,00 22% 15,00
+            |
+            */
+            $inlineItem = $this->extractInvoiceInlineItem($rawLine);
+
+            if ($inlineItem) {
+                $this->createInvoiceLine(
+                    document: $document,
+                    lineTypeId: $lineTypeId,
+                    lineNumber: $index + 1,
+                    rawTextParts: [$rawLine],
+                    item: $inlineItem,
+                    mode: 'invoice_tabular_inline'
+                );
+
+                $created++;
+                $pendingInvoiceItem = null;
+
+                continue;
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Riga importi che completa un prodotto iniziato su righe precedenti
+            |--------------------------------------------------------------------------
+            |
+            | Esempio:
+            | EL-1001 SMARTPHONE NOVA X2 128GB BLACK
+            | IMEI TEST-356000000000001 - seriale SN-NOVAX2-TEST
+            | 1 399,90 0,00 22% 399,90
+            |
+            */
+            if ($pendingInvoiceItem) {
+                $amountColumns = $this->extractInvoiceAmountColumns($rawLine);
+
+                if ($amountColumns) {
+                    $item = array_merge($pendingInvoiceItem, $amountColumns);
+
+                    $this->createInvoiceLine(
+                        document: $document,
+                        lineTypeId: $lineTypeId,
+                        lineNumber: $pendingInvoiceItem['line_number'],
+                        rawTextParts: $pendingInvoiceItem['raw_text_parts'],
+                        item: $item,
+                        mode: 'invoice_tabular_multiline'
+                    );
+
+                    $created++;
+                    $pendingInvoiceItem = null;
+
+                    continue;
+                }
+
+                if ($this->lineLooksLikeInvoiceSupportingMetadata($rawLine)) {
+                    $pendingInvoiceItem['raw_text_parts'][] = $rawLine;
+                    $pendingInvoiceItem['supporting_lines'][] = $rawLine;
+
+                    $barcode = $this->extractBarcodeFromText($rawLine);
+
+                    if ($barcode) {
+                        $pendingInvoiceItem['product_code'] = $barcode;
+                    }
+
+                    continue;
+                }
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Inizio prodotto fattura multi-riga
+            |--------------------------------------------------------------------------
+            |
+            | Esempio:
+            | EL-1001 SMARTPHONE NOVA X2 128GB BLACK
+            |
+            */
+            $productStart = $this->extractInvoiceProductStart($rawLine);
+
+            if ($productStart) {
+                $pendingInvoiceItem = [
+                    'line_number' => $index + 1,
+                    'raw_text_parts' => [$rawLine],
+                    'supporting_lines' => [],
+                    'invoice_code' => $productStart['code'],
+                    'description' => $productStart['description'],
+                    'product_code' => $productStart['code'],
+                ];
+
+                continue;
+            }
+        }
+
+        return $created;
+    }
+
+    /**
+     * Esclude intestazioni, riepiloghi, totali, pagamenti e note.
+     */
+    private function invoiceLineShouldBeIgnored(string $line): bool
+    {
+        $normalized = mb_strtolower($line);
+
+        if ($this->lineShouldBeIgnored($line)) {
+            return true;
+        }
+
+        $signals = [
+            'codice descrizione',
+            'cliente intestatario',
+            'data documento',
+            'scadenza',
+            'valuta',
+            'riepilogo iva',
+            'totale imponibile',
+            'totale iva',
+            'totale fattura',
+            'netto a pagare',
+            'acconto',
+            'nota',
+            'caso limite',
+            'documento di test',
+            'non utilizzabile',
+        ];
+
+        foreach ($signals as $signal) {
+            if (str_contains($normalized, $signal)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Estrae una riga fattura completa.
+     */
+    private function extractInvoiceInlineItem(string $line): ?array
+    {
+        $amountPattern = '\-?\d{1,3}(?:[.\s]\d{3})*,\d{2}|\-?\d+,\d{2}';
+
+        $pattern = '/^(?<code>[A-Z]{2,}(?:-[A-Z0-9]+)+|[A-Z]{2,}\d[A-Z0-9\-\/\.]*)\s+' .
+            '(?<description>.+?)\s+' .
+            '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+            '(?<unit_price>' . $amountPattern . ')\s+' .
+            '(?<discount>' . $amountPattern . ')\s+' .
+            '(?<vat>\d{1,2}(?:,\d{2})?%)\s+' .
+            '(?<total_price>' . $amountPattern . ')\s*$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        $description = trim($matches['description']);
+
+        if ($description === '' || $this->lineShouldBeIgnored($description)) {
+            return null;
+        }
+
+        return [
+            'invoice_code' => trim($matches['code']),
+            'description' => $description,
+            'quantity' => $this->parseQuantity($matches['quantity']),
+            'unit_price' => $this->parseMoney($matches['unit_price']),
+            'discount_amount' => $this->parseMoney($matches['discount']),
+            'vat_rate' => trim($matches['vat']),
+            'total_price' => $this->parseMoney($matches['total_price']),
+            'product_code' => trim($matches['code']),
+        ];
+    }
+
+    /**
+     * Estrae colonne importo che completano una riga fattura multi-riga.
+     */
+    private function extractInvoiceAmountColumns(string $line): ?array
+    {
+        $amountPattern = '\-?\d{1,3}(?:[.\s]\d{3})*,\d{2}|\-?\d+,\d{2}';
+
+        $pattern = '/^(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+            '(?<unit_price>' . $amountPattern . ')\s+' .
+            '(?<discount>' . $amountPattern . ')\s+' .
+            '(?<vat>\d{1,2}(?:,\d{2})?%)\s+' .
+            '(?<total_price>' . $amountPattern . ')\s*$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        return [
+            'quantity' => $this->parseQuantity($matches['quantity']),
+            'unit_price' => $this->parseMoney($matches['unit_price']),
+            'discount_amount' => $this->parseMoney($matches['discount']),
+            'vat_rate' => trim($matches['vat']),
+            'total_price' => $this->parseMoney($matches['total_price']),
+        ];
+    }
+
+    /**
+     * Estrae codice + descrizione da una riga iniziale di prodotto fattura.
+     */
+    private function extractInvoiceProductStart(string $line): ?array
+    {
+        $pattern = '/^(?<code>[A-Z]{2,}(?:-[A-Z0-9]+)+|[A-Z]{2,}\d[A-Z0-9\-\/\.]*)\s+(?<description>.+)$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        $description = trim($matches['description']);
+
+        if ($description === '' || $this->lineShouldBeIgnored($description)) {
+            return null;
+        }
+
+        if (! empty($this->extractAmountsFromText($description))) {
+            return null;
+        }
+
+        return [
+            'code' => trim($matches['code']),
+            'description' => $description,
+        ];
+    }
+
+    /**
+     * Riconosce righe di supporto: seriali, IMEI, barcode, note tecniche prodotto.
+     */
+    private function lineLooksLikeInvoiceSupportingMetadata(string $line): bool
+    {
+        $normalized = mb_strtolower($line);
+
+        $signals = [
+            'imei',
+            'seriale',
+            'serial',
+            'sn-',
+            'cod. bar',
+            'barcode',
+            'ean',
+        ];
+
+        foreach ($signals as $signal) {
+            if (str_contains($normalized, $signal)) {
+                return true;
+            }
+        }
+
+        return $this->extractBarcodeFromText($line) !== null;
+    }
+
+    /**
+     * Estrae un barcode/EAN numerico da una riga.
+     */
+    private function extractBarcodeFromText(string $text): ?string
+    {
+        if (! preg_match('/\b(?<barcode>\d{8}|\d{12}|\d{13}|\d{14})\b/u', $text, $matches)) {
+            return null;
+        }
+
+        return $matches['barcode'];
+    }
+
+    /**
+     * Crea una DocumentLine da una riga fattura.
+     */
+    private function createInvoiceLine(
+        Document $document,
+        ?int $lineTypeId,
+        int $lineNumber,
+        array $rawTextParts,
+        array $item,
+        string $mode
+    ): void {
+        $description = trim((string) ($item['description'] ?? ''));
+
+        if ($description === '') {
+            return;
+        }
+
+        $amounts = array_values(array_filter([
+            $item['unit_price'] ?? null,
+            $item['discount_amount'] ?? null,
+            $item['total_price'] ?? null,
+        ], fn ($amount) => $amount !== null));
+
+        DocumentLine::query()->create([
+            'document_id' => $document->id,
+            'document_line_type_id' => $lineTypeId,
+            'line_number' => $lineNumber,
+            'raw_text' => trim(implode(' ', $rawTextParts)),
+            'description' => $description,
+            'quantity' => $item['quantity'] ?? null,
+            'unit_price' => $item['unit_price'] ?? null,
+            'total_price' => $item['total_price'] ?? null,
+            'confidence_score' => $this->estimateConfidenceScore(
+                description: $description,
+                amounts: $amounts,
+                quantity: $item['quantity'] ?? null,
+                productCode: $item['product_code'] ?? null,
+            ),
+            'metadata' => [
+                'parser' => 'document_line_parser_v6',
+                'mode' => $mode,
+                'invoice_code' => $item['invoice_code'] ?? null,
+                'product_code_candidate' => $item['product_code'] ?? null,
+                'discount_amount' => $item['discount_amount'] ?? null,
+                'vat_rate' => $item['vat_rate'] ?? null,
+                'supporting_lines' => $item['supporting_lines'] ?? [],
+            ],
+        ]);
+    }
+
+    /**
+     * Converte un importo testuale europeo in float.
+     */
+    private function parseMoney(string $amount): ?float
+    {
+        $normalized = str_replace(['.', ' '], '', trim($amount));
+        $normalized = str_replace(',', '.', $normalized);
+
+        if (! is_numeric($normalized)) {
+            return null;
+        }
+
+        return round((float) $normalized, 2);
     }
 
     /**

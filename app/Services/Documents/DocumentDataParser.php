@@ -204,6 +204,30 @@ class DocumentDataParser
 
         /*
         |--------------------------------------------------------------------------
+        | Totale fattura/documento sulla stessa riga
+        |--------------------------------------------------------------------------
+        |
+        | Se una riga forte come "TOTALE FATTURA 597,99" contiene già un importo,
+        | quella riga è più affidabile di importi vicini come acconti, netto a pagare,
+        | IVA o pagamenti.
+        |
+        */
+        foreach ($lines as $line) {
+            $normalizedLine = mb_strtolower(trim($line));
+
+            if (! $this->lineLooksLikeStrongTotal($normalizedLine)) {
+                continue;
+            }
+
+            $amounts = $this->extractAmountsFromText($line);
+
+            if (! empty($amounts)) {
+                return end($amounts);
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
         | Totale complessivo / totale documento
         |--------------------------------------------------------------------------
         |

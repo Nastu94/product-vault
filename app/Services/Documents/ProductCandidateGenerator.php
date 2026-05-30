@@ -250,7 +250,99 @@ class ProductCandidateGenerator
             return false;
         }
 
+        if ($this->lineLooksLikeNonDurableOrService($line)) {
+            return false;
+        }
+
         return true;
+    }
+
+    /**
+     * Esclude righe che rappresentano pasti, consumabili, pulizia o servizi.
+     *
+     * Il documento può comunque conservarle come DocumentLine, ma non devono
+     * diventare candidati prodotto perché non sono beni durevoli da gestire
+     * nel vault garanzie.
+     */
+    private function lineLooksLikeNonDurableOrService(DocumentLine $line): bool
+    {
+        $description = mb_strtolower((string) $line->description);
+        $rawText = mb_strtolower((string) $line->raw_text);
+        $invoiceCode = mb_strtolower((string) ($line->metadata['invoice_code'] ?? ''));
+        $productCode = mb_strtolower((string) ($line->metadata['product_code_candidate'] ?? ''));
+
+        /*
+        |--------------------------------------------------------------------------
+        | Prefix da fattura
+        |--------------------------------------------------------------------------
+        |
+        | Se una fattura usa codici strutturati come FOOD-01, CLEAN-01 o SERV-TRASP,
+        | possiamo usarli come segnale forte per evitare falsi candidati prodotto.
+        |
+        */
+        $blockedPrefixes = [
+            'food',
+            'clean',
+            'serv',
+            'ship',
+            'trasp',
+        ];
+
+        foreach ($blockedPrefixes as $prefix) {
+            if (
+                str_starts_with($invoiceCode, $prefix)
+                || str_starts_with($productCode, $prefix)
+            ) {
+                return true;
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Segnali testuali non durevoli
+        |--------------------------------------------------------------------------
+        |
+        | Questo filtro deve restare prudente: blocca parole fortemente associate
+        | a pasti, bevande, pulizia/consumabili e servizi logistici.
+        |
+        */
+        $blockedSignals = [
+            'menu',
+            'pranzo',
+            'cena',
+            'caffe',
+            'caffè',
+            'espresso',
+            'pizza',
+            'pasta',
+            'ravioli',
+            'gnocchi',
+            'vino',
+            'birra',
+            'acqua',
+            'bevanda',
+            'dolce',
+            'zabaione',
+            'coperto',
+            'servizio',
+            'trasporto',
+            'spedizione',
+            'consegna',
+            'detergente',
+            'pavimenti',
+            'microfibra',
+            'panno',
+            'pulizia',
+            'limone 1l',
+        ];
+
+        foreach ($blockedSignals as $signal) {
+            if (str_contains($description, $signal) || str_contains($rawText, $signal)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

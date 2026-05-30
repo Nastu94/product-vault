@@ -13,7 +13,7 @@ class MerchantParser
      *
      * Strategia MVP:
      * - prova a individuare il nome merchant dalle prime righe;
-     * - prova a estrarre P.IVA;
+     * - prova a estrarre P.IVA, ma scarta valori fittizi/non utilizzabili;
      * - prova a estrarre email;
      * - prova a estrarre indirizzo;
      * - collega il merchant al documento.
@@ -43,8 +43,9 @@ class MerchantParser
         | Ricerca merchant esistente
         |--------------------------------------------------------------------------
         |
-        | Prima proviamo con la P.IVA, che è il segnale più forte.
-        | Se manca, usiamo il nome normalizzato nel team corrente.
+        | Prima proviamo con la P.IVA solo se è realmente utilizzabile.
+        | P.IVA fittizie come 00000000000 non devono causare merge sbagliati.
+        | Se la P.IVA manca o non è affidabile, usiamo il nome normalizzato.
         |
         */
         $merchant = null;
@@ -145,11 +146,21 @@ class MerchantParser
             'banca',
             'doc. di trasporto',
             'documento di trasporto',
+            'documento sintetico',
+            'documento generato',
+            'documento non fiscale',
+            'documento di test',
             'fattura',
             'scontrino',
+            'fac-simile',
+            'non fiscale',
+            'dati fittizi',
+            'interamente fittizi',
+            'cliente intestatario',
             'destinatario',
             'destinazione',
             'codice descrizione',
+            'pagamento',
             'totale',
             'pag.',
         ];
@@ -168,11 +179,48 @@ class MerchantParser
      */
     private function extractVatNumber(string $text): ?string
     {
-        if (preg_match('/(?:p\.?\s*iva|partita\s+iva|piva)\D*(?<vat>\d{11})/iu', $text, $matches)) {
-            return $matches['vat'];
+        if (! preg_match('/(?:p\.?\s*iva|partita\s+iva|piva)\D*(?<vat>\d{11})/iu', $text, $matches)) {
+            return null;
         }
 
-        return null;
+        $vatNumber = $matches['vat'];
+
+        if (! $this->vatNumberIsUsable($vatNumber)) {
+            return null;
+        }
+
+        return $vatNumber;
+    }
+
+    /**
+     * Verifica se una P.IVA è abbastanza affidabile da essere usata come chiave merchant.
+     */
+    private function vatNumberIsUsable(?string $vatNumber): bool
+    {
+        if (! $vatNumber) {
+            return false;
+        }
+
+        $digits = preg_replace('/\D+/', '', $vatNumber) ?: '';
+
+        if (strlen($digits) !== 11) {
+            return false;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | P.IVA fittizie
+        |--------------------------------------------------------------------------
+        |
+        | Nei file di test o in OCR rumorosi può comparire 00000000000.
+        | Non deve mai essere usata per collegare merchant diversi.
+        |
+        */
+        if (preg_match('/^0+$/', $digits)) {
+            return false;
+        }
+
+        return true;
     }
 
     /**

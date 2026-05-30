@@ -64,6 +64,7 @@ class ProductCandidateGenerator
             }
 
             $productCode = $line->metadata['product_code_candidate'] ?? null;
+            $serialNumber = $line->metadata['serial_number_candidate'] ?? null;
 
             ProductIdentificationCandidate::query()->create([
                 'document_id' => $document->id,
@@ -73,7 +74,7 @@ class ProductCandidateGenerator
                 'category_id' => null,
                 'name' => $this->normalizeProductName($line->description),
                 'model' => $this->guessModel($productCode),
-                'serial_number' => null,
+                'serial_number' => $serialNumber,
                 'ean_code' => $this->guessEanCode($productCode),
                 'price' => $this->guessPrice($line),
                 'source' => 'document_line_parser',
@@ -86,6 +87,7 @@ class ProductCandidateGenerator
                     'line_parser' => $line->metadata['parser'] ?? null,
                     'line_mode' => $line->metadata['mode'] ?? null,
                     'product_code_candidate' => $productCode,
+                    'serial_number_candidate' => $serialNumber,
                     'candidate_price_source' => $this->guessPriceSource($line),
                     'raw_line_text' => $line->raw_text,
                     'quantity' => $line->quantity,

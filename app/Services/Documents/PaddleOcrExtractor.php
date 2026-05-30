@@ -66,13 +66,30 @@ class PaddleOcrExtractor
         return [
             'raw_text' => $rawText,
             'confidence_score' => (int) ($payload['confidence_score'] ?? 0),
+
+            /*
+            |--------------------------------------------------------------------------
+            | Compatibilità con la pipeline attuale
+            |--------------------------------------------------------------------------
+            |
+            | lines resta disponibile per non rompere il codice già esistente.
+            | items/layout sono il nuovo output strutturato per i parser layout-aware.
+            |
+            */
             'lines' => $payload['lines'] ?? [],
+            'items' => $payload['items'] ?? [],
+            'layout' => $payload['layout'] ?? null,
+
             'metadata' => [
                 'engine' => $payload['engine'] ?? 'paddleocr',
                 'lang' => $payload['lang'] ?? $lang,
                 'api_mode' => $payload['api_mode'] ?? null,
                 'line_count' => $payload['metadata']['line_count'] ?? count($payload['lines'] ?? []),
+                'item_count' => $payload['metadata']['item_count'] ?? count($payload['items'] ?? []),
+                'visual_line_count' => $payload['metadata']['visual_line_count'] ?? null,
                 'average_confidence' => $payload['metadata']['average_confidence'] ?? null,
+                'image_width' => $payload['metadata']['image_width'] ?? null,
+                'image_height' => $payload['metadata']['image_height'] ?? null,
                 'text_length' => mb_strlen($rawText),
             ],
         ];

@@ -43,6 +43,83 @@ def normalize_box(box):
 
     return normalized
 
+def get_image_size(image_path: Path):
+    """
+    Restituisce larghezza e altezza dell'immagine, se disponibili.
+
+    Non deve bloccare l'OCR se PIL non è disponibile o se il file non è leggibile.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(image_path) as image:
+            return image.size
+    except Exception:
+        return None, None
+
+
+def box_bounds(box):
+    """
+    Converte una bbox/poligono PaddleOCR in coordinate rettangolari assolute.
+    """
+    if not box:
+        return {
+            "x1": None,
+            "y1": None,
+            "x2": None,
+            "y2": None,
+            "width": None,
+            "height": None,
+            "center_x": None,
+            "center_y": None,
+        }
+
+    xs = [point[0] for point in box]
+    ys = [point[1] for point in box]
+
+    x1 = float(min(xs))
+    y1 = float(min(ys))
+    x2 = float(max(xs))
+    y2 = float(max(ys))
+
+    width = x2 - x1
+    height = y2 - y1
+
+    return {
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
+        "width": width,
+        "height": height,
+        "center_x": x1 + (width / 2),
+        "center_y": y1 + (height / 2),
+    }
+
+
+def normalized_bounds(bounds, image_width, image_height):
+    """
+    Aggiunge coordinate normalizzate 0-1, se dimensioni immagine disponibili.
+    """
+    if not image_width or not image_height:
+        return {}
+
+    keys = ["x1", "y1", "x2", "y2", "width", "height", "center_x", "center_y"]
+    normalized = {}
+
+    for key in keys:
+        value = bounds.get(key)
+
+        if value is None:
+            normalized[f"{key}_norm"] = None
+            continue
+
+        if key in ["x1", "x2", "width", "center_x"]:
+            normalized[f"{key}_norm"] = round(float(value) / float(image_width), 6)
+        else:
+            normalized[f"{key}_norm"] = round(float(value) / float(image_height), 6)
+
+    return normalized
 
 def box_top(box) -> float:
     if not box:
@@ -58,26 +135,32 @@ def box_left(box) -> float:
     return min(point[0] for point in box)
 
 
-def extract_lines_from_legacy_result(result):
+def extract_lines_from_legacy_result(result, image_width=None, image_height=None):
     """
-    Estrae righe dal formato classico PaddleOCR:
+    Estrae item OCR dal formato classico PaddleOCR:
     [
       [
         [bbox, [text, confidence]],
         ...
       ]
     ]
+
+    Mantiene sia l'ordine originale PaddleOCR sia le coordinate assolute.
     """
-    lines = []
+    items = []
 
     if not result:
-        return lines
+        return items
 
-    for page in result:
+    global_order = 0
+
+    for page_index, page in enumerate(result):
+        page_number = page_index + 1
+
         if not page:
             continue
 
-        for item in page:
+        for page_order, item in enumerate(page):
             if not item or len(item) < 2:
                 continue
 
@@ -97,30 +180,41 @@ def extract_lines_from_legacy_result(result):
             if not text:
                 continue
 
-            lines.append({
+            bounds = box_bounds(box)
+
+            items.append({
+                "id": global_order + 1,
+                "page": page_number,
                 "text": text,
                 "confidence": confidence,
+                "confidence_score": round(confidence * 100),
                 "bbox": box,
-                "top": box_top(box),
-                "left": box_left(box),
+                **bounds,
+                **normalized_bounds(bounds, image_width, image_height),
+                "original_order": global_order,
+                "page_order": page_order,
+                "source": "legacy",
             })
 
-    lines.sort(key=lambda line: (line["top"], line["left"]))
+            global_order += 1
 
-    return lines
+    return items
 
 
-def extract_lines_from_prediction_result(result):
+def extract_lines_from_prediction_result(result, image_width=None, image_height=None):
     """
     Fallback per formati più recenti di PaddleOCR.
     Prova a leggere oggetti/dizionari che espongono rec_texts, rec_scores e rec_boxes.
     """
-    lines = []
+    items = []
 
     if not result:
-        return lines
+        return items
 
-    for page in result:
+    global_order = 0
+
+    for page_index, page in enumerate(result):
+        page_number = page_index + 1
         data = None
 
         if isinstance(page, dict):
@@ -143,34 +237,148 @@ def extract_lines_from_prediction_result(result):
         scores = data.get("rec_scores") or data.get("scores") or []
         boxes = data.get("rec_boxes") or data.get("dt_polys") or data.get("boxes") or []
 
-        for index, text in enumerate(texts):
+        for page_order, text in enumerate(texts):
             normalized_text = normalize_text(text)
 
             if not normalized_text:
                 continue
 
             try:
-                confidence = float(scores[index])
+                confidence = float(scores[page_order])
             except Exception:
                 confidence = 0.0
 
             try:
-                box = normalize_box(boxes[index])
+                box = normalize_box(boxes[page_order])
             except Exception:
                 box = []
 
-            lines.append({
+            bounds = box_bounds(box)
+
+            items.append({
+                "id": global_order + 1,
+                "page": page_number,
                 "text": normalized_text,
                 "confidence": confidence,
+                "confidence_score": round(confidence * 100),
                 "bbox": box,
-                "top": box_top(box),
-                "left": box_left(box),
+                **bounds,
+                **normalized_bounds(bounds, image_width, image_height),
+                "original_order": global_order,
+                "page_order": page_order,
+                "source": "prediction",
             })
 
-    lines.sort(key=lambda line: (line["top"], line["left"]))
+            global_order += 1
 
-    return lines
+    return items
 
+def sorted_by_reading_order(items):
+    """
+    Ordine di lettura semplice: pagina, y, x.
+    Mantiene un comportamento simile a quello attuale.
+    """
+    return sorted(
+        items,
+        key=lambda item: (
+            item.get("page") or 1,
+            item.get("y1") if item.get("y1") is not None else 0,
+            item.get("x1") if item.get("x1") is not None else 0,
+        )
+    )
+
+
+def median(values):
+    values = sorted([value for value in values if value is not None])
+
+    if not values:
+        return 0
+
+    middle = len(values) // 2
+
+    if len(values) % 2:
+        return values[middle]
+
+    return (values[middle - 1] + values[middle]) / 2
+
+
+def group_visual_lines(items):
+    """
+    Raggruppa gli item OCR in righe visive usando la coordinata y.
+
+    Non è ancora un parser tabellare.
+    Serve solo a non perdere l'informazione spaziale necessaria ai parser futuri.
+    """
+    readable_items = [
+        item for item in sorted_by_reading_order(items)
+        if item.get("center_y") is not None
+    ]
+
+    if not readable_items:
+        return []
+
+    median_height = median([item.get("height") for item in readable_items])
+    y_threshold = max(6.0, median_height * 0.45)
+
+    groups = []
+
+    for item in readable_items:
+        item_center_y = item.get("center_y")
+
+        matching_group = None
+
+        for group in groups:
+            if abs(group["center_y"] - item_center_y) <= y_threshold:
+                matching_group = group
+                break
+
+        if matching_group is None:
+            groups.append({
+                "page": item.get("page") or 1,
+                "center_y": item_center_y,
+                "items": [item],
+            })
+        else:
+            matching_group["items"].append(item)
+            matching_group["center_y"] = sum(
+                child.get("center_y") or 0 for child in matching_group["items"]
+            ) / len(matching_group["items"])
+
+    visual_lines = []
+
+    for index, group in enumerate(groups):
+        line_items = sorted(
+            group["items"],
+            key=lambda item: item.get("x1") if item.get("x1") is not None else 0
+        )
+
+        x1_values = [item.get("x1") for item in line_items if item.get("x1") is not None]
+        y1_values = [item.get("y1") for item in line_items if item.get("y1") is not None]
+        x2_values = [item.get("x2") for item in line_items if item.get("x2") is not None]
+        y2_values = [item.get("y2") for item in line_items if item.get("y2") is not None]
+        confidence_values = [
+            item.get("confidence") for item in line_items
+            if isinstance(item.get("confidence"), (int, float))
+        ]
+
+        visual_lines.append({
+            "id": index + 1,
+            "page": group["page"],
+            "text": " ".join(item["text"] for item in line_items).strip(),
+            "item_ids": [item["id"] for item in line_items],
+            "x1": min(x1_values) if x1_values else None,
+            "y1": min(y1_values) if y1_values else None,
+            "x2": max(x2_values) if x2_values else None,
+            "y2": max(y2_values) if y2_values else None,
+            "center_y": group["center_y"],
+            "average_confidence": (
+                sum(confidence_values) / len(confidence_values)
+                if confidence_values
+                else 0
+            ),
+        })
+
+    return visual_lines
 
 def build_ocr(lang: str):
     import os
@@ -249,17 +457,34 @@ def main():
 
         result, api_mode = run_ocr(ocr, image_path)
 
-        lines = extract_lines_from_legacy_result(result)
+        image_width, image_height = get_image_size(image_path)
 
-        if not lines:
-            lines = extract_lines_from_prediction_result(result)
+        items = extract_lines_from_legacy_result(
+            result,
+            image_width=image_width,
+            image_height=image_height,
+        )
 
-        raw_text = "\n".join(line["text"] for line in lines).strip()
+        if not items:
+            items = extract_lines_from_prediction_result(
+                result,
+                image_width=image_width,
+                image_height=image_height,
+            )
+
+        reading_items = sorted_by_reading_order(items)
+
+        for reading_order, item in enumerate(reading_items):
+            item["reading_order"] = reading_order
+
+        visual_lines = group_visual_lines(items)
+
+        raw_text = "\n".join(item["text"] for item in reading_items).strip()
 
         confidence_values = [
-            line["confidence"]
-            for line in lines
-            if isinstance(line.get("confidence"), (int, float))
+            item["confidence"]
+            for item in reading_items
+            if isinstance(item.get("confidence"), (int, float))
         ]
 
         average_confidence = (
@@ -275,17 +500,35 @@ def main():
             "api_mode": api_mode,
             "confidence_score": round(average_confidence * 100),
             "raw_text": raw_text,
+
+            # Compatibilità con Laravel attuale.
             "lines": [
                 {
-                    "text": line["text"],
-                    "confidence": line["confidence"],
-                    "bbox": line["bbox"],
+                    "text": item["text"],
+                    "confidence": item["confidence"],
+                    "bbox": item["bbox"],
                 }
-                for line in lines
+                for item in reading_items
             ],
+
+            # Nuovo output strutturato.
+            "items": reading_items,
+            "layout": {
+                "image": {
+                    "path": str(image_path),
+                    "width": image_width,
+                    "height": image_height,
+                },
+                "visual_lines": visual_lines,
+            },
+
             "metadata": {
-                "line_count": len(lines),
+                "line_count": len(reading_items),
+                "item_count": len(reading_items),
+                "visual_line_count": len(visual_lines),
                 "average_confidence": average_confidence,
+                "image_width": image_width,
+                "image_height": image_height,
             },
         }
 

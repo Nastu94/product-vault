@@ -167,11 +167,23 @@ class DocumentTextExtractionPipeline
 
             if (mb_strlen($rawText) < 20) {
                 $extraction->update([
-                    'status' => 'failed',
-                    'raw_text' => $rawText !== '' ? $rawText : null,
-                    'confidence_score' => 0,
-                    'error_message' => 'PaddleOCR completato, ma non ha restituito testo utile.',
-                    'metadata' => array_merge($extraction->metadata ?? [], $result['metadata'] ?? []),
+                    'status' => 'completed',
+                    'raw_text' => $rawText,
+                    'confidence_score' => $confidenceScore,
+                    'metadata' => array_merge($extraction->metadata ?? [], [
+                        /*
+                        |--------------------------------------------------------------------------
+                        | OCR layout data
+                        |--------------------------------------------------------------------------
+                        |
+                        | ocr_lines resta per compatibilità con la pipeline attuale.
+                        | ocr_items e ocr_layout saranno usati dai parser layout-aware futuri.
+                        |
+                        */
+                        'ocr_lines' => $result['lines'] ?? [],
+                        'ocr_items' => $result['items'] ?? [],
+                        'ocr_layout' => $result['layout'] ?? null,
+                    ], $result['metadata'] ?? []),
                     'completed_at' => now(),
                 ]);
 
@@ -187,7 +199,18 @@ class DocumentTextExtractionPipeline
                 'raw_text' => $rawText,
                 'confidence_score' => $confidenceScore,
                 'metadata' => array_merge($extraction->metadata ?? [], [
+                    /*
+                    |--------------------------------------------------------------------------
+                    | OCR layout data
+                    |--------------------------------------------------------------------------
+                    |
+                    | ocr_lines resta per compatibilità.
+                    | ocr_items e ocr_layout saranno usati dai parser layout-aware futuri.
+                    |
+                    */
                     'ocr_lines' => $result['lines'] ?? [],
+                    'ocr_items' => $result['items'] ?? [],
+                    'ocr_layout' => $result['layout'] ?? null,
                 ], $result['metadata'] ?? []),
                 'completed_at' => now(),
             ]);
@@ -358,6 +381,9 @@ class DocumentTextExtractionPipeline
                     'image_path' => $imagePath,
                     'text_length' => mb_strlen($pageText),
                     'confidence_score' => $score,
+                    'ocr_lines' => $result['lines'] ?? [],
+                    'ocr_items' => $result['items'] ?? [],
+                    'ocr_layout' => $result['layout'] ?? null,
                     'metadata' => $result['metadata'] ?? [],
                 ];
             }

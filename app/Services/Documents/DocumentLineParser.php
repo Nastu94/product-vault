@@ -9,6 +9,23 @@ use App\Models\DocumentLineType;
 class DocumentLineParser
 {
     /**
+     * Parser principale per estrazione righe prodotto/servizio da testo documento.
+     * Usa diverse strategie euristiche per identificare righe candidate, con o senza importi.
+     * Il parser è progettato per funzionare su testo raw estratto da OCR o PDF, 
+     * e non richiede necessariamente righe già separate.
+     * Le righe estratte vengono salvate in tabella document_lines, 
+     * con metadata che indicano la strategia di parsing usata e i dati grezzi trovati.
+     * Il parser è iterativo e mantiene uno stato di "candidato in sospeso" per gestire righe prodotto 
+     * distribuite su più linee o con quantità su riga separata.
+     * Per le fatture digitali tabellari viene usato un parser dedicato che riconosce righe 
+     * con codice, descrizione, quantità, prezzo, sconto e IVA.
+     */
+    public function __construct(
+        private readonly LayoutAwareInvoiceLineParser $layoutAwareInvoiceLineParser
+    ) {
+    }
+
+    /**
      * Estrae righe candidate dal testo del documento.
      *
      * Strategie supportate:
@@ -54,6 +71,12 @@ class DocumentLineParser
         |
         */
         if ($document->documentType?->code === 'invoice') {
+            $layoutAwareCreated = $this->layoutAwareInvoiceLineParser->parse($document, $lineTypeId);
+
+            if ($layoutAwareCreated > 0) {
+                return $layoutAwareCreated;
+            }
+
             return $this->parseInvoiceLines($document, $lineTypeId, $lines);
         }
 

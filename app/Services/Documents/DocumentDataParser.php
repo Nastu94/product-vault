@@ -9,6 +9,23 @@ use Carbon\Carbon;
 class DocumentDataParser
 {
     /**
+     * Il parser principale per estrarre dati strutturati dal testo del documento.
+     * Usa una combinazione di regex, euristiche e logica specifica per cercare
+     * di identificare data acquisto, totale documento e valuta.
+     * Il parser è "layout-aware" grazie al supporto di LayoutAwareTotalAmountExtractor, 
+     * che cerca di identificare il totale usando anche le coordinate OCR quando disponibili.
+     * Il parser non è perfetto e non deve essere perfetto: l'obiettivo è estrarre dati utili per una buona parte dei documenti, 
+     * migliorando gradualmente con iterazioni future.
+     * Il parser non deve essere rigido: è meglio estrarre un dato anche se non perfetto piuttosto che non estrarre nulla. 
+     * L'obiettivo è aiutare l'utente a precompilare i campi più importanti, 
+     * lasciando sempre la possibilità di correggere manualmente.
+     */
+    public function __construct(
+        private readonly LayoutAwareTotalAmountExtractor $layoutAwareTotalAmountExtractor
+    ) {
+    }
+
+    /**
      * Estrae dati base dal testo del documento.
      *
      * MVP iniziale:
@@ -27,7 +44,8 @@ class DocumentDataParser
         }
 
         $purchaseDate = $this->extractDate($text);
-        $totalAmount = $this->extractTotalAmount($text);
+        $totalAmount = $this->layoutAwareTotalAmountExtractor->extract($document)
+            ?? $this->extractTotalAmount($text);
         $currencyId = $this->detectCurrencyId($text);
 
         $updates = [];

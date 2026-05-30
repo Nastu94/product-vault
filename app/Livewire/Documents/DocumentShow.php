@@ -4,14 +4,18 @@ namespace App\Livewire\Documents;
 
 use App\Jobs\ProcessDocumentJob;
 use App\Models\Document;
+use App\Models\DocumentClassification;
+use App\Models\DocumentLine;
 use App\Models\DocumentProcessingAttempt;
 use App\Models\DocumentTextExtraction;
-use App\Models\DocumentClassification;
 use App\Models\ProductIdentificationCandidate;
+use App\Models\Merchant;
+use App\Services\Documents\ProductCandidateGenerator;
 use App\Services\Documents\ProductFromCandidateCreator;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
 
 class DocumentShow extends Component
@@ -22,6 +26,20 @@ class DocumentShow extends Component
      * Documento mostrato nella pagina dettaglio.
      */
     public Document $document;
+
+    /**
+     * Campi modificabili nella revisione manuale dei dati base.
+     */
+    public string $editMerchantName = '';
+
+    public ?string $editPurchaseDate = null;
+
+    public ?string $editTotalAmount = null;
+
+    /**
+     * Campi modificabili per le righe documento.
+     */
+    public array $lineReviewForms = [];
 
     /**
      * Ultimo tentativo di processing del documento.
@@ -69,6 +87,9 @@ class DocumentShow extends Component
             ->selectedClassification()
             ->with('documentType')
             ->first();
+
+        $this->fillDocumentReviewForm();
+        $this->fillLineReviewForms();
     }
 
     /**
@@ -431,6 +452,374 @@ class DocumentShow extends Component
         }
 
         return 'bg-red-50 text-red-700 ring-red-600/20';
+    }
+
+    /**
+     * Popola il form di revisione con i dati correnti del documento.
+     */
+    private function fillDocumentReviewForm(): void
+    {
+        $this->editMerchantName = (string) ($this->document->merchant?->name ?? '');
+
+        $this->editPurchaseDate = $this->document->purchase_date
+            ? $this->document->purchase_date->format('Y-m-d')
+            : null;
+
+        $this->editTotalAmount = $this->document->total_amount !== null
+            ? number_format((float) $this->document->total_amount, 2, '.', '')
+            : null;
+    }
+
+    /**
+     * Salva le correzioni manuali dei dati base documento.
+     */
+    public function saveDocumentReviewData(): void
+    {
+        $this->authorize('update', $this->document);
+
+        $this->resetErrorBag();
+
+        $this->validate([
+            'editMerchantName' => ['nullable', 'string', 'max:160'],
+            'editPurchaseDate' => ['nullable', 'date'],
+        ], [
+            'editMerchantName.max' => 'Il nome venditore non può superare 160 caratteri.',
+            'editPurchaseDate.date' => 'La data inserita non è valida.',
+        ]);
+
+        $totalAmount = $this->normalizeDecimalInput($this->editTotalAmount);
+
+        if ($this->editTotalAmount !== null && trim($this->editTotalAmount) !== '' && $totalAmount === null) {
+            $this->addError('editTotalAmount', 'Il totale inserito non è valido.');
+
+            return;
+        }
+
+        $merchant = $this->findOrCreateManualMerchant($this->editMerchantName);
+
+        $this->document->update([
+            'merchant_id' => $merchant?->id,
+            'purchase_date' => $this->editPurchaseDate ?: null,
+            'total_amount' => $totalAmount,
+        ]);
+
+        $this->refreshDocumentState();
+        $this->fillDocumentReviewForm();
+
+        session()->flash('review_success', 'Dati documento aggiornati correttamente.');
+    }
+
+    /**
+     * Ripristina il form ai valori salvati sul documento.
+     */
+    public function resetDocumentReviewForm(): void
+    {
+        $this->document->refresh();
+
+        $this->document->load([
+            'documentType',
+            'merchant',
+            'currency',
+        ]);
+
+        $this->fillDocumentReviewForm();
+
+        session()->flash('review_warning', 'Modifiche non salvate annullate.');
+    }
+
+    /**
+     * Trova o crea un merchant a partire dal nome corretto manualmente.
+     */
+    private function findOrCreateManualMerchant(?string $merchantName): ?Merchant
+    {
+        $merchantName = trim((string) $merchantName);
+
+        if ($merchantName === '') {
+            return null;
+        }
+
+        $normalizedName = $this->normalizeMerchantName($merchantName);
+
+        $merchant = Merchant::query()
+            ->where('team_id', $this->document->team_id)
+            ->where('normalized_name', $normalizedName)
+            ->first();
+
+        if ($merchant) {
+            return $merchant;
+        }
+
+        return Merchant::query()->create([
+            'team_id' => $this->document->team_id,
+            'name' => $merchantName,
+            'normalized_name' => $normalizedName,
+            'is_verified' => false,
+            'is_active' => true,
+        ]);
+    }
+
+    /**
+     * Normalizza un nome merchant per evitare duplicati banali.
+     */
+    private function normalizeMerchantName(string $name): string
+    {
+        $name = Str::ascii($name);
+        $name = mb_strtolower($name);
+        $name = preg_replace('/[^a-z0-9]+/i', ' ', $name) ?: $name;
+        $name = trim(preg_replace('/\s+/', ' ', $name) ?: $name);
+
+        return $name;
+    }
+
+    /**
+     * Normalizza importi inseriti manualmente.
+     */
+    private function normalizeDecimalInput(?string $value): ?float
+    {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return null;
+        }
+
+        if (str_contains($value, ',')) {
+            $value = str_replace(['.', ' '], '', $value);
+            $value = str_replace(',', '.', $value);
+        } else {
+            $value = str_replace(' ', '', $value);
+        }
+
+        if (! is_numeric($value)) {
+            return null;
+        }
+
+        return round((float) $value, 2);
+    }
+
+    /**
+     * Ricarica documento e relazioni usate dalla pagina.
+     */
+    private function refreshDocumentState(): void
+    {
+        $this->document = $this->document->fresh([
+            'documentType',
+            'merchant',
+            'currency',
+            'uploadedBy',
+            'selectedClassification.documentType',
+            'lines.documentLineType',
+            'productIdentificationCandidates.documentLine',
+            'productIdentificationCandidates.product',
+        ]);
+
+        $this->latestProcessingAttempt = $this->document
+            ->processingAttempts()
+            ->latest()
+            ->first();
+
+        $this->latestTextExtraction = $this->document
+            ->latestTextExtraction()
+            ->first();
+
+        $this->selectedClassification = $this->document
+            ->selectedClassification()
+            ->with('documentType')
+            ->first();
+
+        $this->fillDocumentReviewForm();
+        $this->fillLineReviewForms();
+    }
+
+    /**
+     * Popola il form di revisione righe con i dati correnti.
+     */
+    private function fillLineReviewForms(): void
+    {
+        $this->lineReviewForms = [];
+
+        foreach ($this->document->lines->sortBy('line_number') as $line) {
+            $this->lineReviewForms[$line->id] = [
+                'description' => (string) ($line->description ?? ''),
+                'quantity' => $line->quantity !== null
+                    ? number_format((float) $line->quantity, 3, '.', '')
+                    : '',
+                'unit_price' => $line->unit_price !== null
+                    ? number_format((float) $line->unit_price, 2, '.', '')
+                    : '',
+                'total_price' => $line->total_price !== null
+                    ? number_format((float) $line->total_price, 2, '.', '')
+                    : '',
+                'product_code_candidate' => (string) ($line->metadata['product_code_candidate'] ?? ''),
+                'serial_number_candidate' => (string) ($line->metadata['serial_number_candidate'] ?? ''),
+            ];
+        }
+    }
+
+    /**
+     * Salva una riga documento corretta manualmente.
+     */
+    public function saveDocumentLineReviewData(int $lineId): void
+    {
+        $this->authorize('update', $this->document);
+
+        if ($this->document->status === 'linked_to_product') {
+            session()->flash('line_warning', 'Non puoi modificare le righe dopo aver collegato il documento a un prodotto.');
+
+            return;
+        }
+
+        $line = DocumentLine::query()
+            ->where('document_id', $this->document->id)
+            ->whereKey($lineId)
+            ->firstOrFail();
+
+        $form = $this->lineReviewForms[$lineId] ?? [];
+
+        $description = trim((string) ($form['description'] ?? ''));
+
+        if ($description === '') {
+            $this->addError("lineReviewForms.{$lineId}.description", 'La descrizione è obbligatoria.');
+
+            return;
+        }
+
+        $quantity = $this->normalizeQuantityInput($form['quantity'] ?? null);
+        $unitPrice = $this->normalizeDecimalInput($form['unit_price'] ?? null);
+        $totalPrice = $this->normalizeDecimalInput($form['total_price'] ?? null);
+
+        if (($form['quantity'] ?? '') !== '' && $quantity === null) {
+            $this->addError("lineReviewForms.{$lineId}.quantity", 'La quantità non è valida.');
+
+            return;
+        }
+
+        if (($form['unit_price'] ?? '') !== '' && $unitPrice === null) {
+            $this->addError("lineReviewForms.{$lineId}.unit_price", 'Il prezzo unitario non è valido.');
+
+            return;
+        }
+
+        if (($form['total_price'] ?? '') !== '' && $totalPrice === null) {
+            $this->addError("lineReviewForms.{$lineId}.total_price", 'Il totale riga non è valido.');
+
+            return;
+        }
+
+        $metadata = $line->metadata ?? [];
+
+        $metadata['product_code_candidate'] = trim((string) ($form['product_code_candidate'] ?? '')) ?: null;
+        $metadata['serial_number_candidate'] = trim((string) ($form['serial_number_candidate'] ?? '')) ?: null;
+        $metadata['manual_review'] = [
+            'reviewed' => true,
+            'reviewed_at' => now()->toISOString(),
+            'reviewed_by_user_id' => auth()->id(),
+        ];
+
+        $line->update([
+            'description' => $description,
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'total_price' => $totalPrice,
+            'confidence_score' => 100,
+            'metadata' => $metadata,
+        ]);
+
+        $this->refreshDocumentState();
+        $this->fillLineReviewForms();
+
+        session()->flash('line_success', 'Riga documento aggiornata. Rigenera i candidati per applicare la modifica.');
+    }
+
+    /**
+     * Elimina una riga documento dalla revisione.
+     */
+    public function deleteDocumentLine(int $lineId): void
+    {
+        $this->authorize('update', $this->document);
+
+        if ($this->document->status === 'linked_to_product') {
+            session()->flash('line_warning', 'Non puoi eliminare righe dopo aver collegato il documento a un prodotto.');
+
+            return;
+        }
+
+        $line = DocumentLine::query()
+            ->where('document_id', $this->document->id)
+            ->whereKey($lineId)
+            ->firstOrFail();
+
+        $hasLinkedProduct = $line->productIdentificationCandidates()
+            ->whereNotNull('product_id')
+            ->exists();
+
+        if ($hasLinkedProduct) {
+            session()->flash('line_warning', 'Questa riga ha già generato un prodotto e non può essere eliminata.');
+
+            return;
+        }
+
+        $line->productIdentificationCandidates()
+            ->whereNull('product_id')
+            ->delete();
+
+        $line->delete();
+
+        $this->refreshDocumentState();
+        $this->fillLineReviewForms();
+
+        session()->flash('line_success', 'Riga eliminata. Rigenera i candidati per aggiornare la revisione.');
+    }
+
+    /**
+     * Rigenera i candidati prodotto partendo dalle righe attuali.
+     */
+    public function regenerateProductCandidates(ProductCandidateGenerator $productCandidateGenerator): void
+    {
+        $this->authorize('update', $this->document);
+
+        if ($this->document->status === 'linked_to_product') {
+            session()->flash('line_warning', 'Non puoi rigenerare candidati dopo aver collegato il documento a un prodotto.');
+
+            return;
+        }
+
+        $this->document->refresh();
+
+        $created = $productCandidateGenerator->generate($this->document);
+
+        $this->document->update([
+            'status' => $created > 0 ? 'needs_review' : 'parsed',
+        ]);
+
+        $this->refreshDocumentState();
+        $this->fillLineReviewForms();
+
+        session()->flash(
+            'line_success',
+            $created > 0
+                ? "Candidati rigenerati: {$created}."
+                : 'Nessun candidato prodotto generato dalle righe attuali.'
+        );
+    }
+
+    /**
+     * Normalizza quantità inserite manualmente.
+     */
+    private function normalizeQuantityInput(?string $value): ?float
+    {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return null;
+        }
+
+        $value = str_replace(',', '.', $value);
+
+        if (! is_numeric($value)) {
+            return null;
+        }
+
+        return round((float) $value, 3);
     }
 
     /**

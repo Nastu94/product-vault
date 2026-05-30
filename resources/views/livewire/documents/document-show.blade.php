@@ -125,47 +125,111 @@
                             @endif
                         </div>
 
-                        <dl class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                            <div>
-                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                    Data rilevata
-                                </dt>
-                                <dd class="mt-1 text-sm text-gray-900">
-                                    {{ $document->purchase_date?->format('d/m/Y') ?? '—' }}
-                                </dd>
-                            </div>
-
-                            <div>
-                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                    Totale rilevato
-                                </dt>
-                                <dd class="mt-1 text-sm text-gray-900">
-                                    @if ($document->total_amount)
-                                        {{ number_format($document->total_amount, 2, ',', '.') }}
-                                        {{ $document->currency?->code }}
-                                    @else
-                                        —
-                                    @endif
-                                </dd>
-                            </div>
-
-                            <div>
-                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                    Valuta
-                                </dt>
-                                <dd class="mt-1 text-sm text-gray-900">
-                                    {{ $document->currency?->code ?? '—' }}
-                                </dd>
-                            </div>
-                        </dl>
-
-                        @if (in_array($document->status, ['parsed', 'needs_review'], true))
-                            <div class="mt-5 rounded-md border border-blue-200 bg-blue-50 p-4">
-                                <p class="text-sm text-blue-700">
-                                    Questi dati sono candidati automatici. Nel flusso di revisione l’utente potrà confermarli o correggerli.
-                                </p>
+                        @if (session()->has('review_success'))
+                            <div class="mt-5 rounded-md bg-green-50 p-4 text-sm text-green-700">
+                                {{ session('review_success') }}
                             </div>
                         @endif
+
+                        @if (session()->has('review_warning'))
+                            <div class="mt-5 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
+                                {{ session('review_warning') }}
+                            </div>
+                        @endif
+
+                        <form wire:submit.prevent="saveDocumentReviewData" class="mt-6 space-y-5">
+                            <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                                <div class="sm:col-span-3">
+                                    <label for="editMerchantName" class="block text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Venditore
+                                    </label>
+
+                                    <input
+                                        id="editMerchantName"
+                                        type="text"
+                                        wire:model.defer="editMerchantName"
+                                        class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        placeholder="Nome venditore"
+                                    >
+
+                                    @error('editMerchantName')
+                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                    @enderror
+                                </div>
+
+                                <div>
+                                    <label for="editPurchaseDate" class="block text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Data documento
+                                    </label>
+
+                                    <input
+                                        id="editPurchaseDate"
+                                        type="date"
+                                        wire:model.defer="editPurchaseDate"
+                                        class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                    >
+
+                                    @error('editPurchaseDate')
+                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                    @enderror
+                                </div>
+
+                                <div>
+                                    <label for="editTotalAmount" class="block text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Totale
+                                    </label>
+
+                                    <input
+                                        id="editTotalAmount"
+                                        type="text"
+                                        inputmode="decimal"
+                                        wire:model.defer="editTotalAmount"
+                                        class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        placeholder="0,00"
+                                    >
+
+                                    @error('editTotalAmount')
+                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                    @enderror
+                                </div>
+
+                                <div>
+                                    <label class="block text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Valuta
+                                    </label>
+
+                                    <div class="mt-1 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                                        {{ $document->currency?->code ?? '—' }}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex flex-col gap-3 rounded-md border border-blue-200 bg-blue-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                                <p class="text-sm text-blue-700">
+                                    Correggi qui i dati base prima di confermare un prodotto. Le modifiche non rilanciano automaticamente OCR o parsing.
+                                </p>
+
+                                <div class="flex shrink-0 gap-2">
+                                    <button
+                                        type="button"
+                                        wire:click="resetDocumentReviewForm"
+                                        wire:loading.attr="disabled"
+                                        class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+                                    >
+                                        Annulla
+                                    </button>
+
+                                    <button
+                                        type="submit"
+                                        wire:loading.attr="disabled"
+                                        wire:target="saveDocumentReviewData"
+                                        class="inline-flex items-center rounded-md border border-transparent bg-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
+                                    >
+                                        Salva dati
+                                    </button>
+                                </div>
+                            </div>
+                        </form>
                     </div>
                 </section>
 
@@ -216,6 +280,31 @@
                         @if (session()->has('product_warning'))
                             <div class="mb-4 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
                                 {{ session('product_warning') }}
+                            </div>
+                        @endif
+                        @if (session()->has('line_success'))
+                            <div class="mb-4 rounded-md bg-green-50 p-4 text-sm text-green-700">
+                                {{ session('line_success') }}
+                            </div>
+                        @endif
+
+                        @if (session()->has('line_warning'))
+                            <div class="mb-4 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
+                                {{ session('line_warning') }}
+                            </div>
+                        @endif
+
+                        @if ($documentLines->isNotEmpty() && $document->status !== 'linked_to_product')
+                            <div class="mb-4 flex justify-end">
+                                <button
+                                    type="button"
+                                    wire:click="regenerateProductCandidates"
+                                    wire:loading.attr="disabled"
+                                    wire:target="regenerateProductCandidates"
+                                    class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+                                >
+                                    Rigenera candidati
+                                </button>
                             </div>
                         @endif
                         @if ($documentLines->isNotEmpty())
@@ -277,6 +366,134 @@
                                                         <div class="mt-1 text-xs text-gray-400">
                                                             Parser: {{ str_replace('_', ' ', $mode) }}
                                                         </div>
+                                                    @endif
+                                                    @if ($document->status !== 'linked_to_product')
+                                                        <details class="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3">
+                                                            <summary class="cursor-pointer text-xs font-medium text-gray-700">
+                                                                Modifica riga
+                                                            </summary>
+
+                                                            <form
+                                                                wire:submit.prevent="saveDocumentLineReviewData({{ $line->id }})"
+                                                                class="mt-3 space-y-3"
+                                                            >
+                                                                <div>
+                                                                    <label class="block text-xs font-medium text-gray-500">
+                                                                        Descrizione
+                                                                    </label>
+
+                                                                    <input
+                                                                        type="text"
+                                                                        wire:model.defer="lineReviewForms.{{ $line->id }}.description"
+                                                                        class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                    >
+
+                                                                    @error("lineReviewForms.{$line->id}.description")
+                                                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                    @enderror
+                                                                </div>
+
+                                                                <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                                                    <div>
+                                                                        <label class="block text-xs font-medium text-gray-500">
+                                                                            Quantità
+                                                                        </label>
+
+                                                                        <input
+                                                                            type="text"
+                                                                            inputmode="decimal"
+                                                                            wire:model.defer="lineReviewForms.{{ $line->id }}.quantity"
+                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                        >
+
+                                                                        @error("lineReviewForms.{$line->id}.quantity")
+                                                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                        @enderror
+                                                                    </div>
+
+                                                                    <div>
+                                                                        <label class="block text-xs font-medium text-gray-500">
+                                                                            Prezzo unitario
+                                                                        </label>
+
+                                                                        <input
+                                                                            type="text"
+                                                                            inputmode="decimal"
+                                                                            wire:model.defer="lineReviewForms.{{ $line->id }}.unit_price"
+                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                        >
+
+                                                                        @error("lineReviewForms.{$line->id}.unit_price")
+                                                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                        @enderror
+                                                                    </div>
+
+                                                                    <div>
+                                                                        <label class="block text-xs font-medium text-gray-500">
+                                                                            Totale riga
+                                                                        </label>
+
+                                                                        <input
+                                                                            type="text"
+                                                                            inputmode="decimal"
+                                                                            wire:model.defer="lineReviewForms.{{ $line->id }}.total_price"
+                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                        >
+
+                                                                        @error("lineReviewForms.{$line->id}.total_price")
+                                                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                        @enderror
+                                                                    </div>
+                                                                </div>
+
+                                                                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                                                    <div>
+                                                                        <label class="block text-xs font-medium text-gray-500">
+                                                                            Codice / modello candidato
+                                                                        </label>
+
+                                                                        <input
+                                                                            type="text"
+                                                                            wire:model.defer="lineReviewForms.{{ $line->id }}.product_code_candidate"
+                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                        >
+                                                                    </div>
+
+                                                                    <div>
+                                                                        <label class="block text-xs font-medium text-gray-500">
+                                                                            Seriale candidato
+                                                                        </label>
+
+                                                                        <input
+                                                                            type="text"
+                                                                            wire:model.defer="lineReviewForms.{{ $line->id }}.serial_number_candidate"
+                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                        >
+                                                                    </div>
+                                                                </div>
+
+                                                                <div class="flex flex-wrap gap-2">
+                                                                    <button
+                                                                        type="submit"
+                                                                        wire:loading.attr="disabled"
+                                                                        wire:target="saveDocumentLineReviewData({{ $line->id }})"
+                                                                        class="inline-flex items-center rounded-md border border-transparent bg-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
+                                                                    >
+                                                                        Salva riga
+                                                                    </button>
+
+                                                                    <button
+                                                                        type="button"
+                                                                        wire:click="deleteDocumentLine({{ $line->id }})"
+                                                                        wire:loading.attr="disabled"
+                                                                        wire:target="deleteDocumentLine({{ $line->id }})"
+                                                                        class="inline-flex items-center rounded-md border border-red-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-50"
+                                                                    >
+                                                                        Elimina riga
+                                                                    </button>
+                                                                </div>
+                                                            </form>
+                                                        </details>
                                                     @endif
                                                 </td>
 

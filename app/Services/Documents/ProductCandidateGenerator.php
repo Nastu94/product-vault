@@ -18,6 +18,7 @@ class ProductCandidateGenerator
     {
         $lines = $document
             ->lines()
+            ->with('document.documentType')
             ->orderBy('line_number')
             ->get();
 
@@ -256,6 +257,25 @@ class ProductCandidateGenerator
             return false;
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Scontrini lunghi / supermercato misto
+        |--------------------------------------------------------------------------
+        |
+        | Su documenti receipt non basta dire "non è bloccato".
+        | Uno scontrino può contenere decine di alimentari, prodotti per casa,
+        | igiene e piccoli consumabili che non devono diventare prodotti garantiti.
+        |
+        | Quindi per i receipt richiediamo anche segnali positivi di bene durevole.
+        |
+        */
+        if (
+            $line->document?->documentType?->code === 'receipt'
+            && ! $this->receiptLineLooksLikeDurableProduct($line)
+        ) {
+            return false;
+        }
+
         return true;
     }
 
@@ -270,6 +290,8 @@ class ProductCandidateGenerator
     {
         $description = mb_strtolower((string) $line->description);
         $rawText = mb_strtolower((string) $line->raw_text);
+        $normalizedDescription = $this->normalizeSignalText((string) $line->description);
+        $normalizedRawText = $this->normalizeSignalText((string) $line->raw_text);
         $invoiceCode = mb_strtolower((string) ($line->metadata['invoice_code'] ?? ''));
         $productCode = mb_strtolower((string) ($line->metadata['product_code_candidate'] ?? ''));
 
@@ -358,10 +380,216 @@ class ProductCandidateGenerator
             'manodopera',
             'sanificante',
             'mensa',
+            'banana',
+            'banane',
+            'latte',
+            'pane',
+            'casereccio',
+            'rigatoni',
+            'sugo',
+            'pomodoro',
+            'biscotti',
+            'detersivo',
+            'lavatrice 35lav',
+            'spugne',
+            'multiuso',
+            'carta igienica',
+            'sacchetti',
+            'freezer',
+            'shampoo',
+            'dentifricio',
+            'pile aa',
+            'pile alcaline',
+            'batterie alcaline',
+            'coupon',
+            'fedelta',
+            'sconti totali',
         ];
 
         foreach ($blockedSignals as $signal) {
-            if (str_contains($description, $signal) || str_contains($rawText, $signal)) {
+            if (
+                str_contains($normalizedDescription, $signal)
+                || str_contains($normalizedRawText, $signal)
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Per gli scontrini, decide se una riga ha segnali positivi di prodotto durevole.
+     */
+    private function receiptLineLooksLikeDurableProduct(DocumentLine $line): bool
+    {
+        $description = $this->normalizeSignalText((string) $line->description);
+        $rawText = $this->normalizeSignalText((string) $line->raw_text);
+
+        $text = trim($description . ' ' . $rawText);
+
+        if ($text === '') {
+            return false;
+        }
+
+        if ($this->lineLooksLikeReceiptSummaryOrAccounting($text)) {
+            return false;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Segnali forti prodotto durevole/accessorio elettronico
+        |--------------------------------------------------------------------------
+        |
+        | Lista volutamente orientata a beni con possibile garanzia o accessori tech.
+        | Non include consumabili generici come pile, shampoo, detersivi o carta.
+        |
+        */
+        $durableSignals = [
+            'smartphone',
+            'telefono',
+            'iphone',
+            'tablet',
+            'notebook',
+            'laptop',
+            'computer',
+            'monitor',
+            'televisore',
+            'tv',
+            'console',
+            'stampante',
+            'router',
+            'modem',
+            'wifi',
+            'wi fi',
+            'powerbank',
+            'power bank',
+            'lampada led smart',
+            'led smart',
+            'friggitrice',
+            'aria 6l',
+            'air fryer',
+            'cavo usb',
+            'usb c',
+            'usb-c',
+            'hdmi',
+            'adattatore',
+            'dock',
+            'docking',
+            'caricatore',
+            'alimentatore',
+            'cuffie',
+            'auricolari',
+            'speaker',
+            'soundbar',
+            'aspirapolvere',
+            'microonde',
+            'forno',
+            'lavatrice',
+            'lavastoviglie',
+            'frigorifero',
+            'asciugatrice',
+        ];
+
+        foreach ($durableSignals as $signal) {
+            if (str_contains($text, $signal)) {
+                return true;
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Codici tecnici forti
+        |--------------------------------------------------------------------------
+        |
+        | Se la riga ha seriale/EAN/modello in metadata o raw_text può essere valida,
+        | ma non vogliamo che codici fedeltà o matricole isolate diventino prodotti.
+        |
+        */
+        $productCode = trim((string) ($line->metadata['product_code_candidate'] ?? ''));
+        $serialNumber = trim((string) ($line->metadata['serial_number_candidate'] ?? ''));
+
+        if ($serialNumber !== '') {
+            return true;
+        }
+
+        if ($productCode !== '' && ! $this->lineLooksLikeTechnicalOrLoyaltyNoise($text)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Normalizza testo per matching robusto, includendo errori OCR comuni.
+     */
+    private function normalizeSignalText(string $text): string
+    {
+        $text = mb_strtolower($text);
+
+        /*
+        |--------------------------------------------------------------------------
+        | OCR tolerance
+        |--------------------------------------------------------------------------
+        |
+        | Paddle/Tesseract possono leggere O al posto di 0 o viceversa.
+        | Per i soli segnali testuali, trasformiamo 0 in o.
+        |
+        */
+        $text = str_replace('0', 'o', $text);
+        $text = preg_replace('/[^a-z0-9à-ÿ\-\s]+/u', ' ', $text) ?: $text;
+        $text = trim(preg_replace('/\s+/', ' ', $text) ?: $text);
+
+        return $text;
+    }
+
+    /**
+     * Blocca righe riepilogo/contabili/tecniche lette come articoli.
+     */
+    private function lineLooksLikeReceiptSummaryOrAccounting(string $text): bool
+    {
+        $signals = [
+            'subtotale',
+            'totale',
+            'sconti totali',
+            'sconto punti',
+            'coupon',
+            'fedelta',
+            'pagamento',
+            'bancomat',
+            'pos',
+            'resto',
+            'codice fedelta',
+            'grazie per aver acquistato',
+            'documento di test',
+            'documento fittizio',
+            'garanzia commerciale',
+        ];
+
+        foreach ($signals as $signal) {
+            if (str_contains($text, $signal)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Evita che righe tecniche isolate diventino prodotti.
+     */
+    private function lineLooksLikeTechnicalOrLoyaltyNoise(string $text): bool
+    {
+        $signals = [
+            'codice fedelta',
+            'matricola',
+            'grazie per aver acquistato',
+            'documento di test',
+            'documento fittizio',
+        ];
+
+        foreach ($signals as $signal) {
+            if (str_contains($text, $signal)) {
                 return true;
             }
         }
@@ -378,7 +606,24 @@ class ProductCandidateGenerator
             return null;
         }
 
-        return trim(preg_replace('/\s+/', ' ', $description) ?: $description);
+        $name = trim(preg_replace('/\s+/', ' ', $description) ?: $description);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Pulizia residui IVA da righe scontrino
+        |--------------------------------------------------------------------------
+        |
+        | Alcuni parser testuali possono lasciare nel nome prodotto un frammento
+        | della colonna IVA, per esempio:
+        | "CAVO USB-C 1M NYLON NERO %"
+        | "ROUTER WIFI AX1800 DUAL B 22%"
+        |
+        | Il nome candidato deve rappresentare il prodotto, non la riga fiscale.
+        */
+        $name = preg_replace('/\s+\d{1,2}(?:[,.]\d{2})?\s*%$/u', '', $name) ?: $name;
+        $name = preg_replace('/\s+%$/u', '', $name) ?: $name;
+
+        return trim($name);
     }
 
     /**
@@ -438,6 +683,20 @@ class ProductCandidateGenerator
             return (float) $line->unit_price;
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Guard su IVA letta come quantità
+        |--------------------------------------------------------------------------
+        |
+        | Negli scontrini con formato "descrizione IVA importo", il parser testuale
+        | può interpretare 4%, 10%, 22% come quantity.
+        | In quel caso non dobbiamo dividere il totale per 4/10/22.
+        |
+        */
+        if ($this->lineQuantityLooksLikeVatRate($line) && $line->total_price !== null) {
+            return (float) $line->total_price;
+        }
+
         if ($line->total_price !== null && $line->quantity !== null && (float) $line->quantity > 0) {
             return round((float) $line->total_price / (float) $line->quantity, 2);
         }
@@ -458,6 +717,10 @@ class ProductCandidateGenerator
             return 'unit_price';
         }
 
+        if ($this->lineQuantityLooksLikeVatRate($line) && $line->total_price !== null) {
+            return 'total_price_vat_quantity_guard';
+        }
+
         if ($line->total_price !== null && $line->quantity !== null && (float) $line->quantity > 0) {
             return 'total_price_divided_by_quantity';
         }
@@ -467,6 +730,26 @@ class ProductCandidateGenerator
         }
 
         return null;
+    }
+
+    /**
+     * Capisce se la quantity salvata sembra in realtà una percentuale IVA.
+     */
+    private function lineQuantityLooksLikeVatRate(DocumentLine $line): bool
+    {
+        if ($line->quantity === null) {
+            return false;
+        }
+
+        $quantity = (float) $line->quantity;
+
+        if (! in_array((int) $quantity, [4, 10, 22], true)) {
+            return false;
+        }
+
+        $rawText = (string) $line->raw_text;
+
+        return str_contains($rawText, '%');
     }
 
     /**

@@ -21,7 +21,8 @@ class DocumentLineParser
      * con codice, descrizione, quantità, prezzo, sconto e IVA.
      */
     public function __construct(
-        private readonly LayoutAwareInvoiceLineParser $layoutAwareInvoiceLineParser
+        private readonly LayoutAwareInvoiceLineParser $layoutAwareInvoiceLineParser,
+        private readonly LayoutAwareReceiptLineParser $layoutAwareReceiptLineParser
     ) {
     }
 
@@ -78,6 +79,24 @@ class DocumentLineParser
             }
 
             return $this->parseInvoiceLines($document, $lineTypeId, $lines);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Parser layout-aware per scontrini OCR
+        |--------------------------------------------------------------------------
+        |
+        | Se abbiamo visual lines OCR affidabili, usiamole prima del parser testuale.
+        | Questo evita associazioni errate tra descrizioni e importi negli scontrini
+        | lunghi o multi-colonna.
+        |
+        */
+        if ($document->documentType?->code === 'receipt') {
+            $layoutAwareReceiptCreated = $this->layoutAwareReceiptLineParser->parse($document, $lineTypeId);
+
+            if ($layoutAwareReceiptCreated > 0) {
+                return $layoutAwareReceiptCreated;
+            }
         }
 
         $created = 0;

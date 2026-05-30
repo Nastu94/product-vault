@@ -375,11 +375,23 @@ class DocumentLineParser
             $inlineItem = $this->extractInvoiceInlineItem($rawLine);
 
             if ($inlineItem) {
+                $supportingLines = $this->findFollowingInvoiceSupportingLines($lines, $index);
+
+                if (! empty($supportingLines)) {
+                    $inlineItem['supporting_lines'] = $supportingLines;
+
+                    $ean = $this->extractEanFromInvoiceSupportingLines($supportingLines);
+
+                    if ($ean) {
+                        $inlineItem['product_code'] = $ean;
+                    }
+                }
+
                 $this->createInvoiceLine(
                     document: $document,
                     lineTypeId: $lineTypeId,
                     lineNumber: $index + 1,
-                    rawTextParts: [$rawLine],
+                    rawTextParts: array_merge([$rawLine], $supportingLines),
                     item: $inlineItem,
                     mode: 'invoice_tabular_inline'
                 );
@@ -465,6 +477,73 @@ class DocumentLineParser
     }
 
     /**
+     * Cerca righe tecniche subito dopo una riga fattura inline.
+     */
+    private function findFollowingInvoiceSupportingLines(array $lines, int $currentIndex): array
+    {
+        $supportingLines = [];
+
+        for ($offset = 1; $offset <= 2; $offset++) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                break;
+            }
+
+            $line = $this->normalizeLine($lines[$index]);
+
+            if ($line === '') {
+                continue;
+            }
+
+            if ($this->invoiceLineShouldBeIgnored($line)) {
+                break;
+            }
+
+            if ($this->extractInvoiceInlineItem($line)) {
+                break;
+            }
+
+            if ($this->extractInvoiceProductStart($line)) {
+                break;
+            }
+
+            if (! $this->lineLooksLikeInvoiceSupportingMetadata($line)) {
+                break;
+            }
+
+            $supportingLines[] = $line;
+        }
+
+        return $supportingLines;
+    }
+
+    /**
+     * Estrae EAN da righe supporto, evitando IMEI/seriali.
+     */
+    private function extractEanFromInvoiceSupportingLines(array $supportingLines): ?string
+    {
+        foreach ($supportingLines as $line) {
+            $normalized = mb_strtolower($line);
+
+            if (
+                str_contains($normalized, 'imei')
+                || str_contains($normalized, 'seriale')
+                || str_contains($normalized, 'serial')
+                || str_contains($normalized, 'sn-')
+            ) {
+                continue;
+            }
+
+            if (preg_match('/\b(?<ean>\d{8}|\d{12}|\d{13}|\d{14})\b/u', $line, $matches)) {
+                return $matches['ean'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Esclude intestazioni, riepiloghi, totali, pagamenti e note.
      */
     private function invoiceLineShouldBeIgnored(string $line): bool
@@ -504,12 +583,27 @@ class DocumentLineParser
 
     /**
      * Estrae una riga fattura completa.
+     *
+     * Supporta sia layout con sconto:
+     * CODICE DESCRIZIONE QTA PREZZO SCONTO IVA TOTALE
+     *
+     * sia layout compatto senza sconto:
+     * CODICE DESCRIZIONE QTA PREZZO IVA TOTALE
      */
     private function extractInvoiceInlineItem(string $line): ?array
     {
+        return $this->extractInvoiceInlineItemWithDiscount($line)
+            ?? $this->extractInvoiceInlineItemWithoutDiscount($line);
+    }
+
+    /**
+     * Estrae righe fattura con colonna sconto.
+     */
+    private function extractInvoiceInlineItemWithDiscount(string $line): ?array
+    {
         $amountPattern = '\-?\d{1,3}(?:[.\s]\d{3})*,\d{2}|\-?\d+,\d{2}';
 
-        $pattern = '/^(?<code>[A-Z]{2,}(?:-[A-Z0-9]+)+|[A-Z]{2,}\d[A-Z0-9\-\/\.]*)\s+' .
+        $pattern = '/^(?<code>' . $this->invoiceCodePattern() . ')\s+' .
             '(?<description>.+?)\s+' .
             '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
             '(?<unit_price>' . $amountPattern . ')\s+' .
@@ -521,28 +615,80 @@ class DocumentLineParser
             return null;
         }
 
+        return $this->buildInvoiceItemFromMatches($matches, true);
+    }
+
+    /**
+     * Estrae righe fattura senza colonna sconto.
+     */
+    private function extractInvoiceInlineItemWithoutDiscount(string $line): ?array
+    {
+        $amountPattern = '\-?\d{1,3}(?:[.\s]\d{3})*,\d{2}|\-?\d+,\d{2}';
+
+        $pattern = '/^(?<code>' . $this->invoiceCodePattern() . ')\s+' .
+            '(?<description>.+?)\s+' .
+            '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+            '(?<unit_price>' . $amountPattern . ')\s+' .
+            '(?<vat>\d{1,2}(?:,\d{2})?%)\s+' .
+            '(?<total_price>' . $amountPattern . ')\s*$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        return $this->buildInvoiceItemFromMatches($matches, false);
+    }
+
+    /**
+     * Normalizza i match regex in un item fattura.
+     */
+    private function buildInvoiceItemFromMatches(array $matches, bool $hasDiscount): ?array
+    {
         $description = trim($matches['description']);
 
         if ($description === '' || $this->lineShouldBeIgnored($description)) {
             return null;
         }
 
+        $invoiceCode = trim($matches['code']);
+
+        if ($this->invoiceCodeShouldBeSkippedAsDocumentLine($invoiceCode)) {
+            return null;
+        }
+
         return [
-            'invoice_code' => trim($matches['code']),
+            'invoice_code' => $invoiceCode,
             'description' => $description,
             'quantity' => $this->parseQuantity($matches['quantity']),
             'unit_price' => $this->parseMoney($matches['unit_price']),
-            'discount_amount' => $this->parseMoney($matches['discount']),
+            'discount_amount' => $hasDiscount
+                ? $this->parseMoney($matches['discount'])
+                : null,
             'vat_rate' => trim($matches['vat']),
             'total_price' => $this->parseMoney($matches['total_price']),
-            'product_code' => trim($matches['code']),
+            'product_code' => $invoiceCode,
         ];
     }
 
     /**
      * Estrae colonne importo che completano una riga fattura multi-riga.
+     *
+     * Supporta sia:
+     * QTA PREZZO SCONTO IVA TOTALE
+     *
+     * sia:
+     * QTA PREZZO IVA TOTALE
      */
     private function extractInvoiceAmountColumns(string $line): ?array
+    {
+        return $this->extractInvoiceAmountColumnsWithDiscount($line)
+            ?? $this->extractInvoiceAmountColumnsWithoutDiscount($line);
+    }
+
+    /**
+     * Estrae colonne importo con sconto.
+     */
+    private function extractInvoiceAmountColumnsWithDiscount(string $line): ?array
     {
         $amountPattern = '\-?\d{1,3}(?:[.\s]\d{3})*,\d{2}|\-?\d+,\d{2}';
 
@@ -560,6 +706,31 @@ class DocumentLineParser
             'quantity' => $this->parseQuantity($matches['quantity']),
             'unit_price' => $this->parseMoney($matches['unit_price']),
             'discount_amount' => $this->parseMoney($matches['discount']),
+            'vat_rate' => trim($matches['vat']),
+            'total_price' => $this->parseMoney($matches['total_price']),
+        ];
+    }
+
+    /**
+     * Estrae colonne importo senza sconto.
+     */
+    private function extractInvoiceAmountColumnsWithoutDiscount(string $line): ?array
+    {
+        $amountPattern = '\-?\d{1,3}(?:[.\s]\d{3})*,\d{2}|\-?\d+,\d{2}';
+
+        $pattern = '/^(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+            '(?<unit_price>' . $amountPattern . ')\s+' .
+            '(?<vat>\d{1,2}(?:,\d{2})?%)\s+' .
+            '(?<total_price>' . $amountPattern . ')\s*$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        return [
+            'quantity' => $this->parseQuantity($matches['quantity']),
+            'unit_price' => $this->parseMoney($matches['unit_price']),
+            'discount_amount' => null,
             'vat_rate' => trim($matches['vat']),
             'total_price' => $this->parseMoney($matches['total_price']),
         ];
@@ -673,11 +844,59 @@ class DocumentLineParser
                 'mode' => $mode,
                 'invoice_code' => $item['invoice_code'] ?? null,
                 'product_code_candidate' => $item['product_code'] ?? null,
+                'serial_number_candidate' => $this->extractSerialNumberFromInvoiceSupportingLines($item['supporting_lines'] ?? []),
                 'discount_amount' => $item['discount_amount'] ?? null,
                 'vat_rate' => $item['vat_rate'] ?? null,
                 'supporting_lines' => $item['supporting_lines'] ?? [],
             ],
         ]);
+    }
+
+    /**
+     * Estrae serial number da righe di supporto fattura.
+     */
+    private function extractSerialNumberFromInvoiceSupportingLines(array $supportingLines): ?string
+    {
+        foreach ($supportingLines as $line) {
+            if (preg_match('/\bIMEI\s*(?:TEST[-\s]*)?(?<serial>[A-Z0-9\-]{8,})\b/iu', $line, $matches)) {
+                return trim($matches['serial']);
+            }
+
+            if (preg_match('/\bseriale\s+(?<serial>[A-Z0-9\-]{6,})\b/iu', $line, $matches)) {
+                return trim($matches['serial']);
+            }
+
+            if (preg_match('/\bSN[-\s]?(?<serial>[A-Z0-9\-]{6,})\b/iu', $line, $matches)) {
+                return trim($matches['serial']);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Esclude codici contabili o note che non rappresentano righe prodotto/servizio.
+     */
+    private function invoiceCodeShouldBeSkippedAsDocumentLine(?string $code): bool
+    {
+        $code = mb_strtoupper(trim((string) $code));
+
+        if ($code === '') {
+            return false;
+        }
+
+        $blockedCodes = [
+            'SCONTO',
+            'NOTA',
+            'NOTE',
+            'ACCONTO',
+            'TOTALE',
+            'SUBTOTALE',
+            'RIEPILOGO',
+            'IMPORTO',
+        ];
+
+        return in_array($code, $blockedCodes, true);
     }
 
     /**
@@ -1550,6 +1769,19 @@ class DocumentLineParser
         }
 
         return $amounts;
+    }
+
+    /**
+     * Pattern codice fattura.
+     *
+     * Supporta:
+     * - codici con trattino: USED-R14, FOOD-PASTA, CLEAN-SAN
+     * - codici alfanumerici: EL1001
+     * - codici testuali brevi usati come riga contabile: SCONTO
+     */
+    private function invoiceCodePattern(): string
+    {
+        return '(?:[A-Z]{2,}(?:-[A-Z0-9]+)+|[A-Z]{2,}\d[A-Z0-9\-\/\.]*|[A-Z]{3,})';
     }
 
     /**

@@ -30,6 +30,16 @@ class LayoutAwareInvoiceLineParser
             return 0;
         }
 
+        $visualLineCreated = $this->parseCompactInvoiceVisualLines(
+            document: $document,
+            lineTypeId: $lineTypeId,
+            visualLines: $layout['layout']['visual_lines'] ?? []
+        );
+
+        if ($visualLineCreated > 0) {
+            return $visualLineCreated;
+        }
+
         $columns = $this->detectColumns($items, $metadata);
 
         if (! $columns) {
@@ -101,6 +111,469 @@ class LayoutAwareInvoiceLineParser
         }
 
         return $created;
+    }
+
+    /**
+     * Prova a parsare fatture compatte direttamente dalle visual lines OCR.
+     *
+     * Strategia generale per layout:
+     * CODICE DESCRIZIONE QTA PREZZO IVA TOTALE
+     *
+     * È un parser ibrido: usa il layout OCR solo per ricostruire righe visive,
+     * poi applica parsing testuale tabellare.
+     */
+    private function parseCompactInvoiceVisualLines(Document $document, ?int $lineTypeId, array $visualLines): int
+    {
+        if (empty($visualLines)) {
+            return 0;
+        }
+
+        $visualLines = collect($visualLines)
+            ->filter(fn (array $line): bool => isset($line['text']) && trim((string) $line['text']) !== '')
+            ->sortBy(fn (array $line): float => (float) ($line['center_y'] ?? $line['y1'] ?? 0))
+            ->values()
+            ->all();
+
+        if (! $this->visualLinesLookLikeCompactInvoiceTable($visualLines)) {
+            return 0;
+        }
+
+        $created = 0;
+        $tableStarted = false;
+
+        foreach ($visualLines as $index => $visualLine) {
+            $text = $this->normalizeCompactOcrLine((string) ($visualLine['text'] ?? ''));
+
+            if ($text === '') {
+                continue;
+            }
+
+            if ($this->visualLineLooksLikeCompactInvoiceHeader($text)) {
+                $tableStarted = true;
+                continue;
+            }
+
+            if (! $tableStarted) {
+                continue;
+            }
+
+            if ($this->visualLineEndsCompactInvoiceTable($text)) {
+                break;
+            }
+
+            $item = $this->extractCompactInvoiceVisualLineItem($text);
+
+            if (! $item) {
+                continue;
+            }
+
+            $supportingLines = $this->findSupportingVisualLines($visualLines, $index);
+
+            if (! empty($supportingLines)) {
+                $item['supporting_lines'] = $supportingLines;
+
+                $ean = $this->extractEanFromSupportingLines($supportingLines);
+
+                if ($ean) {
+                    $item['product_code'] = $ean;
+                }
+            }
+
+            DocumentLine::query()->create([
+                'document_id' => $document->id,
+                'document_line_type_id' => $lineTypeId,
+                'line_number' => $created + 1,
+                'raw_text' => trim(implode(' ', array_filter([
+                    $text,
+                    ...($supportingLines ?? []),
+                ]))),
+                'description' => $item['description'],
+                'quantity' => $item['quantity'],
+                'unit_price' => $item['unit_price'],
+                'total_price' => $item['total_price'],
+                'confidence_score' => $this->estimateConfidenceScore(
+                    description: $item['description'],
+                    invoiceCode: $item['invoice_code'],
+                    quantity: $item['quantity'],
+                    unitPrice: $item['unit_price'],
+                    totalPrice: $item['total_price'],
+                    vatRate: $item['vat_rate']
+                ),
+                'metadata' => [
+                    'parser' => 'layout_aware_invoice_line_parser_v2',
+                    'mode' => 'ocr_visual_line_compact',
+                    'invoice_code' => $item['invoice_code'],
+                    'product_code_candidate' => $item['product_code'],
+                    'serial_number_candidate' => $this->extractSerialNumberFromSupportingLines($supportingLines ?? []),
+                    'discount_amount' => $item['discount_amount'],
+                    'vat_rate' => $item['vat_rate'],
+                    'supporting_lines' => $supportingLines ?? [],
+                    'source_visual_line_id' => $visualLine['id'] ?? null,
+                    'source_item_ids' => $visualLine['item_ids'] ?? [],
+                    'inference' => $item['inference'] ?? null,
+                ],
+            ]);
+
+            $created++;
+        }
+
+        return $created;
+    }
+
+    /**
+     * Capisce se le visual lines contengono una tabella compatta.
+     */
+    private function visualLinesLookLikeCompactInvoiceTable(array $visualLines): bool
+    {
+        foreach ($visualLines as $visualLine) {
+            $text = $this->normalizeCompactOcrLine((string) ($visualLine['text'] ?? ''));
+
+            if ($this->visualLineLooksLikeCompactInvoiceHeader($text)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Esclude righe contabili/note dal parser layout-aware.
+     */
+    private function invoiceCodeShouldBeSkippedAsDocumentLine(?string $code): bool
+    {
+        $code = mb_strtoupper(trim((string) $code));
+
+        if ($code === '') {
+            return false;
+        }
+
+        $blockedCodes = [
+            'SCONTO',
+            'NOTA',
+            'NOTE',
+            'ACCONTO',
+            'TOTALE',
+            'SUBTOTALE',
+            'RIEPILOGO',
+            'IMPORTO',
+        ];
+
+        return in_array($code, $blockedCodes, true);
+    }
+
+    /**
+     * Header compatto tipo:
+     * CODICE DESCRIZIONE QTA PREZZO IVA TOTALE
+     */
+    private function visualLineLooksLikeCompactInvoiceHeader(string $text): bool
+    {
+        $normalized = mb_strtolower($text);
+
+        if (! str_contains($normalized, 'codice')) {
+            return false;
+        }
+
+        if (! str_contains($normalized, 'descrizione')) {
+            return false;
+        }
+
+        $columnSignals = 0;
+
+        foreach ([
+            'qta',
+            'qtà',
+            'quantita',
+            'quantità',
+            'prezzo',
+            'iva',
+            'totale',
+            'imponibile',
+        ] as $signal) {
+            if (str_contains($normalized, $signal)) {
+                $columnSignals++;
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Header OCR parziale
+        |--------------------------------------------------------------------------
+        |
+        | Su foto inclinate o layout compatti PaddleOCR può spezzare l'header
+        | e restituire solo "CODICE DESCRIZIONE QTA".
+        |
+        | Non pretendiamo tutte le colonne: ci basta capire che siamo all'inizio
+        | di una tabella articoli. Le singole righe saranno comunque validate
+        | dai parser riga.
+        |
+        */
+        return $columnSignals >= 1;
+    }
+
+    /**
+     * Riconosce la fine della tabella prodotti.
+     */
+    private function visualLineEndsCompactInvoiceTable(string $text): bool
+    {
+        $normalized = mb_strtolower($text);
+
+        foreach ([
+            'riepilogo',
+            'subtotale',
+            'totale iva',
+            'totale documento',
+            'totale fattura',
+            'importo pagato',
+            'netto a pagare',
+            'documento di test',
+            'non utilizzabile',
+        ] as $signal) {
+            if (str_contains($normalized, $signal)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Estrae item da una visual line compatta.
+     */
+    private function extractCompactInvoiceVisualLineItem(string $line): ?array
+    {
+        $line = $this->normalizeCompactOcrLine($line);
+
+        return $this->extractCompactInvoiceVisualLineItemFull($line)
+            ?? $this->extractCompactInvoiceVisualLineItemMissingTotal($line)
+            ?? $this->extractCompactInvoiceVisualLineItemMissingQuantity($line);
+    }
+
+    /**
+     * Caso completo:
+     * CODE DESCRIPTION QTA UNIT VAT TOTAL
+     */
+    private function extractCompactInvoiceVisualLineItemFull(string $line): ?array
+    {
+        $amountPattern = $this->ocrAmountPattern();
+
+        $pattern = '/^(?<code>' . $this->ocrInvoiceCodePattern() . ')\s+' .
+            '(?<description>.+?)\s+' .
+            '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+            '(?<unit_price>' . $amountPattern . ')\s+' .
+            '(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+' .
+            '(?<total_price>' . $amountPattern . ')\s*$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        return $this->buildCompactInvoiceItemFromMatches($matches, [
+            'type' => 'full',
+        ]);
+    }
+
+    /**
+     * Caso OCR senza totale finale:
+     * CODE DESCRIPTION QTA UNIT VAT
+     *
+     * Se quantità e prezzo unitario sono presenti, il totale viene inferito.
+     */
+    private function extractCompactInvoiceVisualLineItemMissingTotal(string $line): ?array
+    {
+        $amountPattern = $this->ocrAmountPattern();
+
+        $pattern = '/^(?<code>' . $this->ocrInvoiceCodePattern() . ')\s+' .
+            '(?<description>.+?)\s+' .
+            '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+            '(?<unit_price>' . $amountPattern . ')\s+' .
+            '(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s*$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        $quantity = $this->parseQuantity($matches['quantity']);
+        $unitPrice = $this->parseMoney($matches['unit_price']);
+
+        if ($quantity === null || $unitPrice === null) {
+            return null;
+        }
+
+        $matches['total_price'] = (string) round($quantity * $unitPrice, 2);
+
+        return $this->buildCompactInvoiceItemFromMatches($matches, [
+            'type' => 'total_inferred_from_quantity_x_unit_price',
+        ]);
+    }
+
+    /**
+     * Caso OCR senza quantità:
+     * CODE DESCRIPTION UNIT VAT TOTAL
+     *
+     * Se il rapporto totale/prezzo unitario è plausibile, inferiamo la quantità.
+     */
+    private function extractCompactInvoiceVisualLineItemMissingQuantity(string $line): ?array
+    {
+        $amountPattern = $this->ocrAmountPattern();
+
+        $pattern = '/^(?<code>' . $this->ocrInvoiceCodePattern() . ')\s+' .
+            '(?<description>.+?)\s+' .
+            '(?<unit_price>' . $amountPattern . ')\s+' .
+            '(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+' .
+            '(?<total_price>' . $amountPattern . ')\s*$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        $unitPrice = $this->parseMoney($matches['unit_price']);
+        $totalPrice = $this->parseMoney($matches['total_price']);
+
+        if ($unitPrice === null || $unitPrice == 0.0 || $totalPrice === null) {
+            return null;
+        }
+
+        $quantity = round($totalPrice / $unitPrice, 3);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Inferenza prudente
+        |--------------------------------------------------------------------------
+        |
+        | Accettiamo quantità inferite solo se vicine a un intero o comunque
+        | ragionevoli. Evita di inventare quantità da righe riepilogo o note.
+        |
+        */
+        if ($quantity <= 0 || $quantity > 999) {
+            return null;
+        }
+
+        $matches['quantity'] = (string) $quantity;
+
+        return $this->buildCompactInvoiceItemFromMatches($matches, [
+            'type' => 'quantity_inferred_from_total_divided_by_unit_price',
+        ]);
+    }
+
+    /**
+     * Normalizza match regex in item fattura.
+     */
+    private function buildCompactInvoiceItemFromMatches(array $matches, array $inference): ?array
+    {
+        $description = trim((string) ($matches['description'] ?? ''));
+
+        if ($description === '' || $this->descriptionShouldBeIgnored($description)) {
+            return null;
+        }
+
+        $invoiceCode = $this->normalizeInvoiceCode((string) ($matches['code'] ?? ''));
+
+        if ($this->invoiceCodeShouldBeSkippedAsDocumentLine($invoiceCode)) {
+            return null;
+        }
+
+        return [
+            'invoice_code' => $invoiceCode,
+            'product_code' => $invoiceCode,
+            'description' => $description,
+            'quantity' => $this->parseQuantity((string) ($matches['quantity'] ?? '')),
+            'unit_price' => $this->parseMoney((string) ($matches['unit_price'] ?? '')),
+            'discount_amount' => null,
+            'vat_rate' => trim((string) ($matches['vat'] ?? '')),
+            'total_price' => $this->parseMoney((string) ($matches['total_price'] ?? '')),
+            'inference' => $inference,
+        ];
+    }
+
+    /**
+     * Cerca righe visuali di supporto subito dopo la riga prodotto.
+     */
+    private function findSupportingVisualLines(array $visualLines, int $currentIndex): array
+    {
+        $supportingLines = [];
+
+        for ($offset = 1; $offset <= 2; $offset++) {
+            $nextIndex = $currentIndex + $offset;
+
+            if (! isset($visualLines[$nextIndex])) {
+                break;
+            }
+
+            $text = $this->normalizeCompactOcrLine((string) ($visualLines[$nextIndex]['text'] ?? ''));
+
+            if ($text === '') {
+                continue;
+            }
+
+            if ($this->visualLineEndsCompactInvoiceTable($text)) {
+                break;
+            }
+
+            if ($this->extractCompactInvoiceVisualLineItem($text)) {
+                break;
+            }
+
+            if (! $this->looksLikeSupportingLine($text)) {
+                break;
+            }
+
+            $supportingLines[] = $text;
+        }
+
+        return $supportingLines;
+    }
+
+    /**
+     * Pattern importo OCR.
+     *
+     * Supporta sia 2,99 sia 2.99.
+     */
+    private function ocrAmountPattern(): string
+    {
+        return '\-?\d{1,3}(?:[.\s]\d{3})*[,.]\d{2}|\-?\d+[,.]\d{2}';
+    }
+
+    /**
+     * Pattern codice fattura OCR-tolerant.
+     */
+    private function ocrInvoiceCodePattern(): string
+    {
+        return '(?:[A-Z]{2,}(?:\s*-\s*[A-Z0-9]+)+|[A-Z]{2,}\d[A-Z0-9\-\/\.]*|[A-Z]{3,})';
+    }
+
+    /**
+     * Normalizza spazi OCR dentro codici tipo FOOD- PASTA o CLEAN - SAN.
+     */
+    private function normalizeCompactOcrLine(string $line): string
+    {
+        $line = trim(preg_replace('/\s+/', ' ', $line) ?: '');
+
+        /*
+        |--------------------------------------------------------------------------
+        | Normalizzazione solo sul codice iniziale
+        |--------------------------------------------------------------------------
+        |
+        | Non tocchiamo trattini nella descrizione, es. "SCHERMO - MANODOPERA".
+        |
+        */
+        $line = preg_replace(
+            '/^([A-Z]{2,})\s*-\s*([A-Z0-9]+)/u',
+            '$1-$2',
+            $line
+        ) ?: $line;
+
+        return trim($line);
+    }
+
+    /**
+     * Normalizza codice fattura.
+     */
+    private function normalizeInvoiceCode(string $code): string
+    {
+        $code = trim(preg_replace('/\s+/', ' ', $code) ?: '');
+        $code = preg_replace('/\s*-\s*/u', '-', $code) ?: $code;
+
+        return mb_strtoupper($code);
     }
 
     private function detectColumns(array $items, array $metadata): ?array
@@ -716,8 +1189,30 @@ class LayoutAwareInvoiceLineParser
 
     private function parseMoney(string $amount): ?float
     {
-        $normalized = str_replace(['.', ' '], '', trim($amount));
-        $normalized = str_replace(',', '.', $normalized);
+        $amount = trim($amount);
+
+        if ($amount === '') {
+            return null;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Formati europei e OCR
+        |--------------------------------------------------------------------------
+        |
+        | Supporta:
+        | - 1.289,00
+        | - 289,00
+        | - 2.99
+        | - -10,00
+        |
+        */
+        if (str_contains($amount, ',')) {
+            $normalized = str_replace(['.', ' '], '', $amount);
+            $normalized = str_replace(',', '.', $normalized);
+        } else {
+            $normalized = str_replace(' ', '', $amount);
+        }
 
         if (! is_numeric($normalized)) {
             return null;

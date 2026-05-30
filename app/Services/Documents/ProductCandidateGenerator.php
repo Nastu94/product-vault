@@ -288,6 +288,8 @@ class ProductCandidateGenerator
             'serv',
             'ship',
             'trasp',
+            'sconto',
+            'discount',
         ];
 
         foreach ($blockedPrefixes as $prefix) {
@@ -297,6 +299,22 @@ class ProductCandidateGenerator
             ) {
                 return true;
             }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Righe contabili di sconto
+        |--------------------------------------------------------------------------
+        |
+        | Blocchiamo righe che sono esse stesse sconti/promozioni, ma non prodotti
+        | validi che menzionano uno sconto nel testo di supporto.
+        |
+        */
+        if (
+            str_starts_with($description, 'sconto')
+            || str_starts_with($description, 'promo')
+        ) {
+            return true;
         }
 
         /*
@@ -336,6 +354,10 @@ class ProductCandidateGenerator
             'panno',
             'pulizia',
             'limone 1l',
+            'riparazione',
+            'manodopera',
+            'sanificante',
+            'mensa',
         ];
 
         foreach ($blockedSignals as $signal) {

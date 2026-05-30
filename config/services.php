@@ -53,4 +53,11 @@ return [
         'timeout' => env('PADDLE_OCR_TIMEOUT', 180),
         'min_confidence' => env('PADDLE_OCR_MIN_CONFIDENCE', 65),
     ],
+
+    'poppler' => [
+        'pdftoppm' => env('POPPLER_PDFTOPPM_BINARY', 'pdftoppm'),
+        'pdf_ocr_dpi' => env('PDF_OCR_DPI', 220),
+        'pdf_ocr_max_pages' => env('PDF_OCR_MAX_PAGES', 3),
+        'pdf_ocr_timeout' => env('PDF_OCR_TIMEOUT', 180),
+    ],
 ];

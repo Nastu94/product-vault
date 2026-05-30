@@ -143,6 +143,37 @@ class DocumentLineParser
                     continue;
                 }
 
+                /*
+                |--------------------------------------------------------------------------
+                | Scontrini OCR con prezzo e descrizione su righe separate
+                |--------------------------------------------------------------------------
+                |
+                | Esempio:
+                | 749,90
+                | SMARTPHONE ALPHA X1 256GB BLK
+                |
+                | Questa strategia è più prudente della ricerca "nearby" generica:
+                | considera solo importi standalone positivi e la prima riga utile successiva.
+                | Così evitiamo di trasformare subtotali, IVA o pagamenti in prodotti.
+                |
+                */
+                $standaloneAmountLineCreated = $this->tryCreateReceiptOcrLineFromStandaloneAmountContext(
+                    document: $document,
+                    lineTypeId: $lineTypeId,
+                    lines: $lines,
+                    currentIndex: $index,
+                    rawLine: $rawLine,
+                    amounts: $amounts,
+                );
+
+                if ($standaloneAmountLineCreated) {
+                    $created++;
+                    $pendingCandidate = null;
+                    $pendingCodeParts = [];
+
+                    continue;
+                }
+
                 $description = $this->extractDescription($rawLine);
 
                 if (! $description) {
@@ -343,6 +374,158 @@ class DocumentLineParser
         ]);
 
         return true;
+    }
+
+    /**
+     * Prova a creare una riga prodotto da uno scontrino OCR in cui
+     * l'importo è su una riga e la descrizione prodotto sulla riga successiva.
+     *
+     * Esempio:
+     * 749,90
+     * SMARTPHONE ALPHA X1 256GB BLK
+     */
+    private function tryCreateReceiptOcrLineFromStandaloneAmountContext(
+        Document $document,
+        ?int $lineTypeId,
+        array $lines,
+        int $currentIndex,
+        string $rawLine,
+        array $amounts
+    ): bool {
+        /*
+        |--------------------------------------------------------------------------
+        | Guard clause sul tipo documento
+        |--------------------------------------------------------------------------
+        |
+        | Questa euristica è pensata per scontrini OCR a colonne.
+        | Su fatture o documenti diversi potrebbe creare falsi positivi.
+        |
+        */
+        if ($document->documentType?->code !== 'receipt') {
+            return false;
+        }
+
+        if (! $this->lineLooksLikeStandalonePositiveAmountLine($rawLine, $amounts)) {
+            return false;
+        }
+
+        $description = $this->findFollowingProductDescriptionForStandaloneAmount($lines, $currentIndex);
+
+        if (! $description) {
+            return false;
+        }
+
+        $productCode = $this->findNearbyProductCode($lines, $currentIndex);
+
+        $price = end($amounts);
+
+        DocumentLine::query()->create([
+            'document_id' => $document->id,
+            'document_line_type_id' => $lineTypeId,
+            'line_number' => $currentIndex + 1,
+            'raw_text' => trim($rawLine . ' ' . $description),
+            'description' => $description,
+            'quantity' => 1,
+            'unit_price' => $price,
+            'total_price' => $price,
+            'confidence_score' => $this->estimateConfidenceScore(
+                description: $description,
+                amounts: $amounts,
+                quantity: 1,
+                productCode: $productCode,
+            ),
+            'metadata' => [
+                'parser' => 'document_line_parser_v5',
+                'mode' => 'receipt_ocr_standalone_amount_description',
+                'amounts_found' => $amounts,
+                'product_code_candidate' => $productCode,
+                'amount_line' => $rawLine,
+                'description_line' => $description,
+            ],
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Riconosce righe composte solo da un importo positivo.
+     *
+     * Esempi validi:
+     * 749,90
+     * 1.289,00
+     * € 19,90
+     *
+     * Esempi non validi:
+     * -30,00
+     * 22,00%1.289,00
+     * TOTALE 752,70
+     */
+    private function lineLooksLikeStandalonePositiveAmountLine(string $line, array $amounts): bool
+    {
+        $normalized = trim($line);
+
+        if (count($amounts) !== 1) {
+            return false;
+        }
+
+        if ((float) $amounts[0] <= 0) {
+            return false;
+        }
+
+        if (str_starts_with($normalized, '-')) {
+            return false;
+        }
+
+        return (bool) preg_match('/^(?:€\s*)?(?:\d{1,3}(?:[.\s]\d{3})+|\d+),\d{2}$/u', $normalized);
+    }
+
+    /**
+     * Cerca una descrizione prodotto subito dopo una riga importo standalone.
+     *
+     * È volutamente prudente:
+     * - salta eventuali righe vuote;
+     * - si ferma se incontra subtotale, totale, IVA, pagamento, sconto;
+     * - non cerca all'indietro, per evitare di associare SUBTOTALE all'ultimo prodotto.
+     */
+    private function findFollowingProductDescriptionForStandaloneAmount(array $lines, int $currentIndex): ?string
+    {
+        for ($offset = 1; $offset <= 3; $offset++) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                return null;
+            }
+
+            $candidate = $this->normalizeLine($lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if ($this->lineShouldBeIgnored($candidate)) {
+                return null;
+            }
+
+            if ($this->lineIsStandaloneQuantity($candidate)) {
+                return null;
+            }
+
+            if (! empty($this->extractAmountsFromText($candidate))) {
+                return null;
+            }
+
+            if ($this->lineLooksLikeBarcode($candidate)) {
+                return null;
+            }
+
+            if ($this->lineLooksLikeReceiptProductDescription($candidate)) {
+                return $candidate;
+            }
+
+            return null;
+        }
+
+        return null;
     }
 
     /**

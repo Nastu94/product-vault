@@ -81,7 +81,30 @@ class ProductCandidateGenerator
             $created++;
         }
 
+        $this->updateDocumentProductReliabilityScore($document);
+
         return $created;
+    }
+
+    /**
+     * Aggiorna lo score prodotto del documento in base al miglior candidato generato.
+     *
+     * Nota MVP:
+     * - null significa che non ci sono candidati prodotto valutabili;
+     * - un numero indica la migliore affidabilità tra i candidati revisionabili.
+     */
+    private function updateDocumentProductReliabilityScore(Document $document): void
+    {
+        $bestCandidateScore = ProductIdentificationCandidate::query()
+            ->where('document_id', $document->id)
+            ->whereNull('product_id')
+            ->max('confidence_score');
+
+        $document->update([
+            'product_reliability_score' => $bestCandidateScore !== null
+                ? (int) $bestCandidateScore
+                : null,
+        ]);
     }
 
     /**

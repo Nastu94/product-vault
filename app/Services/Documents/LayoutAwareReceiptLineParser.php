@@ -202,10 +202,23 @@ class LayoutAwareReceiptLineParser
             return null;
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Righe non prodotto
+        |--------------------------------------------------------------------------
+        |
+        | In una tabella scontrino, importi zero o negativi rappresentano
+        | normalmente sconti, coupon, storni, omaggi, arrotondamenti o righe
+        | informative. Non sono prodotti acquistati da mostrare nella revisione.
+        */
+        if ($amount <= 0) {
+            return null;
+        }
+
         return [
             'description' => $this->cleanDescription($description),
-            'quantity' => $amount >= 0 ? 1 : null,
-            'unit_price' => $amount >= 0 ? $amount : null,
+            'quantity' => 1,
+            'unit_price' => $amount,
             'total_price' => $amount,
             'vat_rate' => trim((string) ($matches['vat'] ?? '')),
         ];

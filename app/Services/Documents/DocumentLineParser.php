@@ -170,6 +170,52 @@ class DocumentLineParser
 
                 /*
                 |--------------------------------------------------------------------------
+                | Scontrini: righe a importo zero o negativo
+                |--------------------------------------------------------------------------
+                |
+                | Su uno scontrino, una riga con importo finale zero o negativo non è una
+                | riga prodotto acquistato. È normalmente uno sconto, coupon, storno,
+                | omaggio, acconto, rettifica o riga informativa.
+                |
+                | È una regola strutturale, non keyword-based.
+                */
+                if (
+                    $document->documentType?->code === 'receipt'
+                    && $this->receiptAmountLineIsZeroOrNegative($rawLine)
+                ) {
+                    $pendingCandidate = null;
+                    $pendingCodeParts = [];
+
+                    continue;
+                }
+
+                /*
+                |--------------------------------------------------------------------------
+                | Scontrini testuali con colonne DESCRIZIONE / IVA / IMPORTO
+                |--------------------------------------------------------------------------
+                |
+                | Prima delle euristiche generiche, proviamo a interpretare la riga come
+                | riga tabellare scontrino. Questo evita che l'IVA venga salvata come
+                | quantity e che il simbolo % finisca nella descrizione.
+                |
+                */
+                $receiptTextTableLineCreated = $this->tryCreateReceiptTextTableLine(
+                    document: $document,
+                    lineTypeId: $lineTypeId,
+                    rawLine: $rawLine,
+                    currentIndex: $index
+                );
+
+                if ($receiptTextTableLineCreated) {
+                    $created++;
+                    $pendingCandidate = null;
+                    $pendingCodeParts = [];
+
+                    continue;
+                }
+
+                /*
+                |--------------------------------------------------------------------------
                 | Scontrini OCR con righe spezzate
                 |--------------------------------------------------------------------------
                 |
@@ -359,6 +405,145 @@ class DocumentLineParser
         }
 
         return $created;
+    }
+    
+    /**
+     * Verifica se una riga importo di scontrino termina con un importo zero o negativo.
+     */
+    private function receiptAmountLineIsZeroOrNegative(string $line): bool
+    {
+        $amount = $this->extractLastSignedMoneyFromText($line);
+
+        if ($amount === null) {
+            return false;
+        }
+
+        return $amount <= 0;
+    }
+
+    /**
+     * Estrae l'ultimo importo firmato presente in una riga.
+     *
+     * A differenza di extractAmountsFromText(), mantiene il segno meno.
+     */
+    private function extractLastSignedMoneyFromText(string $text): ?float
+    {
+        if (! preg_match_all(
+            '/(?<amount>-?\d{1,3}(?:[.\s]\d{3})*[,.]\d{2}|-?\d+[,.]\d{2})/u',
+            $text,
+            $matches
+        )) {
+            return null;
+        }
+
+        $amounts = $matches['amount'] ?? [];
+
+        if (empty($amounts)) {
+            return null;
+        }
+
+        $lastAmount = end($amounts);
+
+        return $this->parseMoney((string) $lastAmount);
+    }
+
+    /**
+     * Crea una DocumentLine da una riga scontrino testuale:
+     * DESCRIZIONE IVA IMPORTO
+     *
+     * Esempio:
+     * CAVO USB-C 1M NYLON NERO 22% 8,90
+     */
+    private function tryCreateReceiptTextTableLine(
+        Document $document,
+        ?int $lineTypeId,
+        string $rawLine,
+        int $currentIndex
+    ): bool {
+        if ($document->documentType?->code !== 'receipt') {
+            return false;
+        }
+
+        $item = $this->extractReceiptTextTableItem($rawLine);
+
+        if (! $item) {
+            return false;
+        }
+
+        DocumentLine::query()->create([
+            'document_id' => $document->id,
+            'document_line_type_id' => $lineTypeId,
+            'line_number' => $currentIndex + 1,
+            'raw_text' => $rawLine,
+            'description' => $item['description'],
+            'quantity' => 1,
+            'unit_price' => $item['amount'],
+            'total_price' => $item['amount'],
+            'confidence_score' => $this->estimateConfidenceScore(
+                description: $item['description'],
+                amounts: [$item['amount']],
+                quantity: 1,
+                productCode: null,
+            ),
+            'metadata' => [
+                'parser' => 'document_line_parser_v7',
+                'mode' => 'receipt_text_table',
+                'vat_rate' => $item['vat_rate'],
+                'amounts_found' => [$item['amount']],
+                'product_code_candidate' => null,
+            ],
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Estrae una riga scontrino testuale strutturata.
+     */
+    private function extractReceiptTextTableItem(string $line): ?array
+    {
+        $line = $this->normalizeLine($line);
+
+        $amountPattern = '\-?\d{1,3}(?:[.\s]\d{3})*[,.]\d{2}|\-?\d+[,.]\d{2}';
+
+        $pattern = '/^(?<description>.+?)\s+' .
+            '(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+' .
+            '(?<amount>' . $amountPattern . ')\s*$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        $description = trim((string) ($matches['description'] ?? ''));
+
+        if ($description === '') {
+            return null;
+        }
+
+        $amount = $this->parseMoney((string) ($matches['amount'] ?? ''));
+
+        if ($amount === null) {
+            return null;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Righe non prodotto
+        |--------------------------------------------------------------------------
+        |
+        | Regola strutturale, non keyword-based:
+        | se l'importo è zero o negativo non è una riga prodotto acquistato.
+        |
+        */
+        if ($amount <= 0) {
+            return null;
+        }
+
+        return [
+            'description' => trim(preg_replace('/\s+/', ' ', $description) ?: $description),
+            'vat_rate' => trim((string) ($matches['vat'] ?? '')),
+            'amount' => $amount,
+        ];
     }
 
     /**
@@ -1486,7 +1671,6 @@ class DocumentLineParser
             'importo totale',
             'pagamento',
             'bancomat',
-            'carta',
             'contanti',
             'resto',
             'destinatario',

@@ -16,6 +16,8 @@ class ProductCandidateGenerator
      */
     public function generate(Document $document): int
     {
+        $this->clearUnlinkedCandidates($document);
+
         $lines = $document
             ->lines()
             ->with('document.documentType')
@@ -312,6 +314,7 @@ class ProductCandidateGenerator
             'trasp',
             'sconto',
             'discount',
+            'gar-ext',
         ];
 
         foreach ($blockedPrefixes as $prefix) {
@@ -404,6 +407,10 @@ class ProductCandidateGenerator
             'coupon',
             'fedelta',
             'sconti totali',
+            'estensione garanzia',
+            'garanzia commerciale',
+            'garanzia estesa',
+            'extended warranty',
         ];
 
         foreach ($blockedSignals as $signal) {

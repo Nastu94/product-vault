@@ -406,7 +406,7 @@ class DocumentLineParser
 
         return $created;
     }
-    
+
     /**
      * Verifica se una riga importo di scontrino termina con un importo zero o negativo.
      */
@@ -618,6 +618,26 @@ class DocumentLineParser
             |
             */
             if ($pendingInvoiceItem) {
+                $continuationAmountItem = $this->extractInvoiceContinuationAmountItem(
+                    line: $rawLine,
+                    pendingInvoiceItem: $pendingInvoiceItem
+                );
+
+                if ($continuationAmountItem) {
+                    $this->createInvoiceLine(
+                        document: $document,
+                        lineTypeId: $lineTypeId,
+                        lineNumber: $pendingInvoiceItem['line_number'],
+                        rawTextParts: array_merge($pendingInvoiceItem['raw_text_parts'], [$rawLine]),
+                        item: $continuationAmountItem,
+                        mode: 'invoice_tabular_multiline_split_amounts'
+                    );
+
+                    $created++;
+                    $pendingInvoiceItem = null;
+
+                    continue;
+                }
                 $amountColumns = $this->extractInvoiceAmountColumns($rawLine);
 
                 if ($amountColumns) {
@@ -638,6 +658,19 @@ class DocumentLineParser
                     continue;
                 }
 
+                if ($this->lineLooksLikeInvoiceDescriptionContinuation($rawLine)) {
+                    $pendingInvoiceItem['raw_text_parts'][] = $rawLine;
+                    $pendingInvoiceItem['supporting_lines'][] = $rawLine;
+
+                    $ean = $this->extractEanFromInvoiceSupportingLines($pendingInvoiceItem['supporting_lines']);
+
+                    if ($ean) {
+                        $pendingInvoiceItem['product_code'] = $ean;
+                    }
+
+                    continue;
+                }
+
                 if ($this->lineLooksLikeInvoiceSupportingMetadata($rawLine)) {
                     $pendingInvoiceItem['raw_text_parts'][] = $rawLine;
                     $pendingInvoiceItem['supporting_lines'][] = $rawLine;
@@ -650,6 +683,23 @@ class DocumentLineParser
 
                     continue;
                 }
+            }
+
+            $productStartWithQuantityVat = $this->extractInvoiceProductStartWithQuantityVat($rawLine);
+
+            if ($productStartWithQuantityVat) {
+                $pendingInvoiceItem = [
+                    'line_number' => $index + 1,
+                    'raw_text_parts' => [$rawLine],
+                    'supporting_lines' => [],
+                    'invoice_code' => $productStartWithQuantityVat['code'],
+                    'description' => $productStartWithQuantityVat['description'],
+                    'quantity' => $productStartWithQuantityVat['quantity'],
+                    'vat_rate' => $productStartWithQuantityVat['vat_rate'],
+                    'product_code' => $productStartWithQuantityVat['code'],
+                ];
+
+                continue;
             }
 
             /*
@@ -797,7 +847,8 @@ class DocumentLineParser
     private function extractInvoiceInlineItem(string $line): ?array
     {
         return $this->extractInvoiceInlineItemWithDiscount($line)
-            ?? $this->extractInvoiceInlineItemWithoutDiscount($line);
+            ?? $this->extractInvoiceInlineItemWithoutDiscount($line)
+            ?? $this->extractInvoiceInlineItemVatBeforeAmounts($line);
     }
 
     /**
@@ -834,6 +885,31 @@ class DocumentLineParser
             '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
             '(?<unit_price>' . $amountPattern . ')\s+' .
             '(?<vat>\d{1,2}(?:,\d{2})?%)\s+' .
+            '(?<total_price>' . $amountPattern . ')\s*$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        return $this->buildInvoiceItemFromMatches($matches, false);
+    }
+
+    /**
+     * Estrae righe fattura con layout:
+     * CODICE DESCRIZIONE QTA IVA UNITARIO TOTALE
+     *
+     * Esempio:
+     * DK-USB Docking Station USB-C Dual HDMI 4K 1 22% 119,00 119,00
+     */
+    private function extractInvoiceInlineItemVatBeforeAmounts(string $line): ?array
+    {
+        $amountPattern = '\-?\d{1,3}(?:[.\s]\d{3})*,\d{2}|\-?\d+,\d{2}';
+
+        $pattern = '/^(?<code>' . $this->invoiceCodePattern() . ')\s+' .
+            '(?<description>.+?)\s+' .
+            '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+            '(?<vat>\d{1,2}(?:,\d{2})?%)\s+' .
+            '(?<unit_price>' . $amountPattern . ')\s+' .
             '(?<total_price>' . $amountPattern . ')\s*$/u';
 
         if (! preg_match($pattern, $line, $matches)) {
@@ -1073,6 +1149,10 @@ class DocumentLineParser
             if (preg_match('/\bSN[-\s]?(?<serial>[A-Z0-9\-]{6,})\b/iu', $line, $matches)) {
                 return trim($matches['serial']);
             }
+
+            if (preg_match('/\bS\/N\s*(?<serial>[A-Z0-9\-]{6,})\b/iu', $line, $matches)) {
+                return trim($matches['serial']);
+            }
         }
 
         return null;
@@ -1101,6 +1181,131 @@ class DocumentLineParser
         ];
 
         return in_array($code, $blockedCodes, true);
+    }
+
+    /**
+     * Estrae l'inizio di un prodotto fattura quando quantità e IVA sono sulla
+     * prima riga, ma unitario/totale arrivano su una riga successiva.
+     *
+     * Esempio:
+     * NB-X1 Notebook Lenovo ThinkPad X1 Carbon Gen 11 1 22%
+     */
+    private function extractInvoiceProductStartWithQuantityVat(string $line): ?array
+    {
+        $pattern = '/^(?<code>' . $this->invoiceCodePattern() . ')\s+' .
+            '(?<description>.+?)\s+' .
+            '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+            '(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s*$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        $invoiceCode = trim($matches['code']);
+
+        if ($this->invoiceCodeShouldBeSkippedAsDocumentLine($invoiceCode)) {
+            return null;
+        }
+
+        $description = trim($matches['description']);
+
+        if ($description === '' || $this->lineShouldBeIgnored($description)) {
+            return null;
+        }
+
+        return [
+            'code' => $invoiceCode,
+            'description' => $description,
+            'quantity' => $this->parseQuantity($matches['quantity']),
+            'vat_rate' => trim($matches['vat']),
+        ];
+    }
+
+    /**
+     * Estrae una riga finale che completa un prodotto multi-riga.
+     *
+     * Supporta casi tipo:
+     * S/N PF4TEST0091 - EAN 0196388123456 1.499,00 1.499,00
+     * EAN 8055555012222 22% 119,00 119,00
+     */
+    private function extractInvoiceContinuationAmountItem(string $line, array $pendingInvoiceItem): ?array
+    {
+        $amountPattern = '\-?\d{1,3}(?:[.\s]\d{3})*,\d{2}|\-?\d+,\d{2}';
+
+        $patterns = [
+            '/^(?<support>.+?)\s+(?<quantity>\d+(?:[,.]\d+)?)\s+(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+(?<unit_price>' . $amountPattern . ')\s+(?<total_price>' . $amountPattern . ')\s*$/u',
+            '/^(?<support>.+?)\s+(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+(?<unit_price>' . $amountPattern . ')\s+(?<total_price>' . $amountPattern . ')\s*$/u',
+            '/^(?<support>.+?)\s+(?<unit_price>' . $amountPattern . ')\s+(?<total_price>' . $amountPattern . ')\s*$/u',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (! preg_match($pattern, $line, $matches)) {
+                continue;
+            }
+
+            $support = trim((string) ($matches['support'] ?? ''));
+
+            if ($support === '') {
+                return null;
+            }
+
+            $supportingLines = $pendingInvoiceItem['supporting_lines'] ?? [];
+            $supportingLines[] = $support;
+
+            $ean = $this->extractEanFromInvoiceSupportingLines($supportingLines);
+
+            return array_merge($pendingInvoiceItem, [
+                'supporting_lines' => $supportingLines,
+                'quantity' => isset($matches['quantity'])
+                    ? $this->parseQuantity($matches['quantity'])
+                    : ($pendingInvoiceItem['quantity'] ?? null),
+                'unit_price' => $this->parseMoney($matches['unit_price']),
+                'discount_amount' => null,
+                'vat_rate' => isset($matches['vat'])
+                    ? trim($matches['vat'])
+                    : ($pendingInvoiceItem['vat_rate'] ?? null),
+                'total_price' => $this->parseMoney($matches['total_price']),
+                'product_code' => $ean ?: ($pendingInvoiceItem['product_code'] ?? null),
+            ]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Righe descrittive intermedie di un prodotto fattura multi-riga.
+     *
+     * Non sono nuove righe prodotto, ma contesto da conservare in supporting_lines.
+     */
+    private function lineLooksLikeInvoiceDescriptionContinuation(string $line): bool
+    {
+        $line = $this->normalizeLine($line);
+
+        if ($line === '') {
+            return false;
+        }
+
+        if ($this->invoiceLineShouldBeIgnored($line)) {
+            return false;
+        }
+
+        if (! empty($this->extractAmountsFromText($line))) {
+            return false;
+        }
+
+        if ($this->extractInvoiceInlineItem($line)) {
+            return false;
+        }
+
+        if ($this->extractInvoiceProductStartWithQuantityVat($line)) {
+            return false;
+        }
+
+        if ($this->extractInvoiceProductStart($line)) {
+            return false;
+        }
+
+        return mb_strlen($line) >= 6;
     }
 
     /**

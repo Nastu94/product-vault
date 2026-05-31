@@ -61,10 +61,14 @@ class OcrVisualLineInvoiceTableExtractor implements InvoiceTableExtractor
             return InvoiceTableExtractionResult::empty('ocr_visual_lines', ['invoice_table_header_not_found']);
         }
 
-        $expectedCodeRows = $this->countExpectedCodeRows(
+        $expectedVisualCodeRows = $this->countExpectedCodeRows(
             visualLines: $visualLines,
             tableStartIndex: $tableStartIndex
         );
+
+        $expectedRawCodeRows = $this->countExpectedCodeRowsFromRawText($document);
+
+        $expectedCodeRows = max($expectedVisualCodeRows, $expectedRawCodeRows);
 
         $rows = [];
         $warnings = [];
@@ -138,12 +142,55 @@ class OcrVisualLineInvoiceTableExtractor implements InvoiceTableExtractor
                 'visual_lines_count' => count($visualLines),
                 'table_start_index' => $tableStartIndex,
                 'expected_code_rows' => $expectedCodeRows,
+                'expected_visual_code_rows' => $expectedVisualCodeRows,
+                'expected_raw_code_rows' => $expectedRawCodeRows,
                 'extracted_rows' => count($rows),
                 'coverage_ratio' => $coverageRatio,
             ],
         );
 
         return $this->scorer->score($result);
+    }
+
+    /**
+     * Conta righe articolo probabili dal raw_text OCR/PDF.
+     *
+     * È usato come controllo di copertura aggiuntivo rispetto alle visual lines,
+     * perché a volte le visual lines fondono o saltano righe.
+     */
+    private function countExpectedCodeRowsFromRawText(Document $document): int
+    {
+        $lines = collect(preg_split('/\R/u', (string) $document->raw_text) ?: [])
+            ->map(fn ($line): string => $this->normalizeLine((string) $line))
+            ->filter(fn (string $line): bool => $line !== '')
+            ->values()
+            ->all();
+
+        $count = 0;
+
+        foreach ($lines as $line) {
+            if ($this->lineEndsTable($line)) {
+                break;
+            }
+
+            if ($this->lineLooksLikeTechnicalSupportingInfo($line)) {
+                continue;
+            }
+
+            $code = $this->extractLeadingInvoiceCode($line);
+
+            if ($code === null) {
+                continue;
+            }
+
+            if ($this->invoiceCodeShouldBeSkipped($code)) {
+                continue;
+            }
+
+            $count++;
+        }
+
+        return $count;
     }
 
     /**

@@ -155,6 +155,12 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
             }
         }
 
+        $expectedCodeRows = $this->countExpectedCodeRows($lines);
+
+        $coverageRatio = $expectedCodeRows > 0
+            ? round(count($rows) / $expectedCodeRows, 2)
+            : null;
+
         $result = new InvoiceTableExtractionResult(
             strategy: 'text_invoice_table',
             rows: $rows,
@@ -162,10 +168,47 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
             metadata: [
                 'source' => 'document.raw_text',
                 'lines_count' => count($lines),
+                'expected_code_rows' => $expectedCodeRows,
+                'extracted_rows' => count($rows),
+                'coverage_ratio' => $coverageRatio,
             ],
         );
 
         return $this->scorer->score($result);
+    }
+
+    /**
+     * Conta le righe che sembrano iniziare con un codice articolo fattura.
+     *
+     * Serve allo scorer per capire se l'estrattore ha perso righe.
+     */
+    private function countExpectedCodeRows(array $lines): int
+    {
+        $count = 0;
+
+        foreach ($lines as $line) {
+            if ($this->lineShouldBeIgnored($line)) {
+                continue;
+            }
+
+            if ($this->lineLooksLikeTechnicalSupportingLine($line)) {
+                continue;
+            }
+
+            if (! preg_match('/^(?<code>' . $this->invoiceCodePattern() . ')(?:\s+|$)/u', $line, $matches)) {
+                continue;
+            }
+
+            $code = trim((string) ($matches['code'] ?? ''));
+
+            if ($this->invoiceCodeShouldBeSkipped($code)) {
+                continue;
+            }
+
+            $count++;
+        }
+
+        return $count;
     }
 
     /**

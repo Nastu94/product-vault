@@ -20,10 +20,15 @@ class InvoiceTableExtractionQualityGate
      */
     private const BLOCKING_WARNINGS = [
         'no_rows_extracted',
+        'pending_row_discarded',
+        'result_missing_expected_code_rows',
         'result_low_code_row_coverage',
         'result_contains_unpriced_rows',
+        'row_without_price',
         'row_with_non_positive_unit_price',
         'row_with_non_positive_total_price',
+        'row_amounts_not_coherent',
+        'row_description_too_short',
         'row_description_looks_like_technical_metadata',
     ];
 
@@ -37,7 +42,7 @@ class InvoiceTableExtractionQualityGate
     {
         return $this->rejectionReasons($result) === [];
     }
-    
+
     /**
      * Restituisce i motivi per cui il risultato non è accettabile.
      *

@@ -5,6 +5,7 @@ namespace App\Providers;
 use Illuminate\Support\ServiceProvider;
 use App\Services\Documents\InvoiceTableExtraction\InvoiceTableExtractionManager;
 use App\Services\Documents\InvoiceTableExtraction\OcrVisualLineInvoiceTableExtractor;
+use App\Services\Documents\InvoiceTableExtraction\OcrGeometryInvoiceTableExtractor;
 use App\Services\Documents\InvoiceTableExtraction\TextInvoiceTableExtractor;
 
 class AppServiceProvider extends ServiceProvider
@@ -18,6 +19,7 @@ class AppServiceProvider extends ServiceProvider
             return new InvoiceTableExtractionManager([
                 $app->make(TextInvoiceTableExtractor::class),
                 $app->make(OcrVisualLineInvoiceTableExtractor::class),
+                $app->make(OcrGeometryInvoiceTableExtractor::class),
             ]);
         });
     }

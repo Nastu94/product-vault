@@ -5,6 +5,9 @@ namespace App\Services\Documents;
 use App\Models\Document;
 use App\Models\DocumentLine;
 use App\Models\DocumentLineType;
+use App\Services\Documents\InvoiceTableExtraction\InvoiceTableExtractionDocumentLineWriter;
+use App\Services\Documents\InvoiceTableExtraction\InvoiceTableExtractionManager;
+use App\Services\Documents\InvoiceTableExtraction\InvoiceTableExtractionQualityGate;
 
 class DocumentLineParser
 {
@@ -22,7 +25,10 @@ class DocumentLineParser
      */
     public function __construct(
         private readonly LayoutAwareInvoiceLineParser $layoutAwareInvoiceLineParser,
-        private readonly LayoutAwareReceiptLineParser $layoutAwareReceiptLineParser
+        private readonly LayoutAwareReceiptLineParser $layoutAwareReceiptLineParser,
+        private readonly InvoiceTableExtractionManager $invoiceTableExtractionManager,
+        private readonly InvoiceTableExtractionQualityGate $invoiceTableExtractionQualityGate,
+        private readonly InvoiceTableExtractionDocumentLineWriter $invoiceTableExtractionDocumentLineWriter,
     ) {
     }
 
@@ -78,7 +84,13 @@ class DocumentLineParser
                 return $layoutAwareCreated;
             }
 
-            return $this->parseInvoiceLines($document, $lineTypeId, $lines);
+            $invoiceTextCreated = $this->parseInvoiceLines($document, $lineTypeId, $lines);
+
+            if ($invoiceTextCreated > 0) {
+                return $invoiceTextCreated;
+            }
+
+            return $this->parseInvoiceTableExtractionFallback($document, $lineTypeId);
         }
 
         /*
@@ -849,6 +861,30 @@ class DocumentLineParser
         return $this->extractInvoiceInlineItemWithDiscount($line)
             ?? $this->extractInvoiceInlineItemWithoutDiscount($line)
             ?? $this->extractInvoiceInlineItemVatBeforeAmounts($line);
+    }
+
+    /**
+     * Fallback strutturato per fatture che i parser legacy non riescono a leggere.
+     *
+     * Non sostituisce il parser attuale:
+     * viene usato solo quando layout-aware + parser testuale legacy producono 0 righe.
+     *
+     * Questo evita regressioni su documenti già stabilizzati e permette di recuperare
+     * casi nuovi come fatture OCR con prodotto spezzato su più righe.
+     */
+    private function parseInvoiceTableExtractionFallback(Document $document, ?int $lineTypeId): int
+    {
+        $result = $this->invoiceTableExtractionManager->extractBest($document);
+
+        if (! $this->invoiceTableExtractionQualityGate->passes($result)) {
+            return 0;
+        }
+
+        return $this->invoiceTableExtractionDocumentLineWriter->write(
+            document: $document,
+            lineTypeId: $lineTypeId,
+            result: $result
+        );
     }
 
     /**

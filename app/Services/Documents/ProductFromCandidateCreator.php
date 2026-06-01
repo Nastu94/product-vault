@@ -90,6 +90,9 @@ class ProductFromCandidateCreator
             $candidate->update([
                 'is_selected' => true,
                 'product_id' => $product->id,
+                'review_status' => 'confirmed',
+                'reviewed_by_user_id' => $userId,
+                'reviewed_at' => now(),
             ]);
 
             $this->updateDocumentStatusAfterCandidateConfirmation($document);
@@ -109,11 +112,13 @@ class ProductFromCandidateCreator
     {
         $pendingCandidatesCount = ProductIdentificationCandidate::query()
             ->where('document_id', $document->id)
+            ->where('review_status', 'pending')
             ->whereNull('product_id')
             ->count();
 
         $linkedCandidatesCount = ProductIdentificationCandidate::query()
             ->where('document_id', $document->id)
+            ->where('review_status', 'confirmed')
             ->whereNotNull('product_id')
             ->count();
 

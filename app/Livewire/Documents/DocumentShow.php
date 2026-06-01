@@ -887,9 +887,45 @@ class DocumentShow extends Component
     }
 
     /**
-     * Elimina un candidato prodotto non ancora confermato.
+     * Aggiorna lo stato documento dopo conferma/esclusione candidati.
      */
-    public function deleteProductCandidate(int $candidateId): void
+    private function updateDocumentStatusAfterCandidateReview(): void
+    {
+        $pendingCandidatesCount = $this->document
+            ->productIdentificationCandidates()
+            ->where('review_status', 'pending')
+            ->whereNull('product_id')
+            ->count();
+
+        $confirmedCandidatesCount = $this->document
+            ->productIdentificationCandidates()
+            ->where('review_status', 'confirmed')
+            ->whereNotNull('product_id')
+            ->count();
+
+        $bestConfirmedCandidateScore = $this->document
+            ->productIdentificationCandidates()
+            ->where('review_status', 'confirmed')
+            ->whereNotNull('product_id')
+            ->max('confidence_score');
+
+        $this->document->update([
+            'status' => $pendingCandidatesCount > 0
+                ? 'needs_review'
+                : ($confirmedCandidatesCount > 0 ? 'linked_to_product' : 'parsed'),
+            'product_reliability_score' => $bestConfirmedCandidateScore !== null
+                ? (int) $bestConfirmedCandidateScore
+                : null,
+        ]);
+    }
+
+    /**
+     * Esclude un candidato prodotto senza eliminarlo.
+     *
+     * Manteniamo il candidato per tracciabilità: il sistema lo aveva proposto,
+     * ma l'utente ha deciso di non trasformarlo in prodotto.
+     */
+    public function ignoreProductCandidate(int $candidateId): void
     {
         $this->authorize('update', $this->document);
 
@@ -899,41 +935,42 @@ class DocumentShow extends Component
             ->firstOrFail();
 
         if ($candidate->product_id) {
-            session()->flash('candidate_warning', 'Questo candidato ha già generato un prodotto e non può essere eliminato.');
+            session()->flash('candidate_warning', 'Questo candidato ha già generato un prodotto e non può essere escluso.');
 
             return;
         }
 
-        $candidate->delete();
+        if ($candidate->review_status === 'ignored') {
+            session()->flash('candidate_warning', 'Questo candidato è già stato escluso.');
 
-        $remainingCandidatesCount = $this->document
-            ->productIdentificationCandidates()
-            ->whereNull('product_id')
-            ->count();
+            return;
+        }
 
-        $linkedCandidatesCount = $this->document
-            ->productIdentificationCandidates()
-            ->whereNotNull('product_id')
-            ->count();
-
-        $bestLinkedCandidateScore = $this->document
-            ->productIdentificationCandidates()
-            ->whereNotNull('product_id')
-            ->max('confidence_score');
-
-        $this->document->update([
-            'status' => $remainingCandidatesCount > 0
-                ? 'needs_review'
-                : ($linkedCandidatesCount > 0 ? 'linked_to_product' : 'parsed'),
-            'product_reliability_score' => $bestLinkedCandidateScore !== null
-                ? (int) $bestLinkedCandidateScore
-                : null,
+        $candidate->update([
+            'review_status' => 'ignored',
+            'ignored_reason' => 'not_to_register',
+            'ignored_note' => null,
+            'reviewed_by_user_id' => Auth::id(),
+            'reviewed_at' => now(),
+            'is_selected' => false,
         ]);
 
+        $this->updateDocumentStatusAfterCandidateReview();
         $this->refreshDocumentState();
 
-        session()->flash('candidate_success', 'Candidato prodotto eliminato.');
+        session()->flash('candidate_success', 'Candidato prodotto escluso dalla revisione.');
+
         $this->closeActiveDrawer();
+    }
+
+    /**
+     * Manteniamo compatibilità con eventuali vecchi pulsanti.
+     *
+     * Da ora l'azione corretta è escludere il candidato, non eliminarlo.
+     */
+    public function deleteProductCandidate(int $candidateId): void
+    {
+        $this->ignoreProductCandidate($candidateId);
     }
 
     /**
@@ -1009,7 +1046,7 @@ class DocumentShow extends Component
 
         return [
             'lines_count' => $lines->count(),
-            'candidates_count' => $this->document->productIdentificationCandidates->whereNull('product_id')->count(),
+            'candidates_count' => $this->document->productIdentificationCandidates->count(),
             'parser_counts' => $parserCounts,
             'mode_counts' => $modeCounts,
             'strategy_counts' => $strategyCounts,
@@ -1021,6 +1058,17 @@ class DocumentShow extends Component
             'lines_with_supporting_lines' => $linesWithSupportingLines,
             'line_parsing_lines_created' => $latestLineParsingAttempt?->metadata['lines_created'] ?? null,
             'candidate_generation_candidates_created' => $latestCandidateGenerationAttempt?->metadata['candidates_created'] ?? null,
+            'pending_candidates_count' => $this->document->productIdentificationCandidates
+                ->where('review_status', 'pending')
+                ->whereNull('product_id')
+                ->count(),
+            'confirmed_candidates_count' => $this->document->productIdentificationCandidates
+                ->where('review_status', 'confirmed')
+                ->whereNotNull('product_id')
+                ->count(),
+            'ignored_candidates_count' => $this->document->productIdentificationCandidates
+                ->where('review_status', 'ignored')
+                ->count(),
         ];
     }
 

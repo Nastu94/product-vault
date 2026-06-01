@@ -331,6 +331,18 @@
                         </span>
                     @endif
 
+                    <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+                        Da revisionare: {{ $lineDiagnostics['pending_candidates_count'] }}
+                    </span>
+
+                    <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+                        Confermati: {{ $lineDiagnostics['confirmed_candidates_count'] }}
+                    </span>
+
+                    <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+                        Esclusi: {{ $lineDiagnostics['ignored_candidates_count'] }}
+                    </span>
+
                     <button
                         type="button"
                         x-data
@@ -471,6 +483,20 @@
                                 <h3 class="mt-1 truncate text-sm font-semibold text-gray-900">
                                     {{ $previewName }}
                                 </h3>
+
+                                @if ($candidate?->review_status === 'confirmed')
+                                    <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
+                                        Confermato
+                                    </span>
+                                @elseif ($candidate?->review_status === 'ignored')
+                                    <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20">
+                                        Escluso
+                                    </span>
+                                @elseif ($candidate)
+                                    <span class="inline-flex items-center rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-600/20">
+                                        Da revisionare
+                                    </span>
+                                @endif
                             </div>
 
                             <div class="flex shrink-0 items-center gap-2">
@@ -625,12 +651,12 @@
 
                                                 <button
                                                     type="button"
-                                                    wire:click="deleteProductCandidate({{ $candidate->id }})"
+                                                    wire:click="ignoreProductCandidate({{ $candidate->id }})"
                                                     wire:loading.attr="disabled"
-                                                    wire:target="deleteProductCandidate({{ $candidate->id }})"
+                                                    wire:target="ignoreProductCandidate({{ $candidate->id }})"
                                                     class="inline-flex items-center rounded-md border border-red-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-50"
                                                 >
-                                                    Elimina
+                                                    Escludi
                                                 </button>
                                             @endif
                                         </div>

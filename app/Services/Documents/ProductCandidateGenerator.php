@@ -78,6 +78,14 @@ class ProductCandidateGenerator
                 continue;
             }
 
+            if (
+                $line->productIdentificationCandidates()
+                    ->whereIn('review_status', ['confirmed', 'ignored'])
+                    ->exists()
+            ) {
+                continue;
+            }
+
             if (! $this->lineIsUsable($line)) {
                 continue;
             }
@@ -100,6 +108,7 @@ class ProductCandidateGenerator
                 'source' => 'document_line_parser',
                 'confidence_score' => $this->estimateConfidenceScore($line, $productCode),
                 'is_selected' => false,
+                'review_status' => 'pending',
                 'metadata' => [
                     'generator' => 'product_candidate_generator_v1',
                     'document_line_id' => $line->id,
@@ -136,7 +145,7 @@ class ProductCandidateGenerator
     {
         $bestCandidateScore = ProductIdentificationCandidate::query()
             ->where('document_id', $document->id)
-            ->whereNull('product_id')
+            ->where('review_status', 'pending')
             ->max('confidence_score');
 
         $document->update([
@@ -147,13 +156,16 @@ class ProductCandidateGenerator
     }
 
     /**
-     * Elimina candidati non ancora collegati a prodotti reali.
+     * Elimina candidati pendenti non ancora collegati a prodotti reali.
+     *
+     * I candidati ignorati o confermati restano tracciati.
      */
     private function clearUnlinkedCandidates(Document $document): void
     {
         ProductIdentificationCandidate::query()
             ->where('document_id', $document->id)
             ->whereNull('product_id')
+            ->where('review_status', 'pending')
             ->delete();
     }
 

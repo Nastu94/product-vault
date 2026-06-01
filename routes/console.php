@@ -176,6 +176,18 @@ Artisan::command('product-vault:regression-documents {--ids= : Lista ID separati
             'total_amount' => '2130.00',
             'lines_count' => 5,
             'candidates_count' => 2,
+            'expected_candidates' => [
+                [
+                    'name_contains' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+                    'ean_code' => '0196388123456',
+                    'serial_number' => 'PF4TEST0091',
+                    'price' => '1499.00',
+                ],
+                [
+                    'ean_code' => '8055555012222',
+                    'price' => '119.00',
+                ],
+            ],
         ],
         28 => [
             'filename' => 'test_003B_fattura_prodotto_spezzato_ocr.png',
@@ -187,6 +199,18 @@ Artisan::command('product-vault:regression-documents {--ids= : Lista ID separati
             'total_amount' => '2130.00',
             'lines_count' => 5,
             'candidates_count' => 2,
+            'expected_candidates' => [
+                [
+                    'name_contains' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+                    'ean_code' => '0196388123456',
+                    'serial_number' => 'PF4TEST0091',
+                    'price' => '1499.00',
+                ],
+                [
+                    'ean_code' => '8055555012222',
+                    'price' => '119.00',
+                ],
+            ],
         ],
         29 => [
             'filename' => 'test_003B_fattura_prodotto_spezzato_scan_ocr.pdf',
@@ -198,6 +222,38 @@ Artisan::command('product-vault:regression-documents {--ids= : Lista ID separati
             'total_amount' => '2130.00',
             'lines_count' => 5,
             'candidates_count' => 2,
+            'expected_candidates' => [
+                [
+                    'name_contains' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+                    'ean_code' => '0196388123456',
+                    'serial_number' => 'PF4TEST0091',
+                    'price' => '1499.00',
+                ],
+                [
+                    'ean_code' => '8055555012222',
+                    'price' => '119.00',
+                ],
+            ],
+        ],
+        30 => [
+            'filename' => 'ChatGPT Image 1 giu 2026, 19_19_37.png',
+            'status' => 'needs_review',
+            'text_extraction_status' => 'completed',
+            'type' => 'order_confirmation',
+            'merchant' => 'SHOPCASA24',
+            'purchase_date' => '2026-05-31',
+            'total_amount' => '277.79',
+            'lines_count' => 3,
+            'candidates_count' => 1,
+            'expected_candidates' => [
+                [
+                    'name' => 'Robot Aspirapolvere SmartClean X200',
+                    'model' => 'RVA-X200',
+                    'ean_code' => '8057777001234',
+                    'price' => '249.90',
+                    'quantity' => '1.000',
+                ],
+            ],
         ],
     ];
 
@@ -213,6 +269,92 @@ Artisan::command('product-vault:regression-documents {--ids= : Lista ID separati
 
     $rows = [];
     $failed = false;
+
+    $formatMoney = function ($value): ?string {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return number_format((float) $value, 2, '.', '');
+    };
+
+    $formatQuantity = function ($value): ?string {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return number_format((float) $value, 3, '.', '');
+    };
+
+    $formatCandidate = function ($candidate) use ($formatMoney): string {
+        return sprintf(
+            'name=%s, model=%s, ean=%s, serial=%s, price=%s',
+            $candidate->name ?? 'null',
+            $candidate->model ?? 'null',
+            $candidate->ean_code ?? 'null',
+            $candidate->serial_number ?? 'null',
+            $formatMoney($candidate->price) ?? 'null'
+        );
+    };
+
+    $candidateMatchesExpectation = function ($candidate, array $expectation) use ($formatMoney, $formatQuantity): bool {
+        foreach ($expectation as $key => $expectedValue) {
+            if ($key === 'name_contains') {
+                $actualName = mb_strtolower((string) $candidate->name);
+                $expectedNamePart = mb_strtolower((string) $expectedValue);
+
+                if (! str_contains($actualName, $expectedNamePart)) {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if ($key === 'price') {
+                if ($formatMoney($candidate->price) !== $formatMoney($expectedValue)) {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if ($key === 'quantity') {
+                $actualQuantity = $candidate->metadata['quantity'] ?? null;
+
+                if ($formatQuantity($actualQuantity) !== $formatQuantity($expectedValue)) {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (in_array($key, ['line_parser', 'line_mode'], true)) {
+                $actualValue = $candidate->metadata[$key] ?? null;
+
+                if ((string) $actualValue !== (string) $expectedValue) {
+                    return false;
+                }
+
+                continue;
+            }
+
+            $actualValue = $candidate->{$key} ?? null;
+
+            if ($expectedValue === null) {
+                if ($actualValue !== null && $actualValue !== '') {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if ((string) $actualValue !== (string) $expectedValue) {
+                return false;
+            }
+        }
+
+        return true;
+    };
 
     foreach ($ids as $id) {
         if (! isset($expected[$id])) {
@@ -250,6 +392,11 @@ Artisan::command('product-vault:regression-documents {--ids= : Lista ID separati
                 ->with(['documentType', 'merchant'])
                 ->findOrFail($id);
 
+            $actualCandidates = $document->productIdentificationCandidates()
+                ->whereNull('product_id')
+                ->orderBy('id')
+                ->get();
+
             $actual = [
                 'filename' => $document->original_filename,
                 'status' => $document->status,
@@ -261,18 +408,47 @@ Artisan::command('product-vault:regression-documents {--ids= : Lista ID separati
                     ? number_format((float) $document->total_amount, 2, '.', '')
                     : null,
                 'lines_count' => $document->lines()->count(),
-                'candidates_count' => $document->productIdentificationCandidates()
-                    ->whereNull('product_id')
-                    ->count(),
+                'candidates_count' => $actualCandidates->count(),
             ];
 
             $errors = [];
 
             foreach ($expected[$id] as $key => $expectedValue) {
+                if ($key === 'expected_candidates') {
+                    continue;
+                }
+
                 $actualValue = $actual[$key] ?? null;
 
                 if ((string) $actualValue !== (string) $expectedValue) {
                     $errors[] = "{$key}: expected [{$expectedValue}], got [{$actualValue}]";
+                }
+            }
+
+            $expectedCandidates = $expected[$id]['expected_candidates'] ?? [];
+
+            if ($expectedCandidates !== []) {
+                $unmatchedCandidates = $actualCandidates->values();
+
+                foreach ($expectedCandidates as $candidateIndex => $expectedCandidate) {
+                    $matchedIndex = $unmatchedCandidates->search(
+                        fn ($candidate): bool => $candidateMatchesExpectation($candidate, $expectedCandidate)
+                    );
+
+                    if ($matchedIndex === false) {
+                        $actualCandidateSummary = $actualCandidates
+                            ->map(fn ($candidate): string => $formatCandidate($candidate))
+                            ->implode(' || ');
+
+                        $errors[] = 'expected_candidate #' . ($candidateIndex + 1)
+                            . ' not found: ' . json_encode($expectedCandidate, JSON_UNESCAPED_UNICODE)
+                            . ' | actual candidates: ' . ($actualCandidateSummary !== '' ? $actualCandidateSummary : 'none');
+
+                        continue;
+                    }
+
+                    $unmatchedCandidates->forget($matchedIndex);
+                    $unmatchedCandidates = $unmatchedCandidates->values();
                 }
             }
 

@@ -964,6 +964,113 @@ class DocumentShow extends Component
     }
 
     /**
+     * Diagnostica sintetica dell'estrazione righe documento.
+     *
+     * Serve per capire quale parser ha prodotto le righe, con quali strategie
+     * e se sono presenti warning o linee di supporto utili alla revisione.
+     */
+    public function getLineExtractionDiagnosticsProperty(): array
+    {
+        $lines = $this->document->lines;
+
+        $parserCounts = [];
+        $modeCounts = [];
+        $strategyCounts = [];
+        $scores = [];
+        $warnings = [];
+        $supportingLinesCount = 0;
+        $linesWithSupportingLines = 0;
+
+        foreach ($lines as $line) {
+            $metadata = $line->metadata ?? [];
+
+            $parser = $metadata['parser'] ?? null;
+            $mode = $metadata['mode'] ?? null;
+            $strategy = $metadata['extraction_strategy'] ?? null;
+            $score = $metadata['extraction_score'] ?? null;
+
+            if ($parser) {
+                $parserCounts[$parser] = ($parserCounts[$parser] ?? 0) + 1;
+            }
+
+            if ($mode) {
+                $modeCounts[$mode] = ($modeCounts[$mode] ?? 0) + 1;
+            }
+
+            if ($strategy) {
+                $strategyCounts[$strategy] = ($strategyCounts[$strategy] ?? 0) + 1;
+            }
+
+            if ($score !== null && is_numeric($score)) {
+                $scores[] = (int) $score;
+            }
+
+            $lineWarnings = array_merge(
+                $this->normalizeMetadataList($metadata['extraction_warnings'] ?? []),
+                $this->normalizeMetadataList($metadata['row_warnings'] ?? [])
+            );
+
+            foreach ($lineWarnings as $warning) {
+                $warnings[] = $warning;
+            }
+
+            $supportingLines = $this->normalizeMetadataList($metadata['supporting_lines'] ?? []);
+
+            if ($supportingLines !== []) {
+                $linesWithSupportingLines++;
+                $supportingLinesCount += count($supportingLines);
+            }
+        }
+
+        $latestLineParsingAttempt = $this->document
+            ->processingAttempts()
+            ->where('step', 'line_parsing')
+            ->latest('id')
+            ->first();
+
+        $latestCandidateGenerationAttempt = $this->document
+            ->processingAttempts()
+            ->where('step', 'product_candidate_generation')
+            ->latest('id')
+            ->first();
+
+        return [
+            'lines_count' => $lines->count(),
+            'candidates_count' => $this->document->productIdentificationCandidates->whereNull('product_id')->count(),
+            'parser_counts' => $parserCounts,
+            'mode_counts' => $modeCounts,
+            'strategy_counts' => $strategyCounts,
+            'average_extraction_score' => $scores !== []
+                ? round(array_sum($scores) / count($scores))
+                : null,
+            'warnings' => array_values(array_unique(array_filter($warnings))),
+            'supporting_lines_count' => $supportingLinesCount,
+            'lines_with_supporting_lines' => $linesWithSupportingLines,
+            'line_parsing_lines_created' => $latestLineParsingAttempt?->metadata['lines_created'] ?? null,
+            'candidate_generation_candidates_created' => $latestCandidateGenerationAttempt?->metadata['candidates_created'] ?? null,
+        ];
+    }
+
+    /**
+     * Normalizza valori metadata che possono arrivare come stringa, array o null.
+     */
+    private function normalizeMetadataList(mixed $value): array
+    {
+        if ($value === null || $value === '') {
+            return [];
+        }
+
+        if (is_array($value)) {
+            return array_values(array_filter(
+                $value,
+                fn ($item): bool => $item !== null && trim((string) $item) !== ''
+            ));
+        }
+
+        return [trim((string) $value)];
+    }
+
+    /**
      * Mostra la pagina dettaglio documento.
      */
     public function render(): View

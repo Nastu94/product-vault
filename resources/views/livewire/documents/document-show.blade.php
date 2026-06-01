@@ -89,9 +89,9 @@
             </div>
         </div>
 
-        <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
             {{-- Colonna principale --}}
-            <div class="space-y-6 lg:col-span-2">
+            <div class="space-y-6 xl:col-span-2">
                 {{-- Dati estratti --}}
                 <section class="bg-white shadow-sm ring-1 ring-gray-200 sm:rounded-lg">
                     <div class="p-6">
@@ -233,553 +233,971 @@
                     </div>
                 </section>
 
-                {{-- Righe prodotto candidate --}}
-                @php
-                    $documentLines = $document->lines->sortBy('line_number');
-                    $productCandidatesByLineId = $document->productIdentificationCandidates->keyBy('document_line_id');
-                @endphp
+{{-- Righe prodotto candidate --}}
+@php
+    $documentLines = $document->lines->sortBy('line_number');
+    $productCandidatesByLineId = $document->productIdentificationCandidates->keyBy('document_line_id');
+    $lineDiagnostics = $this->lineExtractionDiagnostics;
+@endphp
 
-                <details class="bg-white shadow-sm ring-1 ring-gray-200 sm:rounded-lg">
-                    <summary class="flex cursor-pointer list-none items-center justify-between gap-4 p-6">
-                        <div>
-                            <h2 class="text-lg font-medium text-gray-900">
-                                Righe prodotto candidate
-                            </h2>
+<details class="bg-white shadow-sm ring-1 ring-gray-200 sm:rounded-lg" open>
+    <summary class="flex cursor-pointer list-none items-center justify-between gap-4 p-6">
+        <div>
+            <h2 class="text-lg font-medium text-gray-900">
+                Righe prodotto candidate
+            </h2>
 
-                            <p class="mt-1 text-sm text-gray-600">
-                                @if ($documentLines->count() > 0)
-                                    {{ $documentLines->count() }}
-                                    {{ $documentLines->count() === 1 ? 'riga individuata' : 'righe individuate' }}
+            <p class="mt-1 text-sm text-gray-600">
+                @if ($documentLines->count() > 0)
+                    {{ $documentLines->count() }}
+                    {{ $documentLines->count() === 1 ? 'riga individuata' : 'righe individuate' }}
 
-                                    @if ($productCandidatesByLineId->count() > 0)
-                                        · {{ $productCandidatesByLineId->count() }}
-                                        {{ $productCandidatesByLineId->count() === 1 ? 'candidato prodotto' : 'candidati prodotto' }}
-                                    @endif
+                    @if ($productCandidatesByLineId->count() > 0)
+                        · {{ $productCandidatesByLineId->count() }}
+                        {{ $productCandidatesByLineId->count() === 1 ? 'candidato prodotto' : 'candidati prodotto' }}
+                    @endif
+                @else
+                    Nessuna riga prodotto individuata
+                @endif
+            </p>
+        </div>
 
-                                    @if ($documentLines->first()?->description)
-                                        · {{ $documentLines->first()->description }}
-                                    @endif
-                                @else
-                                    Nessuna riga prodotto individuata
-                                @endif
-                            </p>
-                        </div>
+        <span class="text-sm text-gray-500">
+            Apri
+        </span>
+    </summary>
 
-                        <span class="text-sm text-gray-500">
-                            Apri
+    <div class="border-t border-gray-200 p-6">
+        @if (session()->has('product_success'))
+            <div class="mb-4 rounded-md bg-green-50 p-4 text-sm text-green-700">
+                {{ session('product_success') }}
+            </div>
+        @endif
+
+        @if (session()->has('product_warning'))
+            <div class="mb-4 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
+                {{ session('product_warning') }}
+            </div>
+        @endif
+
+        @if (session()->has('line_success'))
+            <div class="mb-4 rounded-md bg-green-50 p-4 text-sm text-green-700">
+                {{ session('line_success') }}
+            </div>
+        @endif
+
+        @if (session()->has('line_warning'))
+            <div class="mb-4 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
+                {{ session('line_warning') }}
+            </div>
+        @endif
+
+        @if (session()->has('candidate_success'))
+            <div class="mb-4 rounded-md bg-green-50 p-4 text-sm text-green-700">
+                {{ session('candidate_success') }}
+            </div>
+        @endif
+
+        @if (session()->has('candidate_warning'))
+            <div class="mb-4 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
+                {{ session('candidate_warning') }}
+            </div>
+        @endif
+
+        @if ($documentLines->isNotEmpty())
+            <div class="mb-5 flex flex-col gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-900">
+                        Diagnostica estrazione
+                    </h3>
+
+                    <p class="mt-1 text-xs text-gray-600">
+                        Riepilogo tecnico compatto. I dettagli sono nel pannello laterale.
+                    </p>
+                </div>
+
+                <div class="flex flex-wrap justify-center gap-2 sm:justify-end">
+                    <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+                        Righe: {{ $lineDiagnostics['lines_count'] }}
+                    </span>
+
+                    <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+                        Candidati: {{ $lineDiagnostics['candidates_count'] }}
+                    </span>
+
+                    @if ($lineDiagnostics['average_extraction_score'] !== null)
+                        <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+                            Score medio: {{ $lineDiagnostics['average_extraction_score'] }}/100
                         </span>
-                    </summary>
+                    @endif
 
-                    <div class="border-t border-gray-200 p-6">
-                        @if (session()->has('product_success'))
-                            <div class="mb-4 rounded-md bg-green-50 p-4 text-sm text-green-700">
-                                {{ session('product_success') }}
-                            </div>
-                        @endif
+                    <button
+                        type="button"
+                        x-data
+                        x-on:click="$dispatch('open-drawer', { id: 'line-diagnostics-drawer' })"
+                        class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50"
+                    >
+                        Dettagli diagnostica
+                    </button>
 
-                        @if (session()->has('product_warning'))
-                            <div class="mb-4 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
-                                {{ session('product_warning') }}
-                            </div>
-                        @endif
+                    @if ($documentLines->isNotEmpty() && $document->status !== 'linked_to_product')
+                        <button
+                            type="button"
+                            wire:click="regenerateProductCandidates"
+                            wire:loading.attr="disabled"
+                            wire:target="regenerateProductCandidates"
+                            class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+                        >
+                            Rigenera candidati
+                        </button>
+                    @endif
+                </div>
+            </div>
 
-                        @if (session()->has('line_success'))
-                            <div class="mb-4 rounded-md bg-green-50 p-4 text-sm text-green-700">
-                                {{ session('line_success') }}
-                            </div>
-                        @endif
+            <x-ui.drawer
+                id="line-diagnostics-drawer"
+                title="Diagnostica estrazione righe"
+                description="Informazioni tecniche utili per capire come sono state generate righe e candidati."
+                width="max-w-3xl"
+            >
+                <dl class="grid grid-cols-1 gap-5 text-sm sm:grid-cols-2">
+                    <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
+                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Parser
+                        </dt>
 
-                        @if (session()->has('line_warning'))
-                            <div class="mb-4 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
-                                {{ session('line_warning') }}
-                            </div>
-                        @endif
-
-                        @if (session()->has('candidate_success'))
-                            <div class="mb-4 rounded-md bg-green-50 p-4 text-sm text-green-700">
-                                {{ session('candidate_success') }}
-                            </div>
-                        @endif
-
-                        @if (session()->has('candidate_warning'))
-                            <div class="mb-4 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
-                                {{ session('candidate_warning') }}
-                            </div>
-                        @endif
-
-                        @if ($documentLines->isNotEmpty() && $document->status !== 'linked_to_product')
-                            <div class="mb-4 flex justify-end">
-                                <button
-                                    type="button"
-                                    wire:click="regenerateProductCandidates"
-                                    wire:loading.attr="disabled"
-                                    wire:target="regenerateProductCandidates"
-                                    class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
-                                >
-                                    Rigenera candidati
-                                </button>
-                            </div>
-                        @endif
-                        @if ($documentLines->isNotEmpty())
-                            <div class="overflow-hidden rounded-lg border border-gray-200">
-                                <table class="min-w-full divide-y divide-gray-200">
-                                    <thead class="bg-gray-50">
-                                        <tr>
-                                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                                                Riga estratta
-                                            </th>
-
-                                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                                                Candidato prodotto
-                                            </th>
-
-                                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                                                Quantità
-                                            </th>
-
-                                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                                                Totale
-                                            </th>
-
-                                            <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                                                Affidabilità
-                                            </th>
-                                        </tr>
-                                    </thead>
-
-                                    <tbody class="divide-y divide-gray-200 bg-white">
-                                        @foreach ($documentLines as $line)
-                                            @php
-                                                $productCode = $line->metadata['product_code_candidate'] ?? null;
-                                                $mode = $line->metadata['mode'] ?? null;
-                                                $candidate = $productCandidatesByLineId->get($line->id);
-                                            @endphp
-
-                                            <tr wire:key="document-line-{{ $line->id }}">
-                                                <td class="px-4 py-3 text-sm text-gray-900">
-                                                    <div class="font-medium">
-                                                        {{ $line->description ?? '—' }}
-                                                    </div>
-
-                                                    @if ($productCode)
-                                                        <div class="mt-1 text-xs text-gray-500">
-                                                            Codice letto: {{ $productCode }}
-                                                        </div>
-                                                    @endif
-
-                                                    @if ($line->unit_price !== null)
-                                                        <div class="mt-1 text-xs text-gray-500">
-                                                            Prezzo unitario:
-                                                            {{ number_format((float) $line->unit_price, 2, ',', '.') }}
-                                                            {{ $document->currency?->code }}
-                                                        </div>
-                                                    @endif
-
-                                                    @if ($mode)
-                                                        <div class="mt-1 text-xs text-gray-400">
-                                                            Parser: {{ str_replace('_', ' ', $mode) }}
-                                                        </div>
-                                                    @endif
-                                                    @if ($document->status !== 'linked_to_product')
-                                                        <details class="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3">
-                                                            <summary class="cursor-pointer text-xs font-medium text-gray-700">
-                                                                Modifica riga
-                                                            </summary>
-
-                                                            <form
-                                                                wire:submit.prevent="saveDocumentLineReviewData({{ $line->id }})"
-                                                                class="mt-3 space-y-3"
-                                                            >
-                                                                <div>
-                                                                    <label class="block text-xs font-medium text-gray-500">
-                                                                        Descrizione
-                                                                    </label>
-
-                                                                    <input
-                                                                        type="text"
-                                                                        wire:model.defer="lineReviewForms.{{ $line->id }}.description"
-                                                                        class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                                                    >
-
-                                                                    @error("lineReviewForms.{$line->id}.description")
-                                                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
-                                                                    @enderror
-                                                                </div>
-
-                                                                <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                                                                    <div>
-                                                                        <label class="block text-xs font-medium text-gray-500">
-                                                                            Quantità
-                                                                        </label>
-
-                                                                        <input
-                                                                            type="text"
-                                                                            inputmode="decimal"
-                                                                            wire:model.defer="lineReviewForms.{{ $line->id }}.quantity"
-                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                                                        >
-
-                                                                        @error("lineReviewForms.{$line->id}.quantity")
-                                                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
-                                                                        @enderror
-                                                                    </div>
-
-                                                                    <div>
-                                                                        <label class="block text-xs font-medium text-gray-500">
-                                                                            Prezzo unitario
-                                                                        </label>
-
-                                                                        <input
-                                                                            type="text"
-                                                                            inputmode="decimal"
-                                                                            wire:model.defer="lineReviewForms.{{ $line->id }}.unit_price"
-                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                                                        >
-
-                                                                        @error("lineReviewForms.{$line->id}.unit_price")
-                                                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
-                                                                        @enderror
-                                                                    </div>
-
-                                                                    <div>
-                                                                        <label class="block text-xs font-medium text-gray-500">
-                                                                            Totale riga
-                                                                        </label>
-
-                                                                        <input
-                                                                            type="text"
-                                                                            inputmode="decimal"
-                                                                            wire:model.defer="lineReviewForms.{{ $line->id }}.total_price"
-                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                                                        >
-
-                                                                        @error("lineReviewForms.{$line->id}.total_price")
-                                                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
-                                                                        @enderror
-                                                                    </div>
-                                                                </div>
-
-                                                                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                                                    <div>
-                                                                        <label class="block text-xs font-medium text-gray-500">
-                                                                            Codice / modello candidato
-                                                                        </label>
-
-                                                                        <input
-                                                                            type="text"
-                                                                            wire:model.defer="lineReviewForms.{{ $line->id }}.product_code_candidate"
-                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                                                        >
-                                                                    </div>
-
-                                                                    <div>
-                                                                        <label class="block text-xs font-medium text-gray-500">
-                                                                            Seriale candidato
-                                                                        </label>
-
-                                                                        <input
-                                                                            type="text"
-                                                                            wire:model.defer="lineReviewForms.{{ $line->id }}.serial_number_candidate"
-                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                                                        >
-                                                                    </div>
-                                                                </div>
-
-                                                                <div class="flex flex-wrap gap-2">
-                                                                    <button
-                                                                        type="submit"
-                                                                        wire:loading.attr="disabled"
-                                                                        wire:target="saveDocumentLineReviewData({{ $line->id }})"
-                                                                        class="inline-flex items-center rounded-md border border-transparent bg-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
-                                                                    >
-                                                                        Salva riga
-                                                                    </button>
-
-                                                                    <button
-                                                                        type="button"
-                                                                        wire:click="deleteDocumentLine({{ $line->id }})"
-                                                                        wire:loading.attr="disabled"
-                                                                        wire:target="deleteDocumentLine({{ $line->id }})"
-                                                                        class="inline-flex items-center rounded-md border border-red-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-50"
-                                                                    >
-                                                                        Elimina riga
-                                                                    </button>
-                                                                </div>
-                                                            </form>
-                                                        </details>
-                                                    @endif
-                                                </td>
-
-                                                <td class="px-4 py-3 text-sm text-gray-900">
-                                                    @if ($candidate)
-                                                        <div class="font-medium">
-                                                            {{ $candidate->name ?? '—' }}
-                                                        </div>
-
-                                                        @if ($candidate->model)
-                                                            <div class="mt-1 text-xs text-gray-500">
-                                                                Modello: {{ $candidate->model }}
-                                                            </div>
-                                                        @endif
-
-                                                        @if ($candidate->ean_code)
-                                                            <div class="mt-1 text-xs text-gray-500">
-                                                                EAN: {{ $candidate->ean_code }}
-                                                            </div>
-                                                        @endif
-
-                                                        @if ($candidate->price !== null)
-                                                            <div class="mt-1 text-xs text-gray-500">
-                                                                Prezzo unitario candidato:
-                                                                {{ number_format((float) $candidate->price, 2, ',', '.') }}
-                                                                {{ $document->currency?->code }}
-                                                            </div>
-                                                        @endif
-
-                                                        <div class="mt-1 text-xs text-gray-400">
-                                                            Fonte: {{ str_replace('_', ' ', $candidate->source) }}
-                                                        </div>
-                                                        @if ($candidate->serial_number)
-                                                            <div class="mt-1 text-xs text-gray-500">
-                                                                Seriale: {{ $candidate->serial_number }}
-                                                            </div>
-                                                        @endif
-
-                                                        @if (! $candidate->product_id && $document->status !== 'linked_to_product')
-                                                            <details
-                                                                wire:key="candidate-review-details-{{ $candidate->id }}"
-                                                                class="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3"
-                                                            >
-                                                                <summary class="cursor-pointer text-xs font-medium text-gray-700">
-                                                                    Modifica candidato
-                                                                </summary>
-
-                                                                <form
-                                                                    wire:key="candidate-review-form-{{ $candidate->id }}"
-                                                                    wire:submit.prevent="saveProductCandidateReviewData({{ $candidate->id }})"
-                                                                    class="mt-3 space-y-3"
-                                                                >
-                                                                    <div>
-                                                                        <label class="block text-xs font-medium text-gray-500">
-                                                                            Nome prodotto
-                                                                        </label>
-
-                                                                        <input
-                                                                            type="text"
-                                                                            wire:model.defer="candidateReviewForms.{{ $candidate->id }}.name"
-                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                                                        >
-
-                                                                        @error("candidateReviewForms.{$candidate->id}.name")
-                                                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
-                                                                        @enderror
-                                                                    </div>
-
-                                                                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                                                        <div>
-                                                                            <label class="block text-xs font-medium text-gray-500">
-                                                                                Modello
-                                                                            </label>
-
-                                                                            <input
-                                                                                type="text"
-                                                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.model"
-                                                                                class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                                                            >
-                                                                        </div>
-
-                                                                        <div>
-                                                                            <label class="block text-xs font-medium text-gray-500">
-                                                                                Prezzo
-                                                                            </label>
-
-                                                                            <input
-                                                                                type="text"
-                                                                                inputmode="decimal"
-                                                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.price"
-                                                                                class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                                                            >
-
-                                                                            @error("candidateReviewForms.{$candidate->id}.price")
-                                                                                <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
-                                                                            @enderror
-                                                                        </div>
-                                                                    </div>
-
-                                                                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                                                        <div>
-                                                                            <label class="block text-xs font-medium text-gray-500">
-                                                                                Seriale
-                                                                            </label>
-
-                                                                            <input
-                                                                                type="text"
-                                                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.serial_number"
-                                                                                class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                                                            >
-                                                                        </div>
-
-                                                                        <div>
-                                                                            <label class="block text-xs font-medium text-gray-500">
-                                                                                EAN
-                                                                            </label>
-
-                                                                            <input
-                                                                                type="text"
-                                                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.ean_code"
-                                                                                class="mt-1 block w-full rounded-md border-gray-300 text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                                                                            >
-                                                                        </div>
-                                                                    </div>
-
-                                                                    <div class="flex flex-wrap gap-2">
-                                                                        <button
-                                                                            type="submit"
-                                                                            wire:loading.attr="disabled"
-                                                                            wire:target="saveProductCandidateReviewData({{ $candidate->id }})"
-                                                                            class="inline-flex items-center rounded-md border border-transparent bg-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
-                                                                        >
-                                                                            Salva candidato
-                                                                        </button>
-
-                                                                        <button
-                                                                            type="button"
-                                                                            wire:click="deleteProductCandidate({{ $candidate->id }})"
-                                                                            wire:loading.attr="disabled"
-                                                                            wire:target="deleteProductCandidate({{ $candidate->id }})"
-                                                                            class="inline-flex items-center rounded-md border border-red-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-50"
-                                                                        >
-                                                                            Elimina candidato
-                                                                        </button>
-                                                                    </div>
-                                                                </form>
-                                                            </details>
-                                                        @endif
-                                                        <div class="mt-3">
-                                                            @if ($candidate->product_id && $candidate->product)
-                                                                <div class="flex flex-col items-start gap-2">
-                                                                    <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
-                                                                        Prodotto creato
-                                                                    </span>
-
-                                                                    <a
-                                                                        href="{{ route('products.show', $candidate->product) }}"
-                                                                        class="text-xs font-medium text-indigo-600 hover:text-indigo-800"
-                                                                    >
-                                                                        Apri scheda prodotto
-                                                                    </a>
-                                                                </div>
-                                                            @elseif ($document->status === 'linked_to_product')
-                                                                <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20">
-                                                                    Documento già collegato
-                                                                </span>
-                                                            @else
-                                                                <button
-                                                                    type="button"
-                                                                    wire:click="confirmProductCandidate({{ $candidate->id }})"
-                                                                    wire:loading.attr="disabled"
-                                                                    wire:target="confirmProductCandidate({{ $candidate->id }})"
-                                                                    class="inline-flex items-center rounded-md border border-transparent bg-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
-                                                                >
-                                                                    Conferma e crea prodotto
-                                                                </button>
-                                                            @endif
-                                                        </div>
-                                                    @else
-                                                        <span class="text-sm text-gray-500">
-                                                            Nessun candidato generato
-                                                        </span>
-                                                    @endif
-                                                </td>
-
-                                                <td class="px-4 py-3 text-sm text-gray-700">
-                                                    {{ $line->quantity !== null ? number_format((float) $line->quantity, 3, ',', '.') : '—' }}
-                                                </td>
-
-                                                <td class="px-4 py-3 text-sm text-gray-700">
-                                                    @if ($line->total_price !== null)
-                                                        {{ number_format((float) $line->total_price, 2, ',', '.') }}
-                                                        {{ $document->currency?->code }}
-                                                    @else
-                                                        —
-                                                    @endif
-                                                </td>
-
-                                                <td class="px-4 py-3 text-sm">
-                                                    <div class="space-y-2">
-                                                        @if ($line->confidence_score !== null)
-                                                            <div>
-                                                                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset
-                                                                    @if ($line->confidence_score >= 80)
-                                                                        bg-green-50 text-green-700 ring-green-600/20
-                                                                    @elseif ($line->confidence_score >= 50)
-                                                                        bg-yellow-50 text-yellow-800 ring-yellow-600/20
-                                                                    @else
-                                                                        bg-red-50 text-red-700 ring-red-600/20
-                                                                    @endif
-                                                                ">
-                                                                    Riga {{ $line->confidence_score }}/100
-                                                                </span>
-                                                            </div>
-                                                        @endif
-
-                                                        @if ($candidate?->confidence_score !== null)
-                                                            <div>
-                                                                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset
-                                                                    @if ($candidate->confidence_score >= 80)
-                                                                        bg-green-50 text-green-700 ring-green-600/20
-                                                                    @elseif ($candidate->confidence_score >= 50)
-                                                                        bg-yellow-50 text-yellow-800 ring-yellow-600/20
-                                                                    @else
-                                                                        bg-red-50 text-red-700 ring-red-600/20
-                                                                    @endif
-                                                                ">
-                                                                    Candidato {{ $candidate->confidence_score }}/100
-                                                                </span>
-                                                            </div>
-                                                        @endif
-
-                                                        @if ($candidate)
-                                                            <div>
-                                                                @if ($candidate->is_selected)
-                                                                    <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
-                                                                        Selezionato
-                                                                    </span>
-                                                                @else
-                                                                    <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20">
-                                                                        Da confermare
-                                                                    </span>
-                                                                @endif
-                                                            </div>
-                                                        @endif
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        @endforeach
-                                    </tbody>
-                                </table>
-                            </div>
-
-                            <div class="mt-4 rounded-md border border-blue-200 bg-blue-50 p-4">
-                                <p class="text-sm text-blue-700">
-                                    Le righe e i candidati prodotto sono proposte automatiche. Nel flusso di revisione potranno essere confermati, corretti o esclusi prima di creare una scheda prodotto.
-                                </p>
-                            </div>
-                        @elseif ($document->text_extraction_status === 'requires_ocr')
-                            <div class="rounded-md border border-orange-200 bg-orange-50 p-4">
-                                <p class="text-sm text-orange-800">
-                                    Le righe prodotto potranno essere estratte dopo l’OCR, perché il documento non ha ancora testo estraibile.
-                                </p>
-                            </div>
-                        @else
-                            <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
-                                <p class="text-sm text-gray-700">
-                                    Nessuna riga prodotto candidata è stata individuata in questo documento.
-                                </p>
-                            </div>
-                        @endif
+                        <dd class="mt-3 space-y-1 text-gray-800">
+                            @forelse ($lineDiagnostics['parser_counts'] as $parser => $count)
+                                <div>{{ str_replace('_', ' ', $parser) }} · {{ $count }}</div>
+                            @empty
+                                <div>—</div>
+                            @endforelse
+                        </dd>
                     </div>
-                </details>
+
+                    <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
+                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Mode
+                        </dt>
+
+                        <dd class="mt-3 space-y-1 text-gray-800">
+                            @forelse ($lineDiagnostics['mode_counts'] as $mode => $count)
+                                <div>{{ str_replace('_', ' ', $mode) }} · {{ $count }}</div>
+                            @empty
+                                <div>—</div>
+                            @endforelse
+                        </dd>
+                    </div>
+
+                    <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
+                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Strategie tabellari
+                        </dt>
+
+                        <dd class="mt-3 space-y-1 text-gray-800">
+                            @forelse ($lineDiagnostics['strategy_counts'] as $strategy => $count)
+                                <div>{{ str_replace('_', ' ', $strategy) }} · {{ $count }}</div>
+                            @empty
+                                <div>—</div>
+                            @endforelse
+                        </dd>
+                    </div>
+
+                    <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
+                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Supporto / job
+                        </dt>
+
+                        <dd class="mt-3 space-y-1 text-gray-800">
+                            <div>Linee supporto: {{ $lineDiagnostics['supporting_lines_count'] }}</div>
+                            <div>Righe con supporto: {{ $lineDiagnostics['lines_with_supporting_lines'] }}</div>
+
+                            @if ($lineDiagnostics['line_parsing_lines_created'] !== null)
+                                <div>Job righe create: {{ $lineDiagnostics['line_parsing_lines_created'] }}</div>
+                            @endif
+
+                            @if ($lineDiagnostics['candidate_generation_candidates_created'] !== null)
+                                <div>Job candidati creati: {{ $lineDiagnostics['candidate_generation_candidates_created'] }}</div>
+                            @endif
+                        </dd>
+                    </div>
+                </dl>
+
+                @if (! empty($lineDiagnostics['warnings']))
+                    <div class="mt-5 rounded-md border border-yellow-200 bg-yellow-50 p-4">
+                        <h4 class="text-xs font-medium uppercase tracking-wider text-yellow-800">
+                            Warning estrazione
+                        </h4>
+
+                        <ul class="mt-3 list-disc space-y-1 pl-5 text-sm text-yellow-800">
+                            @foreach ($lineDiagnostics['warnings'] as $warning)
+                                <li>{{ $warning }}</li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+            </x-ui.drawer>
+
+            <div class="space-y-3">
+                @foreach ($documentLines as $line)
+                    @php
+                        $productCode = $line->metadata['product_code_candidate'] ?? null;
+                        $eanCodeCandidate = $line->metadata['ean_code_candidate'] ?? null;
+                        $mode = $line->metadata['mode'] ?? null;
+                        $parser = $line->metadata['parser'] ?? null;
+                        $extractionStrategy = $line->metadata['extraction_strategy'] ?? null;
+                        $extractionScore = $line->metadata['extraction_score'] ?? null;
+                        $supportingLines = $line->metadata['supporting_lines'] ?? [];
+
+                        $candidate = $productCandidatesByLineId->get($line->id);
+                        $candidateMetadata = $candidate?->metadata ?? [];
+                        $sourceLine = $candidate?->documentLine;
+                        $sourceLineMetadata = $sourceLine?->metadata ?? [];
+                        $candidateSupportingLines = $sourceLineMetadata['supporting_lines'] ?? [];
+
+                        $previewName = $candidate?->name ?: ($line->description ?? 'Riga senza nome');
+                    @endphp
+
+                    <details
+                        wire:key="document-line-card-{{ $line->id }}"
+                        class="group rounded-xl border border-gray-200 bg-white shadow-sm"
+                    >
+                        <summary class="flex cursor-pointer list-none items-center justify-between gap-4 p-5">
+                            <div class="min-w-0">
+                                <p class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    {{ $candidate ? 'Candidato prodotto' : 'Riga estratta' }}
+                                </p>
+
+                                <h3 class="mt-1 truncate text-sm font-semibold text-gray-900">
+                                    {{ $previewName }}
+                                </h3>
+                            </div>
+
+                            <div class="flex shrink-0 items-center gap-2">
+                                @if ($candidate?->confidence_score !== null)
+                                    <span class="hidden items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset sm:inline-flex
+                                        @if ($candidate->confidence_score >= 80)
+                                            bg-green-50 text-green-700 ring-green-600/20
+                                        @elseif ($candidate->confidence_score >= 50)
+                                            bg-yellow-50 text-yellow-800 ring-yellow-600/20
+                                        @else
+                                            bg-red-50 text-red-700 ring-red-600/20
+                                        @endif
+                                    ">
+                                        {{ $candidate->confidence_score }}/100
+                                    </span>
+                                @elseif ($line->confidence_score !== null)
+                                    <span class="hidden items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset sm:inline-flex
+                                        @if ($line->confidence_score >= 80)
+                                            bg-green-50 text-green-700 ring-green-600/20
+                                        @elseif ($line->confidence_score >= 50)
+                                            bg-yellow-50 text-yellow-800 ring-yellow-600/20
+                                        @else
+                                            bg-red-50 text-red-700 ring-red-600/20
+                                        @endif
+                                    ">
+                                        {{ $line->confidence_score }}/100
+                                    </span>
+                                @endif
+
+                                <span class="text-sm text-gray-400 group-open:hidden">
+                                    Apri
+                                </span>
+
+                                <span class="hidden text-sm text-gray-400 group-open:inline">
+                                    Chiudi
+                                </span>
+                            </div>
+                        </summary>
+
+                        <div class="border-t border-gray-200 p-5">
+                            <div class="grid grid-cols-1 gap-6 xl:grid-cols-12">
+                                <div class="xl:col-span-4">
+                                    <p class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Riga estratta
+                                    </p>
+
+                                    <h4 class="mt-2 text-sm font-semibold text-gray-900">
+                                        {{ $line->description ?? '—' }}
+                                    </h4>
+
+                                    <dl class="mt-4 grid grid-cols-3 gap-3 text-xs">
+                                        <div>
+                                            <dt class="text-gray-500">Quantità</dt>
+                                            <dd class="font-medium text-gray-800">
+                                                {{ $line->quantity !== null ? number_format((float) $line->quantity, 3, ',', '.') : '—' }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-gray-500">Unitario</dt>
+                                            <dd class="font-medium text-gray-800">
+                                                {{ $line->unit_price !== null ? number_format((float) $line->unit_price, 2, ',', '.') : '—' }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-gray-500">Totale</dt>
+                                            <dd class="font-medium text-gray-800">
+                                                {{ $line->total_price !== null ? number_format((float) $line->total_price, 2, ',', '.') : '—' }}
+                                            </dd>
+                                        </div>
+                                    </dl>
+
+                                    <div class="mt-5 flex flex-wrap justify-center gap-2">
+                                        <button
+                                            type="button"
+                                            x-data
+                                            x-on:click="$dispatch('open-drawer', { id: 'line-details-{{ $line->id }}' })"
+                                            class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50"
+                                        >
+                                            Dettagli riga
+                                        </button>
+
+                                        @if ($document->status !== 'linked_to_product')
+                                            <button
+                                                type="button"
+                                                x-data
+                                                x-on:click="$dispatch('open-drawer', { id: 'line-edit-{{ $line->id }}' })"
+                                                class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50"
+                                            >
+                                                Modifica riga
+                                            </button>
+                                        @endif
+                                    </div>
+                                </div>
+
+                                <div class="xl:col-span-5">
+                                    <p class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Candidato prodotto
+                                    </p>
+
+                                    @if ($candidate)
+                                        <h4 class="mt-2 text-sm font-semibold text-gray-900">
+                                            {{ $candidate->name ?? '—' }}
+                                        </h4>
+
+                                        <div class="mt-2 space-y-1 text-xs text-gray-600">
+                                            @if ($candidate->model)
+                                                <div>Modello: {{ $candidate->model }}</div>
+                                            @endif
+
+                                            @if ($candidate->ean_code)
+                                                <div>EAN: {{ $candidate->ean_code }}</div>
+                                            @endif
+
+                                            @if ($candidate->serial_number)
+                                                <div>Seriale: {{ $candidate->serial_number }}</div>
+                                            @endif
+
+                                            @if ($candidate->price !== null)
+                                                <div>
+                                                    Prezzo candidato:
+                                                    {{ number_format((float) $candidate->price, 2, ',', '.') }}
+                                                    {{ $document->currency?->code }}
+                                                </div>
+                                            @endif
+
+                                            <div class="text-gray-400">
+                                                Fonte: {{ str_replace('_', ' ', $candidate->source) }}
+                                            </div>
+                                        </div>
+
+                                        <div class="mt-5 flex flex-wrap justify-center gap-2">
+                                            <button
+                                                type="button"
+                                                x-data
+                                                x-on:click="$dispatch('open-drawer', { id: 'candidate-source-{{ $candidate->id }}' })"
+                                                class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50"
+                                            >
+                                                Sorgente candidato
+                                            </button>
+
+                                            @if (! $candidate->product_id && $document->status !== 'linked_to_product')
+                                                <button
+                                                    type="button"
+                                                    x-data
+                                                    x-on:click="$dispatch('open-drawer', { id: 'candidate-edit-{{ $candidate->id }}' })"
+                                                    class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50"
+                                                >
+                                                    Modifica candidato
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    wire:click="deleteProductCandidate({{ $candidate->id }})"
+                                                    wire:loading.attr="disabled"
+                                                    wire:target="deleteProductCandidate({{ $candidate->id }})"
+                                                    class="inline-flex items-center rounded-md border border-red-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-50"
+                                                >
+                                                    Elimina candidato
+                                                </button>
+                                            @endif
+                                        </div>
+                                    @else
+                                        <div class="mt-3 rounded-md border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
+                                            Nessun candidato generato da questa riga.
+                                        </div>
+                                    @endif
+                                </div>
+
+                                <div class="flex flex-col items-center justify-center text-center xl:col-span-3">
+                                    <p class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Azione principale
+                                    </p>
+
+                                    <div class="mt-4 w-full max-w-xs space-y-3">
+                                        @if ($candidate)
+                                            @if ($candidate->product_id && $candidate->product)
+                                                <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
+                                                    Prodotto creato
+                                                </span>
+
+                                                <a
+                                                    href="{{ route('products.show', $candidate->product) }}"
+                                                    class="inline-flex w-full items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50"
+                                                >
+                                                    Apri prodotto
+                                                </a>
+                                            @elseif ($document->status === 'linked_to_product')
+                                                <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20">
+                                                    Documento già collegato
+                                                </span>
+                                            @else
+                                                <button
+                                                    type="button"
+                                                    wire:click="confirmProductCandidate({{ $candidate->id }})"
+                                                    wire:loading.attr="disabled"
+                                                    wire:target="confirmProductCandidate({{ $candidate->id }})"
+                                                    class="inline-flex w-full items-center justify-center rounded-md border border-transparent bg-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
+                                                >
+                                                    Conferma e crea prodotto
+                                                </button>
+                                            @endif
+                                        @else
+                                            <span class="text-sm text-gray-500">
+                                                Nessuna azione disponibile.
+                                            </span>
+                                        @endif
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <x-ui.drawer
+                        id="line-details-{{ $line->id }}"
+                        title="Dettagli riga estratta"
+                        description="Dati tecnici e sorgente della riga individuata dal parser."
+                        width="max-w-3xl"
+                    >
+                        <dl class="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Descrizione
+                                </dt>
+                                <dd class="mt-1 text-gray-900">
+                                    {{ $line->description ?? '—' }}
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Codice letto
+                                </dt>
+                                <dd class="mt-1 text-gray-900">
+                                    {{ $productCode ?? '—' }}
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    EAN letto
+                                </dt>
+                                <dd class="mt-1 text-gray-900">
+                                    {{ $eanCodeCandidate ?? '—' }}
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Parser / mode
+                                </dt>
+                                <dd class="mt-1 text-gray-900">
+                                    {{ $parser ? str_replace('_', ' ', $parser) : '—' }}
+
+                                    @if ($mode)
+                                        · {{ str_replace('_', ' ', $mode) }}
+                                    @endif
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Strategia
+                                </dt>
+                                <dd class="mt-1 text-gray-900">
+                                    {{ $extractionStrategy ? str_replace('_', ' ', $extractionStrategy) : '—' }}
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Score estrazione
+                                </dt>
+                                <dd class="mt-1 text-gray-900">
+                                    {{ $extractionScore !== null ? $extractionScore . '/100' : '—' }}
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Quantità
+                                </dt>
+                                <dd class="mt-1 text-gray-900">
+                                    {{ $line->quantity !== null ? number_format((float) $line->quantity, 3, ',', '.') : '—' }}
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Prezzo unitario
+                                </dt>
+                                <dd class="mt-1 text-gray-900">
+                                    {{ $line->unit_price !== null ? number_format((float) $line->unit_price, 2, ',', '.') . ' ' . ($document->currency?->code ?? '') : '—' }}
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Totale riga
+                                </dt>
+                                <dd class="mt-1 text-gray-900">
+                                    {{ $line->total_price !== null ? number_format((float) $line->total_price, 2, ',', '.') . ' ' . ($document->currency?->code ?? '') : '—' }}
+                                </dd>
+                            </div>
+
+                            <div>
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Affidabilità riga
+                                </dt>
+                                <dd class="mt-1 text-gray-900">
+                                    {{ $line->confidence_score !== null ? $line->confidence_score . '/100' : '—' }}
+                                </dd>
+                            </div>
+
+                            <div class="sm:col-span-2">
+                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Testo grezzo riga
+                                </dt>
+                                <dd class="mt-2 whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-3 text-gray-800">
+                                    {{ $line->raw_text ?? '—' }}
+                                </dd>
+                            </div>
+
+                            @if (! empty($supportingLines))
+                                <div class="sm:col-span-2">
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Linee di supporto
+                                    </dt>
+                                    <dd class="mt-2">
+                                        <ul class="list-disc space-y-1 pl-5 text-gray-700">
+                                            @foreach ($supportingLines as $supportingLine)
+                                                <li>{{ $supportingLine }}</li>
+                                            @endforeach
+                                        </ul>
+                                    </dd>
+                                </div>
+                            @endif
+                        </dl>
+                    </x-ui.drawer>
+
+                    @if ($candidate)
+                        <x-ui.drawer
+                            id="candidate-source-{{ $candidate->id }}"
+                            title="Sorgente candidato prodotto"
+                            description="Dati usati per generare il candidato prodotto."
+                            width="max-w-3xl"
+                        >
+                            <dl class="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Nome candidato
+                                    </dt>
+                                    <dd class="mt-1 text-gray-900">
+                                        {{ $candidate->name ?? '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Riga sorgente
+                                    </dt>
+                                    <dd class="mt-1 text-gray-900">
+                                        {{ $sourceLine?->description ?? '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Quantità letta
+                                    </dt>
+                                    <dd class="mt-1 text-gray-900">
+                                        {{ isset($candidateMetadata['quantity']) && $candidateMetadata['quantity'] !== null
+                                            ? number_format((float) $candidateMetadata['quantity'], 3, ',', '.')
+                                            : '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Prezzo unitario sorgente
+                                    </dt>
+                                    <dd class="mt-1 text-gray-900">
+                                        {{ isset($candidateMetadata['unit_price']) && $candidateMetadata['unit_price'] !== null
+                                            ? number_format((float) $candidateMetadata['unit_price'], 2, ',', '.') . ' ' . ($document->currency?->code ?? '')
+                                            : '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Totale riga sorgente
+                                    </dt>
+                                    <dd class="mt-1 text-gray-900">
+                                        {{ isset($candidateMetadata['total_price']) && $candidateMetadata['total_price'] !== null
+                                            ? number_format((float) $candidateMetadata['total_price'], 2, ',', '.') . ' ' . ($document->currency?->code ?? '')
+                                            : '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Codice candidato
+                                    </dt>
+                                    <dd class="mt-1 text-gray-900">
+                                        {{ $candidateMetadata['product_code_candidate'] ?? '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        EAN candidato
+                                    </dt>
+                                    <dd class="mt-1 text-gray-900">
+                                        {{ $candidate->ean_code ?? '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Seriale candidato
+                                    </dt>
+                                    <dd class="mt-1 text-gray-900">
+                                        {{ $candidate->serial_number ?? '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Parser / mode
+                                    </dt>
+                                    <dd class="mt-1 text-gray-900">
+                                        {{ str_replace('_', ' ', $candidateMetadata['line_parser'] ?? '—') }}
+
+                                        @if (! empty($candidateMetadata['line_mode']))
+                                            · {{ str_replace('_', ' ', $candidateMetadata['line_mode']) }}
+                                        @endif
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Affidabilità candidato
+                                    </dt>
+                                    <dd class="mt-1 text-gray-900">
+                                        {{ $candidate->confidence_score !== null ? $candidate->confidence_score . '/100' : '—' }}
+                                    </dd>
+                                </div>
+
+                                @if (! empty($candidateMetadata['raw_line_text']))
+                                    <div class="sm:col-span-2">
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Testo riga sorgente
+                                        </dt>
+                                        <dd class="mt-2 whitespace-pre-wrap rounded-md border border-gray-200 bg-gray-50 p-3 text-gray-800">
+                                            {{ $candidateMetadata['raw_line_text'] }}
+                                        </dd>
+                                    </div>
+                                @endif
+
+                                @if (! empty($candidateSupportingLines))
+                                    <div class="sm:col-span-2">
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Linee di supporto
+                                        </dt>
+                                        <dd class="mt-2">
+                                            <ul class="list-disc space-y-1 pl-5 text-gray-700">
+                                                @foreach ($candidateSupportingLines as $supportingLine)
+                                                    <li>{{ $supportingLine }}</li>
+                                                @endforeach
+                                            </ul>
+                                        </dd>
+                                    </div>
+                                @endif
+                            </dl>
+                        </x-ui.drawer>
+
+                        @if (! $candidate->product_id && $document->status !== 'linked_to_product')
+                            <x-ui.drawer
+                                id="candidate-edit-{{ $candidate->id }}"
+                                title="Modifica candidato prodotto"
+                                description="Correggi i dati prima di creare la scheda prodotto."
+                                width="max-w-xl"
+                            >
+                                <form
+                                    wire:key="candidate-review-form-{{ $candidate->id }}"
+                                    wire:submit.prevent="saveProductCandidateReviewData({{ $candidate->id }})"
+                                    class="space-y-4"
+                                >
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700">
+                                            Nome prodotto
+                                        </label>
+
+                                        <input
+                                            type="text"
+                                            wire:model.defer="candidateReviewForms.{{ $candidate->id }}.name"
+                                            class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        >
+
+                                        @error("candidateReviewForms.{$candidate->id}.name")
+                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                        @enderror
+                                    </div>
+
+                                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700">
+                                                Modello
+                                            </label>
+
+                                            <input
+                                                type="text"
+                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.model"
+                                                class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                            >
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700">
+                                                Prezzo
+                                            </label>
+
+                                            <input
+                                                type="text"
+                                                inputmode="decimal"
+                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.price"
+                                                class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                            >
+
+                                            @error("candidateReviewForms.{$candidate->id}.price")
+                                                <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                            @enderror
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700">
+                                                Seriale
+                                            </label>
+
+                                            <input
+                                                type="text"
+                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.serial_number"
+                                                class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                            >
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700">
+                                                EAN
+                                            </label>
+
+                                            <input
+                                                type="text"
+                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.ean_code"
+                                                class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                            >
+                                        </div>
+                                    </div>
+
+                                    <div class="flex justify-center border-t border-gray-200 pt-4">
+                                        <button
+                                            type="submit"
+                                            wire:loading.attr="disabled"
+                                            wire:target="saveProductCandidateReviewData({{ $candidate->id }})"
+                                            class="inline-flex items-center justify-center rounded-md border border-transparent bg-gray-800 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
+                                        >
+                                            Salva candidato
+                                        </button>
+                                    </div>
+                                </form>
+                            </x-ui.drawer>
+                        @endif
+                    @endif
+
+                    @if ($document->status !== 'linked_to_product')
+                        <x-ui.drawer
+                            id="line-edit-{{ $line->id }}"
+                            title="Modifica riga documento"
+                            description="Correggi i dati della riga sorgente e poi rigenera i candidati."
+                            width="max-w-xl"
+                        >
+                            <form
+                                wire:submit.prevent="saveDocumentLineReviewData({{ $line->id }})"
+                                class="space-y-4"
+                            >
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">
+                                        Descrizione
+                                    </label>
+
+                                    <input
+                                        type="text"
+                                        wire:model.defer="lineReviewForms.{{ $line->id }}.description"
+                                        class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                    >
+
+                                    @error("lineReviewForms.{$line->id}.description")
+                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                    @enderror
+                                </div>
+
+                                <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700">
+                                            Quantità
+                                        </label>
+
+                                        <input
+                                            type="text"
+                                            inputmode="decimal"
+                                            wire:model.defer="lineReviewForms.{{ $line->id }}.quantity"
+                                            class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        >
+
+                                        @error("lineReviewForms.{$line->id}.quantity")
+                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                        @enderror
+                                    </div>
+
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700">
+                                            Prezzo unitario
+                                        </label>
+
+                                        <input
+                                            type="text"
+                                            inputmode="decimal"
+                                            wire:model.defer="lineReviewForms.{{ $line->id }}.unit_price"
+                                            class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        >
+
+                                        @error("lineReviewForms.{$line->id}.unit_price")
+                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                        @enderror
+                                    </div>
+
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700">
+                                            Totale riga
+                                        </label>
+
+                                        <input
+                                            type="text"
+                                            inputmode="decimal"
+                                            wire:model.defer="lineReviewForms.{{ $line->id }}.total_price"
+                                            class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        >
+
+                                        @error("lineReviewForms.{$line->id}.total_price")
+                                            <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                        @enderror
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700">
+                                            Codice / modello candidato
+                                        </label>
+
+                                        <input
+                                            type="text"
+                                            wire:model.defer="lineReviewForms.{{ $line->id }}.product_code_candidate"
+                                            class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        >
+                                    </div>
+
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700">
+                                            Seriale candidato
+                                        </label>
+
+                                        <input
+                                            type="text"
+                                            wire:model.defer="lineReviewForms.{{ $line->id }}.serial_number_candidate"
+                                            class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                        >
+                                    </div>
+                                </div>
+
+                                <div class="flex flex-col gap-2 border-t border-gray-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <button
+                                        type="button"
+                                        wire:click="deleteDocumentLine({{ $line->id }})"
+                                        wire:loading.attr="disabled"
+                                        wire:target="deleteDocumentLine({{ $line->id }})"
+                                        class="inline-flex items-center justify-center rounded-md border border-red-300 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-widest text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-50"
+                                    >
+                                        Elimina riga
+                                    </button>
+
+                                    <button
+                                        type="submit"
+                                        wire:loading.attr="disabled"
+                                        wire:target="saveDocumentLineReviewData({{ $line->id }})"
+                                        class="inline-flex items-center justify-center rounded-md border border-transparent bg-gray-800 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
+                                    >
+                                        Salva riga
+                                    </button>
+                                </div>
+                            </form>
+                        </x-ui.drawer>
+                    @endif
+                @endforeach
+            </div>
+
+            <div class="mt-4 rounded-md border border-blue-200 bg-blue-50 p-4">
+                <p class="text-sm text-blue-700">
+                    Le righe e i candidati prodotto sono proposte automatiche. Nel flusso di revisione potranno essere confermati, corretti o esclusi prima di creare una scheda prodotto.
+                </p>
+            </div>
+        @elseif ($document->text_extraction_status === 'requires_ocr')
+            <div class="rounded-md border border-orange-200 bg-orange-50 p-4">
+                <p class="text-sm text-orange-800">
+                    Le righe prodotto potranno essere estratte dopo l’OCR, perché il documento non ha ancora testo estraibile.
+                </p>
+            </div>
+        @else
+            <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
+                <p class="text-sm text-gray-700">
+                    Nessuna riga prodotto candidata è stata individuata in questo documento.
+                </p>
+            </div>
+        @endif
+    </div>
+</details>
 
                 {{-- Venditore --}}
                 <details class="bg-white shadow-sm ring-1 ring-gray-200 sm:rounded-lg">

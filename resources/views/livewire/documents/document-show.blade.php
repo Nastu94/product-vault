@@ -551,7 +551,7 @@
                                             x-on:click="$dispatch('open-drawer', { id: 'line-details-{{ $line->id }}' })"
                                             class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50"
                                         >
-                                            Dettagli riga
+                                            Dettagli
                                         </button>
 
                                         @if ($document->status !== 'linked_to_product')
@@ -561,7 +561,7 @@
                                                 x-on:click="$dispatch('open-drawer', { id: 'line-edit-{{ $line->id }}' })"
                                                 class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50"
                                             >
-                                                Modifica riga
+                                                Modifica
                                             </button>
                                         @endif
                                     </div>
@@ -610,7 +610,7 @@
                                                 x-on:click="$dispatch('open-drawer', { id: 'candidate-source-{{ $candidate->id }}' })"
                                                 class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50"
                                             >
-                                                Sorgente candidato
+                                                Sorgente
                                             </button>
 
                                             @if (! $candidate->product_id && $document->status !== 'linked_to_product')
@@ -620,7 +620,7 @@
                                                     x-on:click="$dispatch('open-drawer', { id: 'candidate-edit-{{ $candidate->id }}' })"
                                                     class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50"
                                                 >
-                                                    Modifica candidato
+                                                    Modifica
                                                 </button>
 
                                                 <button
@@ -630,7 +630,7 @@
                                                     wire:target="deleteProductCandidate({{ $candidate->id }})"
                                                     class="inline-flex items-center rounded-md border border-red-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-red-700 shadow-sm hover:bg-red-50 disabled:opacity-50"
                                                 >
-                                                    Elimina candidato
+                                                    Elimina
                                                 </button>
                                             @endif
                                         </div>
@@ -666,12 +666,11 @@
                                             @else
                                                 <button
                                                     type="button"
-                                                    wire:click="confirmProductCandidate({{ $candidate->id }})"
-                                                    wire:loading.attr="disabled"
-                                                    wire:target="confirmProductCandidate({{ $candidate->id }})"
-                                                    class="inline-flex w-full items-center justify-center rounded-md border border-transparent bg-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
+                                                    x-data
+                                                    x-on:click="$dispatch('open-drawer', { id: 'candidate-create-review-{{ $candidate->id }}' })"
+                                                    class="inline-flex w-full items-center justify-center rounded-md border border-transparent bg-gray-800 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700"
                                                 >
-                                                    Conferma e crea prodotto
+                                                    Rivedi e crea prodotto
                                                 </button>
                                             @endif
                                         @else
@@ -947,6 +946,157 @@
                                 @endif
                             </dl>
                         </x-ui.drawer>
+
+                        @if (! $candidate->product_id && $document->status !== 'linked_to_product')
+                            <x-ui.drawer
+                                id="candidate-create-review-{{ $candidate->id }}"
+                                title="Rivedi e crea prodotto"
+                                description="Controlla i dati principali prima di creare la scheda prodotto definitiva."
+                                width="max-w-2xl"
+                            >
+                                <div class="space-y-6">
+                                    <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                                        <h3 class="text-sm font-semibold text-gray-900">
+                                            Prodotto da creare
+                                        </h3>
+
+                                        <dl class="mt-4 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+                                            <div class="sm:col-span-2">
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Nome prodotto
+                                                </dt>
+                                                <dd class="mt-1 text-gray-900">
+                                                    {{ $candidate->name ?? '—' }}
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Modello
+                                                </dt>
+                                                <dd class="mt-1 text-gray-900">
+                                                    {{ $candidate->model ?? '—' }}
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    EAN
+                                                </dt>
+                                                <dd class="mt-1 text-gray-900">
+                                                    {{ $candidate->ean_code ?? '—' }}
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Seriale
+                                                </dt>
+                                                <dd class="mt-1 text-gray-900">
+                                                    {{ $candidate->serial_number ?? '—' }}
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Prezzo candidato
+                                                </dt>
+                                                <dd class="mt-1 text-gray-900">
+                                                    @if ($candidate->price !== null)
+                                                        {{ number_format((float) $candidate->price, 2, ',', '.') }}
+                                                        {{ $document->currency?->code }}
+                                                    @else
+                                                        —
+                                                    @endif
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Affidabilità candidato
+                                                </dt>
+                                                <dd class="mt-1 text-gray-900">
+                                                    {{ $candidate->confidence_score !== null ? $candidate->confidence_score . '/100' : '—' }}
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Quantità letta
+                                                </dt>
+                                                <dd class="mt-1 text-gray-900">
+                                                    {{ isset($candidateMetadata['quantity']) && $candidateMetadata['quantity'] !== null
+                                                        ? number_format((float) $candidateMetadata['quantity'], 3, ',', '.')
+                                                        : '—' }}
+                                                </dd>
+                                            </div>
+                                        </dl>
+                                    </div>
+
+                                    <div class="rounded-lg border border-gray-200 bg-white p-4">
+                                        <h3 class="text-sm font-semibold text-gray-900">
+                                            Documento sorgente
+                                        </h3>
+
+                                        <dl class="mt-4 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Venditore
+                                                </dt>
+                                                <dd class="mt-1 text-gray-900">
+                                                    {{ $document->merchant?->name ?? '—' }}
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Data documento
+                                                </dt>
+                                                <dd class="mt-1 text-gray-900">
+                                                    {{ $document->purchase_date?->format('d/m/Y') ?? '—' }}
+                                                </dd>
+                                            </div>
+
+                                            <div class="sm:col-span-2">
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    File
+                                                </dt>
+                                                <dd class="mt-1 break-all text-gray-900">
+                                                    {{ $document->original_filename ?? '—' }}
+                                                </dd>
+                                            </div>
+                                        </dl>
+                                    </div>
+
+                                    <div class="rounded-md border border-yellow-200 bg-yellow-50 p-4">
+                                        <p class="text-sm text-yellow-800">
+                                            Dopo la creazione, questo candidato non potrà più essere modificato. Potrai comunque continuare a revisionare e creare altri prodotti dallo stesso documento.
+                                        </p>
+                                    </div>
+
+                                    <div class="flex flex-col gap-2 border-t border-gray-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
+                                        <button
+                                            type="button"
+                                            x-data
+                                            x-on:click="$dispatch('open-drawer', { id: 'candidate-edit-{{ $candidate->id }}' })"
+                                            class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-widest text-gray-700 shadow-sm hover:bg-gray-50"
+                                        >
+                                            Modifica prima
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            wire:click="confirmProductCandidate({{ $candidate->id }})"
+                                            wire:loading.attr="disabled"
+                                            wire:target="confirmProductCandidate({{ $candidate->id }})"
+                                            class="inline-flex items-center justify-center rounded-md border border-transparent bg-gray-800 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
+                                        >
+                                            Crea prodotto
+                                        </button>
+                                    </div>
+                                </div>
+                            </x-ui.drawer>
+                        @endif
 
                         @if (! $candidate->product_id && $document->status !== 'linked_to_product')
                             <x-ui.drawer

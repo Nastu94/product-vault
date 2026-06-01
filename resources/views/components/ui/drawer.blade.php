@@ -8,6 +8,11 @@
 <div
     x-data="{ open: false }"
     x-on:open-drawer.window="if ($event.detail.id === '{{ $id }}') open = true"
+    x-on:close-drawer.window="
+        if (! $event.detail?.id || $event.detail.id === '{{ $id }}') {
+            open = false
+        }
+    "
     x-on:keydown.escape.window="open = false"
     x-show="open"
     x-cloak

@@ -301,21 +301,6 @@ class DocumentShow extends Component
 
         $this->document->refresh();
 
-        /*
-        |--------------------------------------------------------------------------
-        | MVP: un prodotto principale per documento
-        |--------------------------------------------------------------------------
-        |
-        | Per ora impediamo di creare più prodotti dallo stesso documento.
-        | Quando gestiremo documenti multi-prodotto, cambieremo questa regola.
-        |
-        */
-        if ($this->document->status === 'linked_to_product') {
-            session()->flash('product_warning', 'Questo documento è già collegato a un prodotto.');
-
-            return;
-        }
-
         $candidate = ProductIdentificationCandidate::query()
             ->where('document_id', $this->document->id)
             ->whereKey($candidateId)
@@ -332,32 +317,10 @@ class DocumentShow extends Component
             userId: (int) Auth::id(),
         );
 
-        $this->document = $this->document->fresh([
-            'documentType',
-            'merchant',
-            'currency',
-            'uploadedBy',
-            'selectedClassification.documentType',
-            'lines.documentLineType',
-            'productIdentificationCandidates.documentLine',
-            'productIdentificationCandidates.product',
-        ]);
-
-        $this->latestProcessingAttempt = $this->document
-            ->processingAttempts()
-            ->latest()
-            ->first();
-
-        $this->latestTextExtraction = $this->document
-            ->latestTextExtraction()
-            ->first();
-
-        $this->selectedClassification = $this->document
-            ->selectedClassification()
-            ->with('documentType')
-            ->first();
+        $this->refreshDocumentState();
 
         session()->flash('product_success', 'Prodotto creato correttamente: ' . $product->name);
+        $this->closeActiveDrawer();
     }
 
     /**
@@ -638,6 +601,14 @@ class DocumentShow extends Component
     }
 
     /**
+     * Chiude il drawer attualmente aperto nella UI.
+     */
+    private function closeActiveDrawer(): void
+    {
+        $this->dispatch('close-drawer');
+    }
+
+    /**
      * Popola il form di revisione righe con i dati correnti.
      */
     private function fillLineReviewForms(): void
@@ -669,16 +640,20 @@ class DocumentShow extends Component
     {
         $this->authorize('update', $this->document);
 
-        if ($this->document->status === 'linked_to_product') {
-            session()->flash('line_warning', 'Non puoi modificare le righe dopo aver collegato il documento a un prodotto.');
-
-            return;
-        }
-
         $line = DocumentLine::query()
             ->where('document_id', $this->document->id)
             ->whereKey($lineId)
             ->firstOrFail();
+
+        $hasLinkedProduct = $line->productIdentificationCandidates()
+            ->whereNotNull('product_id')
+            ->exists();
+
+        if ($hasLinkedProduct) {
+            session()->flash('line_warning', 'Questa riga ha già generato un prodotto e non può essere modificata.');
+
+            return;
+        }
 
         $form = $this->lineReviewForms[$lineId] ?? [];
 
@@ -737,6 +712,7 @@ class DocumentShow extends Component
         $this->fillCandidateReviewForms();
 
         session()->flash('line_success', 'Riga documento aggiornata. Rigenera i candidati per applicare la modifica.');
+        $this->closeActiveDrawer();
     }
 
     /**
@@ -745,12 +721,6 @@ class DocumentShow extends Component
     public function deleteDocumentLine(int $lineId): void
     {
         $this->authorize('update', $this->document);
-
-        if ($this->document->status === 'linked_to_product') {
-            session()->flash('line_warning', 'Non puoi eliminare righe dopo aver collegato il documento a un prodotto.');
-
-            return;
-        }
 
         $line = DocumentLine::query()
             ->where('document_id', $this->document->id)
@@ -779,6 +749,7 @@ class DocumentShow extends Component
         $this->fillCandidateReviewForms();
 
         session()->flash('line_success', 'Riga eliminata. Rigenera i candidati per aggiornare la revisione.');
+        $this->closeActiveDrawer();
     }
 
     /**
@@ -862,12 +833,6 @@ class DocumentShow extends Component
     {
         $this->authorize('update', $this->document);
 
-        if ($this->document->status === 'linked_to_product') {
-            session()->flash('candidate_warning', 'Non puoi modificare candidati dopo aver collegato il documento a un prodotto.');
-
-            return;
-        }
-
         $candidate = ProductIdentificationCandidate::query()
             ->where('document_id', $this->document->id)
             ->whereKey($candidateId)
@@ -918,6 +883,7 @@ class DocumentShow extends Component
         $this->refreshDocumentState();
 
         session()->flash('candidate_success', 'Candidato prodotto aggiornato correttamente.');
+        $this->closeActiveDrawer();
     }
 
     /**
@@ -926,12 +892,6 @@ class DocumentShow extends Component
     public function deleteProductCandidate(int $candidateId): void
     {
         $this->authorize('update', $this->document);
-
-        if ($this->document->status === 'linked_to_product') {
-            session()->flash('candidate_warning', 'Non puoi eliminare candidati dopo aver collegato il documento a un prodotto.');
-
-            return;
-        }
 
         $candidate = ProductIdentificationCandidate::query()
             ->where('document_id', $this->document->id)
@@ -951,16 +911,29 @@ class DocumentShow extends Component
             ->whereNull('product_id')
             ->count();
 
+        $linkedCandidatesCount = $this->document
+            ->productIdentificationCandidates()
+            ->whereNotNull('product_id')
+            ->count();
+
+        $bestLinkedCandidateScore = $this->document
+            ->productIdentificationCandidates()
+            ->whereNotNull('product_id')
+            ->max('confidence_score');
+
         $this->document->update([
-            'status' => $remainingCandidatesCount > 0 ? 'needs_review' : 'parsed',
-            'product_reliability_score' => $remainingCandidatesCount > 0
-                ? $this->document->product_reliability_score
+            'status' => $remainingCandidatesCount > 0
+                ? 'needs_review'
+                : ($linkedCandidatesCount > 0 ? 'linked_to_product' : 'parsed'),
+            'product_reliability_score' => $bestLinkedCandidateScore !== null
+                ? (int) $bestLinkedCandidateScore
                 : null,
         ]);
 
         $this->refreshDocumentState();
 
         session()->flash('candidate_success', 'Candidato prodotto eliminato.');
+        $this->closeActiveDrawer();
     }
 
     /**

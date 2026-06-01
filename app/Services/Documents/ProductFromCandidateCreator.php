@@ -22,6 +22,7 @@ class ProductFromCandidateCreator
             $candidate->load([
                 'document.currency',
                 'document.merchant',
+                'document.documentType',
                 'documentLine',
             ]);
 
@@ -29,6 +30,10 @@ class ProductFromCandidateCreator
 
             if (! $document) {
                 throw new \RuntimeException('Documento non trovato per il candidato prodotto.');
+            }
+
+            if ($candidate->product_id) {
+                throw new \RuntimeException('Questo candidato è già stato trasformato in prodotto.');
             }
 
             $identificationStatusId = IdentificationStatus::query()
@@ -41,22 +46,14 @@ class ProductFromCandidateCreator
 
             /*
             |--------------------------------------------------------------------------
-            | Selezione candidato
+            | Creazione prodotto
             |--------------------------------------------------------------------------
             |
-            | Per ora consideriamo un solo candidato selezionato per documento.
-            | Quando gestiremo documenti multi-prodotto, potremo permettere più
-            | candidati selezionati nello stesso documento.
+            | Ogni candidato confermato genera un prodotto distinto.
+            | Questo consente a fatture e scontrini multi-prodotto di creare più
+            | schede prodotto dallo stesso documento.
             |
             */
-            ProductIdentificationCandidate::query()
-                ->where('document_id', $document->id)
-                ->update(['is_selected' => false]);
-
-            $candidate->update([
-                'is_selected' => true,
-            ]);
-
             $product = Product::query()->create([
                 'team_id' => $document->team_id,
                 'created_by_user_id' => $userId,
@@ -81,17 +78,58 @@ class ProductFromCandidateCreator
                 'notes' => 'Prodotto creato da candidato generato automaticamente e confermato dall’utente.',
             ]);
 
+            /*
+            |--------------------------------------------------------------------------
+            | Stato candidato
+            |--------------------------------------------------------------------------
+            |
+            | Non deselezioniamo più gli altri candidati del documento.
+            | Ogni candidato può essere confermato indipendentemente dagli altri.
+            |
+            */
             $candidate->update([
+                'is_selected' => true,
                 'product_id' => $product->id,
             ]);
 
-            $document->update([
-                'status' => 'linked_to_product',
-                'product_reliability_score' => $product->reliability_score,
-            ]);
+            $this->updateDocumentStatusAfterCandidateConfirmation($document);
 
             return $product->refresh();
         });
+    }
+
+    /**
+     * Aggiorna lo stato del documento dopo la conferma di un candidato.
+     *
+     * Se restano candidati non ancora collegati, il documento deve restare
+     * revisionabile. Solo quando tutti i candidati sono stati collegati o rimossi
+     * può diventare linked_to_product.
+     */
+    private function updateDocumentStatusAfterCandidateConfirmation($document): void
+    {
+        $pendingCandidatesCount = ProductIdentificationCandidate::query()
+            ->where('document_id', $document->id)
+            ->whereNull('product_id')
+            ->count();
+
+        $linkedCandidatesCount = ProductIdentificationCandidate::query()
+            ->where('document_id', $document->id)
+            ->whereNotNull('product_id')
+            ->count();
+
+        $bestLinkedCandidateScore = ProductIdentificationCandidate::query()
+            ->where('document_id', $document->id)
+            ->whereNotNull('product_id')
+            ->max('confidence_score');
+
+        $document->update([
+            'status' => $pendingCandidatesCount > 0
+                ? 'needs_review'
+                : ($linkedCandidatesCount > 0 ? 'linked_to_product' : 'parsed'),
+            'product_reliability_score' => $bestLinkedCandidateScore !== null
+                ? (int) $bestLinkedCandidateScore
+                : null,
+        ]);
     }
 
     /**

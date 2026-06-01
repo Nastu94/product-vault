@@ -62,6 +62,22 @@ class ProductCandidateGenerator
         $created = 0;
 
         foreach ($lines as $line) {
+            /*
+            |--------------------------------------------------------------------------
+            | Righe già collegate a prodotti
+            |--------------------------------------------------------------------------
+            |
+            | In un documento multi-prodotto può capitare di rigenerare i candidati
+            | dopo aver già creato uno o più prodotti.
+            |
+            | Non dobbiamo ricreare candidati pendenti per righe che hanno già generato
+            | un prodotto reale.
+            |
+            */
+            if ($line->productIdentificationCandidates()->whereNotNull('product_id')->exists()) {
+                continue;
+            }
+
             if (! $this->lineIsUsable($line)) {
                 continue;
             }

@@ -305,11 +305,33 @@ class DocumentLineParser
                 $unitPrice = count($amounts) >= 2 ? $amounts[0] : null;
                 $totalPrice = end($amounts);
 
+                if ($document->documentType?->code === 'order_confirmation') {
+                    $quantity = $this->inferOrderConfirmationQuantity(
+                        extractedQuantity: $quantity,
+                        unitPrice: $unitPrice,
+                        totalPrice: $totalPrice
+                    );
+                }
+
+                $nearbyOrderProductContext = $this->findNearbyOrderProductContext(
+                    document: $document,
+                    lines: $lines,
+                    currentIndex: $index,
+                    rawLine: $rawLine,
+                    fallbackDescription: $description,
+                    fallbackProductCode: $productCode
+                );
+
+                if ($nearbyOrderProductContext !== null) {
+                    $description = $nearbyOrderProductContext['description'];
+                    $productCode = $nearbyOrderProductContext['product_code'] ?? $productCode;
+                }
+
                 DocumentLine::query()->create([
                     'document_id' => $document->id,
                     'document_line_type_id' => $lineTypeId,
                     'line_number' => $index + 1,
-                    'raw_text' => $rawLine,
+                    'raw_text' => $nearbyOrderProductContext['raw_text'] ?? $rawLine,
                     'description' => $description,
                     'quantity' => $quantity,
                     'unit_price' => $unitPrice,
@@ -326,6 +348,8 @@ class DocumentLineParser
                         'amounts_found' => $amounts,
                         'pending_code_parts' => $pendingCodeParts,
                         'product_code_candidate' => $productCode,
+                        'ean_code_candidate' => $nearbyOrderProductContext['ean_code'] ?? null,
+                        'supporting_lines' => $nearbyOrderProductContext['supporting_lines'] ?? [],
                     ],
                 ]);
 
@@ -417,6 +441,346 @@ class DocumentLineParser
         }
 
         return $created;
+    }
+
+    /**
+     * Cerca contesto prodotto vicino a una riga ordine con importi.
+     *
+     * Serve per documenti e-commerce / conferme ordine dove il nome prodotto,
+     * le caratteristiche, l'EAN e gli importi possono stare su righe separate.
+     */
+    private function findNearbyOrderProductContext(
+        Document $document,
+        array $lines,
+        int $currentIndex,
+        string $rawLine,
+        string $fallbackDescription,
+        ?string $fallbackProductCode
+    ): ?array {
+        if ($document->documentType?->code !== 'order_confirmation') {
+            return null;
+        }
+
+        $productCode = $this->extractProductCodeFromLine($rawLine)
+            ?: $fallbackProductCode;
+
+        /*
+        |--------------------------------------------------------------------------
+        | Titolo prodotto
+        |--------------------------------------------------------------------------
+        |
+        | Sostituiamo la descrizione estratta dalla riga importo solo se sembra
+        | una descrizione tecnica/accessoria, per esempio:
+        | "colore bianco - Wi-Fi - funzione lavapavimenti".
+        |
+        | Se invece la descrizione è già un prodotto leggibile, come:
+        | "Kit 6 sacchetti ricambio SmartClean X200",
+        | non dobbiamo prendere il titolo della riga precedente.
+        |
+        */
+        $title = $this->orderLineLooksLikeTechnicalDetail($fallbackDescription)
+            ? $this->findPreviousOrderProductTitle($lines, $currentIndex, $fallbackDescription)
+            : null;
+
+        $ean = $title !== null
+            ? $this->findNearbyOrderProductEan($lines, $currentIndex)
+            : null;
+
+        if (! $title && ! $ean) {
+            return null;
+        }
+
+        $supportingLines = $this->collectNearbyOrderSupportingLines(
+            lines: $lines,
+            currentIndex: $currentIndex,
+            includeTechnicalDetails: $title !== null
+        );
+
+        $rawTextParts = array_filter([
+            $title,
+            $rawLine,
+            ...$supportingLines,
+        ], fn ($part): bool => trim((string) $part) !== '');
+
+        return [
+            'description' => $title ?: $fallbackDescription,
+            'product_code' => $productCode,
+            'ean_code' => $ean,
+            'supporting_lines' => $supportingLines,
+            'raw_text' => trim(preg_replace('/\s+/', ' ', implode(' ', $rawTextParts)) ?: implode(' ', $rawTextParts)),
+        ];
+    }
+
+    /**
+     * Capisce se la descrizione estratta sembra un dettaglio tecnico e non
+     * il vero nome prodotto.
+     */
+    private function orderLineLooksLikeTechnicalDetail(string $line): bool
+    {
+        $normalized = mb_strtolower(trim($line));
+
+        if ($normalized === '') {
+            return false;
+        }
+
+        $technicalPrefixes = [
+            'colore',
+            'funzione',
+            'versione',
+            'compatibile',
+            'materiale',
+            'dimensione',
+            'misura',
+        ];
+
+        foreach ($technicalPrefixes as $prefix) {
+            if (str_starts_with($normalized, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Cerca il titolo prodotto nelle righe precedenti alla riga importo.
+     */
+    private function findPreviousOrderProductTitle(array $lines, int $currentIndex, string $fallbackDescription): ?string
+    {
+        for ($offset = -1; $offset >= -4; $offset--) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                continue;
+            }
+
+            $candidate = $this->normalizeLine($lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if ($this->lineShouldBeIgnored($candidate)) {
+                return null;
+            }
+
+            if ($this->lineIsStandaloneQuantity($candidate)) {
+                continue;
+            }
+
+            if ($this->lineLooksLikeBarcode($candidate)) {
+                continue;
+            }
+
+            if (! empty($this->extractAmountsFromText($candidate))) {
+                continue;
+            }
+
+            if ($this->lineLooksLikeProductCodePart($candidate)) {
+                continue;
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Preferiamo una riga più "nome prodotto" rispetto alla riga descrittiva
+            | tecnica già estratta dall'importo.
+            |--------------------------------------------------------------------------
+            */
+            if ($this->orderLineLooksLikeProductTitle($candidate, $fallbackDescription)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Valuta se una riga vicina sembra un titolo prodotto e non una nota tecnica.
+     */
+    private function orderLineLooksLikeProductTitle(string $line, string $fallbackDescription): bool
+    {
+        if (mb_strlen($line) < 6 || mb_strlen($line) > 120) {
+            return false;
+        }
+
+        if (! preg_match('/[a-zA-ZÀ-ÿ]/u', $line)) {
+            return false;
+        }
+
+        $normalizedLine = mb_strtolower($line);
+        $normalizedFallback = mb_strtolower($fallbackDescription);
+
+        $technicalSignals = [
+            'colore',
+            'funzione',
+            'ean',
+            'seriale',
+            's/n',
+            'wifi',
+            'wi-fi',
+        ];
+
+        foreach ($technicalSignals as $signal) {
+            if (
+                str_starts_with($normalizedLine, $signal)
+                && ! str_starts_with($normalizedFallback, $signal)
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Cerca EAN vicino alla riga importo di una conferma ordine.
+     */
+    private function findNearbyOrderProductEan(array $lines, int $currentIndex): ?string
+    {
+        for ($offset = -3; $offset <= 3; $offset++) {
+            if ($offset === 0) {
+                continue;
+            }
+
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                continue;
+            }
+
+            $candidate = $this->normalizeLine($lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | EAN esplicito
+            |--------------------------------------------------------------------------
+            |
+            | Questo è il caso più affidabile:
+            | EAN: 8057777001234
+            |
+            */
+            if (preg_match('/\bEAN\s*[:\-]?\s*(?<ean>\d{8}|\d{12}|\d{13}|\d{14})\b/iu', $candidate, $matches)) {
+                return $matches['ean'];
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Barcode isolato
+            |--------------------------------------------------------------------------
+            |
+            | Accettiamo una riga numerica pura, ma NON una riga descrittiva con
+            | prezzi dentro. Altrimenti una stringa tipo:
+            | "RVA-X200 ... 249,90 249,90"
+            | può diventare falsamente "2002499024990".
+            |
+            */
+            if ($this->lineLooksLikeStandaloneBarcode($candidate)) {
+                return preg_replace('/\D+/', '', $candidate) ?: null;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Riconosce barcode/EAN solo quando la riga è composta dal codice,
+     * eventualmente con spazi o separatori, ma senza descrizioni e prezzi.
+     */
+    private function lineLooksLikeStandaloneBarcode(string $line): bool
+    {
+        $normalized = trim($line);
+
+        if ($normalized === '') {
+            return false;
+        }
+
+        if (preg_match('/[a-zA-ZÀ-ÿ]/u', $normalized)) {
+            return false;
+        }
+
+        if (! empty($this->extractAmountsFromText($normalized))) {
+            return false;
+        }
+
+        $digits = preg_replace('/\D+/', '', $normalized) ?: '';
+
+        return (bool) preg_match('/^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/', $digits);
+    }
+
+    /**
+     * Raccoglie righe tecniche vicine utili per revisione/debug.
+     */
+    private function collectNearbyOrderSupportingLines(
+        array $lines,
+        int $currentIndex,
+        bool $includeTechnicalDetails = false
+    ): array {
+        $supportingLines = [];
+
+        for ($offset = -2; $offset <= 2; $offset++) {
+            if ($offset === 0) {
+                continue;
+            }
+
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                continue;
+            }
+
+            $candidate = $this->normalizeLine($lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if ($this->lineShouldBeIgnored($candidate)) {
+                continue;
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Non agganciare altre righe articolo.
+            |--------------------------------------------------------------------------
+            |
+            | Se una riga contiene importi, è quasi certamente un'altra riga tabella
+            | e-commerce. Non deve diventare supporting line del prodotto corrente.
+            |
+            */
+            if (! empty($this->extractAmountsFromText($candidate))) {
+                continue;
+            }
+
+            if ($this->lineIsStandaloneQuantity($candidate)) {
+                continue;
+            }
+
+            $normalized = mb_strtolower($candidate);
+
+            if (
+                str_contains($normalized, 'ean')
+                || str_contains($normalized, 'serial')
+                || str_contains($normalized, 's/n')
+                || $this->lineLooksLikeStandaloneBarcode($candidate)
+            ) {
+                $supportingLines[] = $candidate;
+
+                continue;
+            }
+
+            if (
+                $includeTechnicalDetails
+                && $this->orderLineLooksLikeTechnicalDetail($candidate)
+            ) {
+                $supportingLines[] = $candidate;
+            }
+        }
+
+        return array_values(array_unique($supportingLines));
     }
 
     /**
@@ -2168,6 +2532,37 @@ class DocumentLineParser
         }
 
         return null;
+    }
+
+    /**
+     * Inferisce la quantità per conferme ordine / documenti e-commerce.
+     *
+     * Nei documenti e-commerce la quantità è spesso una colonna separata, ma OCR/PDF
+     * possono perderla. In questi casi è più affidabile usare il rapporto tra
+     * totale riga e prezzo unitario.
+     *
+     * Esempi:
+     * - unitario 249,90 e totale 249,90 => quantità 1
+     * - unitario 6,50 e totale 13,00 => quantità 2
+     *
+     * Questo evita anche falsi positivi come:
+     * "Kit 6 sacchetti ..." interpretato come quantità 6.
+     */
+    private function inferOrderConfirmationQuantity(
+        ?float $extractedQuantity,
+        ?float $unitPrice,
+        ?float $totalPrice
+    ): ?float {
+        if ($unitPrice !== null && $totalPrice !== null && $unitPrice > 0 && $totalPrice > 0) {
+            $ratio = $totalPrice / $unitPrice;
+            $roundedRatio = round($ratio);
+
+            if ($roundedRatio >= 1 && abs($ratio - $roundedRatio) < 0.01) {
+                return (float) $roundedRatio;
+            }
+        }
+
+        return $extractedQuantity;
     }
 
     /**

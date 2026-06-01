@@ -68,6 +68,7 @@ class ProductCandidateGenerator
 
             $productCode = $line->metadata['product_code_candidate'] ?? null;
             $serialNumber = $line->metadata['serial_number_candidate'] ?? null;
+            $eanCode = $line->metadata['ean_code_candidate'] ?? $this->guessEanCode($productCode);
 
             ProductIdentificationCandidate::query()->create([
                 'document_id' => $document->id,
@@ -78,7 +79,7 @@ class ProductCandidateGenerator
                 'name' => $this->normalizeProductName($line->description),
                 'model' => $this->guessModel($productCode),
                 'serial_number' => $serialNumber,
-                'ean_code' => $this->guessEanCode($productCode),
+                'ean_code' => $eanCode,
                 'price' => $this->guessPrice($line),
                 'source' => 'document_line_parser',
                 'confidence_score' => $this->estimateConfidenceScore($line, $productCode),
@@ -90,6 +91,7 @@ class ProductCandidateGenerator
                     'line_parser' => $line->metadata['parser'] ?? null,
                     'line_mode' => $line->metadata['mode'] ?? null,
                     'product_code_candidate' => $productCode,
+                    'ean_code_candidate' => $eanCode,
                     'serial_number_candidate' => $serialNumber,
                     'candidate_price_source' => $this->guessPriceSource($line),
                     'raw_line_text' => $line->raw_text,
@@ -255,6 +257,38 @@ class ProductCandidateGenerator
             return false;
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Esclusioni forti
+        |--------------------------------------------------------------------------
+        |
+        | Alcune righe non devono mai diventare candidati prodotto:
+        | spedizioni, sconti, servizi, garanzie estese e righe contabili.
+        | Queste esclusioni restano prima di qualsiasi segnale positivo.
+        |
+        */
+        if ($this->lineLooksLikeHardNonProductLine($line)) {
+            return false;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Evidenza forte di prodotto
+        |--------------------------------------------------------------------------
+        |
+        | Prima dei filtri deboli su consumabili/servizi, controlliamo se la riga
+        | ha segnali strutturali forti: descrizione prodotto, prezzo positivo,
+        | codice tecnico/EAN/seriale o termini prodotto molto specifici.
+        |
+        | Questo evita falsi negativi come:
+        | "Robot aspirapolvere ... funzione lavapavimenti"
+        | che non deve essere escluso solo perché contiene "pavimenti".
+        |
+        */
+        if ($this->lineHasStrongProductEvidence($line)) {
+            return true;
+        }
+
         if ($this->lineLooksLikeNonDurableOrService($line)) {
             return false;
         }
@@ -415,9 +449,189 @@ class ProductCandidateGenerator
 
         foreach ($blockedSignals as $signal) {
             if (
-                str_contains($normalizedDescription, $signal)
-                || str_contains($normalizedRawText, $signal)
+                $this->textContainsSignal($normalizedDescription, $signal)
+                || $this->textContainsSignal($normalizedRawText, $signal)
             ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Blocca righe che sono chiaramente non-prodotto, anche se contengono
+     * qualche segnale tecnico o un importo.
+     */
+    private function lineLooksLikeHardNonProductLine(DocumentLine $line): bool
+    {
+        $description = mb_strtolower((string) $line->description);
+        $rawText = mb_strtolower((string) $line->raw_text);
+        $normalizedDescription = $this->normalizeSignalText((string) $line->description);
+        $normalizedRawText = $this->normalizeSignalText((string) $line->raw_text);
+        $invoiceCode = mb_strtolower((string) ($line->metadata['invoice_code'] ?? ''));
+        $productCode = mb_strtolower((string) ($line->metadata['product_code_candidate'] ?? ''));
+
+        $blockedPrefixes = [
+            'serv',
+            'ship',
+            'trasp',
+            'sconto',
+            'discount',
+            'gar-ext',
+        ];
+
+        foreach ($blockedPrefixes as $prefix) {
+            if (
+                str_starts_with($invoiceCode, $prefix)
+                || str_starts_with($productCode, $prefix)
+                || str_starts_with($description, $prefix)
+                || str_starts_with($rawText, $prefix)
+            ) {
+                return true;
+            }
+        }
+
+        if (
+            str_starts_with($description, 'sconto')
+            || str_starts_with($description, 'promo')
+        ) {
+            return true;
+        }
+
+        $hardSignals = [
+            'spedizione',
+            'trasporto',
+            'consegna',
+            'coupon',
+            'sconti totali',
+            'garanzia commerciale',
+            'garanzia estesa',
+            'estensione garanzia',
+            'extended warranty',
+            'pagamento',
+            'bancomat',
+            'pos',
+            'resto',
+        ];
+
+        foreach ($hardSignals as $signal) {
+            if (
+                $this->textContainsSignal($normalizedDescription, $signal)
+                || $this->textContainsSignal($normalizedRawText, $signal)
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Valuta segnali forti di prodotto reale prima dei filtri deboli.
+     *
+     * Non basta una parola positiva: chiediamo anche prezzo positivo e almeno
+     * un identificatore tecnico o un termine prodotto molto specifico.
+     */
+    private function lineHasStrongProductEvidence(DocumentLine $line): bool
+    {
+        if (! $this->lineHasPositivePrice($line)) {
+            return false;
+        }
+
+        $description = $this->normalizeSignalText((string) $line->description);
+        $rawText = $this->normalizeSignalText((string) $line->raw_text);
+        $text = trim($description . ' ' . $rawText);
+
+        if ($text === '') {
+            return false;
+        }
+
+        if ($this->lineLooksLikeTechnicalOrLoyaltyNoise($text)) {
+            return false;
+        }
+
+        $productCode = trim((string) ($line->metadata['product_code_candidate'] ?? ''));
+        $serialNumber = trim((string) ($line->metadata['serial_number_candidate'] ?? ''));
+
+        if ($serialNumber !== '') {
+            return true;
+        }
+
+        $numericProductCode = preg_replace('/\D+/', '', $productCode) ?: '';
+
+        if ($numericProductCode !== '' && $this->looksLikeEan($numericProductCode)) {
+            return true;
+        }
+
+        if (! $this->lineHasHighIntentProductSignal($text)) {
+            return false;
+        }
+
+        return $productCode !== '' || mb_strlen((string) $line->description) >= 8;
+    }
+
+    /**
+     * Verifica che la riga abbia un prezzo positivo.
+     */
+    private function lineHasPositivePrice(DocumentLine $line): bool
+    {
+        if ($line->unit_price !== null && (float) $line->unit_price > 0) {
+            return true;
+        }
+
+        if ($line->total_price !== null && (float) $line->total_price > 0) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Segnali prodotto forti, usati solo per salvare righe che altrimenti
+     * sarebbero falsi negativi a causa di parole ambigue.
+     */
+    private function lineHasHighIntentProductSignal(string $text): bool
+    {
+        $signals = [
+            'robot aspirapolvere',
+            'aspirapolvere',
+            'smartphone',
+            'iphone',
+            'tablet',
+            'notebook',
+            'laptop',
+            'computer',
+            'monitor',
+            'televisore',
+            'console',
+            'stampante',
+            'router',
+            'modem',
+            'powerbank',
+            'power bank',
+            'lampada led smart',
+            'friggitrice',
+            'air fryer',
+            'dock',
+            'docking',
+            'cavo usb',
+            'usb c',
+            'usb-c',
+            'hdmi',
+            'adattatore',
+            'caricatore',
+            'alimentatore',
+            'cuffie',
+            'auricolari',
+            'speaker',
+            'soundbar',
+            'microonde',
+            'frigorifero',
+        ];
+
+        foreach ($signals as $signal) {
+            if ($this->textContainsSignal($text, $signal)) {
                 return true;
             }
         }
@@ -561,6 +775,40 @@ class ProductCandidateGenerator
         $text = trim(preg_replace('/\s+/', ' ', $text) ?: $text);
 
         return $text;
+    }
+
+    /**
+     * Cerca un segnale testuale evitando match dentro parole più lunghe.
+     *
+     * Esempio:
+     * - "pavimenti" deve matchare "detergente pavimenti"
+     * - ma NON deve matchare "lavapavimenti"
+     */
+    private function textContainsSignal(string $text, string $signal): bool
+    {
+        $signal = $this->normalizeSignalText($signal);
+
+        if ($text === '' || $signal === '') {
+            return false;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Segnali composti
+        |--------------------------------------------------------------------------
+        |
+        | Per frasi o codici con spazi/trattini manteniamo il contains semplice,
+        | perché il segnale è già abbastanza specifico.
+        |
+        */
+        if (str_contains($signal, ' ') || str_contains($signal, '-')) {
+            return str_contains($text, $signal);
+        }
+
+        return preg_match(
+            '/(?<![a-z0-9à-ÿ])' . preg_quote($signal, '/') . '(?![a-z0-9à-ÿ])/u',
+            $text
+        ) === 1;
     }
 
     /**

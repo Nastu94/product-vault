@@ -6,10 +6,22 @@ use App\Models\DocumentRelationshipType;
 use App\Models\IdentificationStatus;
 use App\Models\Product;
 use App\Models\ProductIdentificationCandidate;
+use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use Illuminate\Support\Facades\DB;
 
 class ProductFromCandidateCreator
 {
+    /**
+     * Service per creare un prodotto a partire da un candidato confermato.
+     *
+     * Questo service rappresenta il passaggio:
+     * candidato automatico -> prodotto reale confermato dall'utente.
+     */
+    public function __construct(
+        private readonly ProductUnderstandingFeedbackRecorder $feedbackRecorder,
+    ) {
+    }
+
     /**
      * Crea un prodotto confermato partendo da un candidato prodotto.
      *
@@ -94,6 +106,14 @@ class ProductFromCandidateCreator
                 'reviewed_by_user_id' => $userId,
                 'reviewed_at' => now(),
             ]);
+
+            $candidate->refresh();
+
+            $this->feedbackRecorder->recordConfirmedCandidate(
+                candidate: $candidate,
+                product: $product,
+                userId: $userId,
+            );
 
             $this->updateDocumentStatusAfterCandidateConfirmation($document);
 

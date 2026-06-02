@@ -6,6 +6,7 @@ use App\Models\Document;
 use App\Models\DocumentLine;
 use App\Models\ProductIdentificationCandidate;
 use App\Services\Documents\ProductUnderstanding\ProductLineAnalyzer;
+use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackMatcher;
 
 class ProductCandidateGenerator
 {
@@ -17,6 +18,7 @@ class ProductCandidateGenerator
      */
     public function __construct(
         private readonly ProductLineAnalyzer $productLineAnalyzer,
+        private readonly ProductUnderstandingFeedbackMatcher $feedbackMatcher,
     ) {
     }
 
@@ -132,6 +134,12 @@ class ProductCandidateGenerator
             $legacyConfidenceScore = $this->estimateConfidenceScore($line, $productCode);
             $understandingConfidenceScore = $analysis->candidateConfidenceScore();
 
+            $feedbackContext = $this->feedbackMatcher->match(
+                line: $line,
+                candidateName: $productName,
+                eanCode: $eanCode,
+            );
+
             ProductIdentificationCandidate::query()->create([
                 'document_id' => $document->id,
                 'document_line_id' => $line->id,
@@ -162,6 +170,7 @@ class ProductCandidateGenerator
                     'unit_price' => $line->unit_price,
                     'total_price' => $line->total_price,
                     'product_understanding' => $analysis->toMetadata(),
+                    'product_understanding_feedback' => $feedbackContext,
                 ],
             ]);
 

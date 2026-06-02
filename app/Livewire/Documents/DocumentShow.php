@@ -12,6 +12,7 @@ use App\Models\ProductIdentificationCandidate;
 use App\Models\Merchant;
 use App\Services\Documents\ProductCandidateGenerator;
 use App\Services\Documents\ProductFromCandidateCreator;
+use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Support\Str;
@@ -954,6 +955,15 @@ class DocumentShow extends Component
             'reviewed_at' => now(),
             'is_selected' => false,
         ]);
+
+        $candidate->refresh();
+
+        app(ProductUnderstandingFeedbackRecorder::class)->recordIgnoredCandidate(
+            candidate: $candidate,
+            userId: (int) Auth::id(),
+            reason: 'not_to_register',
+            note: null,
+        );
 
         $this->updateDocumentStatusAfterCandidateReview();
         $this->refreshDocumentState();

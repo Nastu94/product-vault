@@ -501,6 +501,13 @@
                                         Da revisionare
                                     </span>
                                 @endif
+
+                                @if ($candidate)
+                                    <x-product-understanding.candidate-insights
+                                        :candidate-metadata="$candidateMetadata"
+                                        compact
+                                    />
+                                @endif
                             </div>
 
                             <div class="flex shrink-0 items-center gap-2">
@@ -975,6 +982,13 @@
                                     </div>
                                 @endif
                             </dl>
+                            <div class="mt-6">
+                                <x-product-understanding.candidate-insights
+                                    :candidate-metadata="$candidateMetadata"
+                                    :candidate-id="$candidate->id"
+                                    :can-apply-canonical-name="! $candidate->product_id && $document->status !== 'linked_to_product'"
+                                />
+                            </div>
                         </x-ui.drawer>
 
                         @if (! $candidate->product_id && $document->status !== 'linked_to_product')
@@ -1062,7 +1076,11 @@
                                             </div>
                                         </dl>
                                     </div>
-
+                                    <x-product-understanding.candidate-insights
+                                        :candidate-metadata="$candidateMetadata"
+                                        :candidate-id="$candidate->id"
+                                        :can-apply-canonical-name="! $candidate->product_id && $document->status !== 'linked_to_product'"
+                                    />
                                     <div class="rounded-lg border border-gray-200 bg-white p-4">
                                         <h3 class="text-sm font-semibold text-gray-900">
                                             Documento sorgente

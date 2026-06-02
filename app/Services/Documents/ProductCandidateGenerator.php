@@ -94,6 +94,20 @@ class ProductCandidateGenerator
                 continue;
             }
 
+            /*
+            |--------------------------------------------------------------------------
+            | Righe con candidato pendente già revisionato
+            |--------------------------------------------------------------------------
+            |
+            | Se l'utente ha corretto manualmente un candidato oppure ha applicato un
+            | suggerimento globale, quel candidato pending non deve essere cancellato né
+            | ricreato dalla rigenerazione automatica.
+            |
+            */
+            if ($this->lineHasUserReviewedPendingCandidate($line)) {
+                continue;
+            }
+
             if (
                 $line->productIdentificationCandidates()
                     ->whereIn('review_status', ['confirmed', 'ignored'])
@@ -212,9 +226,10 @@ class ProductCandidateGenerator
     }
 
     /**
-     * Elimina candidati pendenti non ancora collegati a prodotti reali.
+     * Elimina candidati pendenti automatici non ancora collegati a prodotti reali.
      *
-     * I candidati ignorati o confermati restano tracciati.
+     * I candidati confermati, esclusi o già revisionati dall'utente restano
+     * tracciati e non vengono sovrascritti dalla rigenerazione automatica.
      */
     private function clearUnlinkedCandidates(Document $document): void
     {
@@ -222,7 +237,49 @@ class ProductCandidateGenerator
             ->where('document_id', $document->id)
             ->whereNull('product_id')
             ->where('review_status', 'pending')
-            ->delete();
+            ->get()
+            ->each(function (ProductIdentificationCandidate $candidate): void {
+                if ($this->candidateWasUserReviewed($candidate)) {
+                    return;
+                }
+
+                $candidate->delete();
+            });
+    }
+
+    /**
+     * Verifica se una riga ha già un candidato pending revisionato dall'utente.
+     */
+    private function lineHasUserReviewedPendingCandidate(DocumentLine $line): bool
+    {
+        return $line->productIdentificationCandidates()
+            ->whereNull('product_id')
+            ->where('review_status', 'pending')
+            ->get()
+            ->contains(fn (ProductIdentificationCandidate $candidate): bool => $this->candidateWasUserReviewed($candidate));
+    }
+
+    /**
+     * Capisce se un candidato pendente è già stato toccato dall'utente.
+     *
+     * In questi casi la rigenerazione automatica non deve cancellarlo:
+     * - modifica manuale del candidato;
+     * - applicazione del nome canonico globale;
+     * - eventuali future azioni di revisione manuale.
+     */
+    private function candidateWasUserReviewed(ProductIdentificationCandidate $candidate): bool
+    {
+        $metadata = $candidate->metadata ?? [];
+
+        if (($metadata['manual_review']['reviewed'] ?? false) === true) {
+            return true;
+        }
+
+        if (($metadata['global_canonical_name_applied']['applied'] ?? false) === true) {
+            return true;
+        }
+
+        return false;
     }
 
     /**

@@ -828,6 +828,79 @@ class DocumentShow extends Component
     }
 
     /**
+     * Applica al candidato il nome canonico suggerito dalla conoscenza globale.
+     *
+     * Non conferma il prodotto e non crea Product.
+     * Corregge solo il nome candidato usando un suggerimento globale già tracciato
+     * nei metadata del candidato.
+     */
+    public function applyGlobalCanonicalNameToCandidate(int $candidateId): void
+    {
+        $this->authorize('update', $this->document);
+
+        $candidate = ProductIdentificationCandidate::query()
+            ->where('document_id', $this->document->id)
+            ->whereKey($candidateId)
+            ->firstOrFail();
+
+        if ($candidate->product_id) {
+            session()->flash('candidate_warning', 'Questo candidato ha già generato un prodotto e non può essere modificato.');
+
+            return;
+        }
+
+        $metadata = $candidate->metadata ?? [];
+        $globalFact = $metadata['product_understanding_global_fact'] ?? [];
+
+        if (($globalFact['matched'] ?? false) !== true) {
+            session()->flash('candidate_warning', 'Nessun suggerimento globale disponibile per questo candidato.');
+
+            return;
+        }
+
+        $canonicalName = trim((string) ($globalFact['canonical_name'] ?? ''));
+
+        if ($canonicalName === '') {
+            session()->flash('candidate_warning', 'Il suggerimento globale non contiene un nome valido.');
+
+            return;
+        }
+
+        if ($canonicalName === (string) $candidate->name) {
+            session()->flash('candidate_warning', 'Il candidato usa già il nome globale suggerito.');
+
+            return;
+        }
+
+        $metadata['manual_review'] = [
+            'reviewed' => true,
+            'reviewed_at' => now()->toISOString(),
+            'reviewed_by_user_id' => auth()->id(),
+        ];
+
+        $metadata['global_canonical_name_applied'] = [
+            'applied' => true,
+            'previous_name' => $candidate->name,
+            'canonical_name' => $canonicalName,
+            'source' => 'product_understanding_global_fact',
+            'applied_at' => now()->toISOString(),
+            'applied_by_user_id' => auth()->id(),
+        ];
+
+        $candidate->update([
+            'name' => $canonicalName,
+            'confidence_score' => max((int) ($candidate->confidence_score ?? 0), 95),
+            'metadata' => $metadata,
+        ]);
+
+        $this->refreshDocumentState();
+
+        session()->flash('candidate_success', 'Nome candidato aggiornato usando il suggerimento globale.');
+
+        $this->closeActiveDrawer();
+    }
+
+    /**
      * Salva le correzioni manuali di un candidato prodotto.
      */
     public function saveProductCandidateReviewData(int $candidateId): void

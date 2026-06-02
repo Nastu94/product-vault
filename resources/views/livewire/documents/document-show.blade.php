@@ -331,15 +331,15 @@
                         </span>
                     @endif
 
-                    <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+                    <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-600/20">
                         Da revisionare: {{ $lineDiagnostics['pending_candidates_count'] }}
                     </span>
 
-                    <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+                    <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
                         Confermati: {{ $lineDiagnostics['confirmed_candidates_count'] }}
                     </span>
 
-                    <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+                    <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20">
                         Esclusi: {{ $lineDiagnostics['ignored_candidates_count'] }}
                     </span>
 
@@ -352,7 +352,11 @@
                         Dettagli diagnostica
                     </button>
 
-                    @if ($documentLines->isNotEmpty() && $document->status !== 'linked_to_product')
+                    @if (
+                        $documentLines->isNotEmpty()
+                        && $lineDiagnostics['pending_candidates_count'] > 0
+                        && $document->status !== 'linked_to_product'
+                    )
                         <button
                             type="button"
                             wire:click="regenerateProductCandidates"

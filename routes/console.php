@@ -393,6 +393,7 @@ Artisan::command('product-vault:regression-documents {--ids= : Lista ID separati
                 ->findOrFail($id);
 
             $actualCandidates = $document->productIdentificationCandidates()
+                ->where('review_status', 'pending')
                 ->whereNull('product_id')
                 ->orderBy('id')
                 ->get();

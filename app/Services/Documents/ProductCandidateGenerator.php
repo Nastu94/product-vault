@@ -5,9 +5,21 @@ namespace App\Services\Documents;
 use App\Models\Document;
 use App\Models\DocumentLine;
 use App\Models\ProductIdentificationCandidate;
+use App\Services\Documents\ProductUnderstanding\ProductLineAnalyzer;
 
 class ProductCandidateGenerator
 {
+    /**
+     * Genera candidati prodotto partendo dalle righe documento estratte.
+     *
+     * In questa fase NON creiamo ancora Product reali.
+     * Salviamo solo candidati revisionabili dall'utente.
+     */
+    public function __construct(
+        private readonly ProductLineAnalyzer $productLineAnalyzer,
+    ) {
+    }
+
     /**
      * Genera candidati prodotto partendo dalle righe documento estratte.
      *
@@ -86,13 +98,39 @@ class ProductCandidateGenerator
                 continue;
             }
 
+            $analysis = $this->productLineAnalyzer->analyze($line);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Product understanding layer
+            |--------------------------------------------------------------------------
+            |
+            | Prima fase: salviamo analisi, segnali e score nei metadata del candidato,
+            | ma non sostituiamo ancora il gate storico lineIsUsable().
+            |
+            | Questo evita regressioni improvvise e ci permette di confrontare:
+            | - vecchia decisione del generator
+            | - nuova analisi semantica della riga
+            |
+            */
             if (! $this->lineIsUsable($line)) {
                 continue;
             }
 
             $productCode = $line->metadata['product_code_candidate'] ?? null;
-            $serialNumber = $line->metadata['serial_number_candidate'] ?? null;
-            $eanCode = $line->metadata['ean_code_candidate'] ?? $this->guessEanCode($productCode);
+            $serialNumber = $line->metadata['serial_number_candidate'] ?? $analysis->serialCandidate;
+            $eanCode = $line->metadata['ean_code_candidate']
+                ?? $analysis->eanCandidate
+                ?? $this->guessEanCode($productCode);
+
+            $productName = $analysis->suggestedName
+                ?: $this->normalizeProductName($line->description);
+
+            $model = $this->guessModel($productCode)
+                ?: $analysis->modelCandidate;
+
+            $legacyConfidenceScore = $this->estimateConfidenceScore($line, $productCode);
+            $understandingConfidenceScore = $analysis->candidateConfidenceScore();
 
             ProductIdentificationCandidate::query()->create([
                 'document_id' => $document->id,
@@ -100,13 +138,13 @@ class ProductCandidateGenerator
                 'product_id' => null,
                 'brand_id' => null,
                 'category_id' => null,
-                'name' => $this->normalizeProductName($line->description),
-                'model' => $this->guessModel($productCode),
+                'name' => $productName,
+                'model' => $model,
                 'serial_number' => $serialNumber,
                 'ean_code' => $eanCode,
                 'price' => $this->guessPrice($line),
                 'source' => 'document_line_parser',
-                'confidence_score' => $this->estimateConfidenceScore($line, $productCode),
+                'confidence_score' => max($legacyConfidenceScore, $understandingConfidenceScore),
                 'is_selected' => false,
                 'review_status' => 'pending',
                 'metadata' => [
@@ -123,6 +161,7 @@ class ProductCandidateGenerator
                     'quantity' => $line->quantity,
                     'unit_price' => $line->unit_price,
                     'total_price' => $line->total_price,
+                    'product_understanding' => $analysis->toMetadata(),
                 ],
             ]);
 

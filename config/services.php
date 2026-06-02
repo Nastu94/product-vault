@@ -60,4 +60,12 @@ return [
         'pdf_ocr_max_pages' => env('PDF_OCR_MAX_PAGES', 3),
         'pdf_ocr_timeout' => env('PDF_OCR_TIMEOUT', 180),
     ],
+
+    'product_text_similarity' => [
+        'enabled' => env('PRODUCT_TEXT_SIMILARITY_ENABLED', false),
+        'python' => env('PRODUCT_TEXT_SIMILARITY_PYTHON', base_path('tools/ocr/.venv/Scripts/python.exe')),
+        'script' => env('PRODUCT_TEXT_SIMILARITY_SCRIPT', base_path('tools/product_understanding/analyze_product_text.py')),
+        'timeout' => env('PRODUCT_TEXT_SIMILARITY_TIMEOUT', 30),
+        'min_score' => env('PRODUCT_TEXT_SIMILARITY_MIN_SCORE', 80),
+    ],
 ];

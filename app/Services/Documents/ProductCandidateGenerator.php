@@ -6,6 +6,7 @@ use App\Models\Document;
 use App\Models\DocumentLine;
 use App\Models\ProductIdentificationCandidate;
 use App\Services\Documents\ProductUnderstanding\ProductLineAnalyzer;
+use App\Services\Documents\ProductUnderstanding\ProductTextSimilarityAnalyzer;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackMatcher;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingGlobalFactMatcher;
 
@@ -21,6 +22,7 @@ class ProductCandidateGenerator
         private readonly ProductLineAnalyzer $productLineAnalyzer,
         private readonly ProductUnderstandingFeedbackMatcher $feedbackMatcher,
         private readonly ProductUnderstandingGlobalFactMatcher $globalFactMatcher,
+        private readonly ProductTextSimilarityAnalyzer $productTextSimilarityAnalyzer,
     ) {
     }
 
@@ -161,6 +163,14 @@ class ProductCandidateGenerator
                 candidateName: $productName,
             );
 
+            $productTextSimilarityContext = $this->productTextSimilarityAnalyzer->analyze(
+                candidateName: $productName,
+                eanCode: $eanCode,
+                globalFactContext: $globalFactContext,
+                suggestedCategory: $analysis->suggestedCategory,
+                suggestedLineType: $analysis->lineType,
+            );
+
             ProductIdentificationCandidate::query()->create([
                 'document_id' => $document->id,
                 'document_line_id' => $line->id,
@@ -193,6 +203,7 @@ class ProductCandidateGenerator
                     'product_understanding' => $analysis->toMetadata(),
                     'product_understanding_feedback' => $feedbackContext,
                     'product_understanding_global_fact' => $globalFactContext,
+                    'product_understanding_python' => $productTextSimilarityContext,
                 ],
             ]);
 

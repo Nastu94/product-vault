@@ -7,6 +7,7 @@ use App\Models\DocumentLine;
 use App\Models\ProductIdentificationCandidate;
 use App\Services\Documents\ProductUnderstanding\ProductLineAnalyzer;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackMatcher;
+use App\Services\Documents\ProductUnderstanding\ProductUnderstandingGlobalFactMatcher;
 
 class ProductCandidateGenerator
 {
@@ -19,6 +20,7 @@ class ProductCandidateGenerator
     public function __construct(
         private readonly ProductLineAnalyzer $productLineAnalyzer,
         private readonly ProductUnderstandingFeedbackMatcher $feedbackMatcher,
+        private readonly ProductUnderstandingGlobalFactMatcher $globalFactMatcher,
     ) {
     }
 
@@ -140,6 +142,11 @@ class ProductCandidateGenerator
                 eanCode: $eanCode,
             );
 
+            $globalFactContext = $this->globalFactMatcher->match(
+                eanCode: $eanCode,
+                candidateName: $productName,
+            );
+
             ProductIdentificationCandidate::query()->create([
                 'document_id' => $document->id,
                 'document_line_id' => $line->id,
@@ -171,6 +178,7 @@ class ProductCandidateGenerator
                     'total_price' => $line->total_price,
                     'product_understanding' => $analysis->toMetadata(),
                     'product_understanding_feedback' => $feedbackContext,
+                    'product_understanding_global_fact' => $globalFactContext,
                 ],
             ]);
 

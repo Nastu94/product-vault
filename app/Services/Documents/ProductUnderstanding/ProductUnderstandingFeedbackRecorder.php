@@ -9,8 +9,13 @@ use Illuminate\Support\Str;
 
 class ProductUnderstandingFeedbackRecorder
 {
+    /**
+     * @param ProductLineAnalyzer $productLineAnalyzer
+     * @param ProductUnderstandingGlobalFactUpdater $globalFactUpdater
+     */
     public function __construct(
         private readonly ProductLineAnalyzer $productLineAnalyzer,
+        private readonly ProductUnderstandingGlobalFactUpdater $globalFactUpdater,
     ) {
     }
 
@@ -113,7 +118,7 @@ class ProductUnderstandingFeedbackRecorder
             ?? ''
         );
 
-        return ProductUnderstandingFeedback::query()->updateOrCreate(
+        $feedback = ProductUnderstandingFeedback::query()->updateOrCreate(
             [
                 'candidate_id' => $candidate->id,
             ],
@@ -167,6 +172,10 @@ class ProductUnderstandingFeedbackRecorder
                 'reviewed_at' => now(),
             ]
         );
+
+        $this->globalFactUpdater->updateFromFeedback($feedback);
+
+        return $feedback;
     }
 
     /**

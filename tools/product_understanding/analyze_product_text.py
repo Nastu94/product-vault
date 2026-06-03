@@ -244,7 +244,7 @@ def main() -> int:
         return 0
 
     try:
-        from rapidfuzz import fuzz
+        from rapidfuzz import fuzz # type: ignore
     except Exception as exception:
         print(json.dumps(
             build_empty_result(

@@ -41,6 +41,46 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
         $pendingRow = null;
         $warnings = [];
 
+        /*
+        |--------------------------------------------------------------------------
+        | Estrazione header/role-driven
+        |--------------------------------------------------------------------------
+        |
+        | Prima di usare le euristiche legacy, proviamo a ricostruire la tabella
+        | leggendo l'header e mappando le colonne a ruoli amministrativi noti:
+        | codice, descrizione, quantità, prezzo unitario, totale riga.
+        |
+        | Questo non è product matching e non usa parole prodotto.
+        | Usa solo green flag strutturali della tabella fattura.
+        */
+        $expectedCodeRows = $this->countExpectedCodeRows($lines);
+        $headerDrivenRows = $this->extractHeaderDrivenRows($lines);
+
+        if (
+            $headerDrivenRows !== []
+            && ($expectedCodeRows === 0 || count($headerDrivenRows) >= $expectedCodeRows)
+        ) {
+            $coverageRatio = $expectedCodeRows > 0
+                ? round(count($headerDrivenRows) / $expectedCodeRows, 2)
+                : null;
+
+            $result = new InvoiceTableExtractionResult(
+                strategy: 'text_invoice_table_header_roles',
+                rows: $headerDrivenRows,
+                warnings: [],
+                metadata: [
+                    'source' => 'document.raw_text',
+                    'mode' => 'header_role_mapping',
+                    'lines_count' => count($lines),
+                    'expected_code_rows' => $expectedCodeRows,
+                    'extracted_rows' => count($headerDrivenRows),
+                    'coverage_ratio' => $coverageRatio,
+                ],
+            );
+
+            return $this->scorer->score($result);
+        }
+
         foreach ($lines as $index => $line) {
             if ($this->lineShouldBeIgnored($line)) {
                 $pendingRow = null;
@@ -525,6 +565,325 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
         }
 
         return mb_strlen($line) >= 6;
+    }
+
+    /**
+     * Estrae righe tabellari usando l'header come mappa dei ruoli colonna.
+     *
+     * Questa strategia è pensata per fatture digitali dove il testo contiene:
+     * Codice / Descrizione / Quantità / Prezzo unitario / Totale riga
+     *
+     * Non usa parole prodotto.
+     * Usa solo ruoli amministrativi della tabella.
+     *
+     * @param array<int, string> $lines
+     * @return array<int, InvoiceRowCandidate>
+     */
+    private function extractHeaderDrivenRows(array $lines): array
+    {
+        $headerIndex = null;
+        $headerRoles = null;
+
+        foreach ($lines as $index => $line) {
+            $roles = $this->detectHeaderRoles($line);
+
+            if ($roles === null) {
+                continue;
+            }
+
+            $headerIndex = $index;
+            $headerRoles = $roles;
+
+            break;
+        }
+
+        if ($headerIndex === null || $headerRoles === null) {
+            return [];
+        }
+
+        $rows = [];
+
+        for ($index = $headerIndex + 1; $index < count($lines); $index++) {
+            $line = $lines[$index] ?? '';
+            $line = trim((string) $line);
+
+            if ($line === '') {
+                continue;
+            }
+
+            if ($this->headerDrivenTableShouldEnd($line)) {
+                break;
+            }
+
+            if ($this->lineShouldBeIgnored($line)) {
+                continue;
+            }
+
+            $row = $this->extractHeaderDrivenRow(
+                line: $line,
+                headerRoles: $headerRoles,
+                sourceLineNumber: $index + 1,
+            );
+
+            if ($row === null) {
+                continue;
+            }
+
+            $rows[] = $row;
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Riconosce un header tabellare e restituisce i ruoli colonna trovati.
+     *
+     * Non pretende che tutte le colonne esistano: molte fatture non hanno IVA
+     * o sconto per riga. Però richiede almeno descrizione e un prezzo.
+     *
+     * @return array<string, string>|null
+     */
+    private function detectHeaderRoles(string $line): ?array
+    {
+        $normalized = $this->normalizeHeaderText($line);
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        $roles = [];
+
+        $roleSynonyms = [
+            'code' => [
+                'codice',
+                'cod',
+                'sku',
+                'articolo',
+                'item',
+                'ref',
+            ],
+            'description' => [
+                'descrizione',
+                'descr',
+                'prodotto',
+                'servizio',
+                'nome',
+            ],
+            'quantity' => [
+                'quantita',
+                'quantità',
+                'qta',
+                'qty',
+                'q ty',
+            ],
+            'unit_price' => [
+                'prezzo unitario',
+                'unitario',
+                'prezzo',
+                'p unit',
+                'unit price',
+            ],
+            'total_price' => [
+                'totale riga',
+                'totale',
+                'importo',
+                'importo riga',
+                'line total',
+            ],
+            'vat' => [
+                'iva',
+                'aliquota',
+                'vat',
+            ],
+            'discount' => [
+                'sconto',
+                'discount',
+            ],
+            'ean' => [
+                'ean',
+                'barcode',
+                'cod barre',
+                'codice barre',
+            ],
+            'serial' => [
+                'seriale',
+                'serial',
+                'imei',
+                's n',
+            ],
+        ];
+
+        foreach ($roleSynonyms as $role => $synonyms) {
+            foreach ($synonyms as $synonym) {
+                if (str_contains($normalized, $synonym)) {
+                    $roles[$role] = $synonym;
+
+                    break;
+                }
+            }
+        }
+
+        if (! isset($roles['description'])) {
+            return null;
+        }
+
+        if (! isset($roles['unit_price']) && ! isset($roles['total_price'])) {
+            return null;
+        }
+
+        if (! isset($roles['code']) && ! isset($roles['quantity'])) {
+            return null;
+        }
+
+        return $roles;
+    }
+
+    /**
+     * Estrae una riga dati usando i ruoli dedotti dall'header.
+     *
+     * MVP:
+     * - codice a inizio riga;
+     * - descrizione nel mezzo;
+     * - quantità + importi in coda.
+     *
+     * Questo copre tabelle con IVA solo nel riepilogo finale, senza IVA per riga.
+     */
+    private function extractHeaderDrivenRow(
+        string $line,
+        array $headerRoles,
+        int $sourceLineNumber,
+    ): ?InvoiceRowCandidate {
+        if (! preg_match('/^(?<code>' . $this->invoiceCodePattern() . ')\s+(?<body>.+)$/u', $line, $matches)) {
+            return null;
+        }
+
+        $code = trim((string) ($matches['code'] ?? ''));
+        $body = trim((string) ($matches['body'] ?? ''));
+
+        if ($code === '' || $body === '') {
+            return null;
+        }
+
+        if ($this->invoiceCodeShouldBeSkipped($code)) {
+            return null;
+        }
+
+        $amountPattern = $this->amountPattern();
+
+        $patterns = [];
+
+        if (
+            isset($headerRoles['quantity'])
+            && isset($headerRoles['unit_price'])
+            && isset($headerRoles['total_price'])
+        ) {
+            $patterns[] = '/^(?<description>.+?)\s+' .
+                '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+                '(?<unit_price>' . $amountPattern . ')\s+' .
+                '(?<total_price>' . $amountPattern . ')\s*$/u';
+        }
+
+        if (
+            isset($headerRoles['quantity'])
+            && ! isset($headerRoles['unit_price'])
+            && isset($headerRoles['total_price'])
+        ) {
+            $patterns[] = '/^(?<description>.+?)\s+' .
+                '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+                '(?<total_price>' . $amountPattern . ')\s*$/u';
+        }
+
+        foreach ($patterns as $pattern) {
+            if (! preg_match($pattern, $body, $rowMatches)) {
+                continue;
+            }
+
+            $description = trim((string) ($rowMatches['description'] ?? ''));
+
+            if ($description === '' || $this->lineShouldBeIgnored($description)) {
+                return null;
+            }
+
+            return new InvoiceRowCandidate(
+                code: $code,
+                description: $description,
+                descriptionParts: [],
+                quantity: isset($rowMatches['quantity'])
+                    ? $this->parseQuantity((string) $rowMatches['quantity'])
+                    : null,
+                vatRate: null,
+                unitPrice: isset($rowMatches['unit_price'])
+                    ? $this->parseMoney((string) $rowMatches['unit_price'])
+                    : null,
+                totalPrice: isset($rowMatches['total_price'])
+                    ? $this->parseMoney((string) $rowMatches['total_price'])
+                    : null,
+                discountAmount: null,
+                supportingLines: [],
+                ean: null,
+                serialNumber: null,
+                sourceItemIds: [],
+                sourceVisualLineIds: [],
+                warnings: [],
+                metadata: [
+                    'source_line_number' => $sourceLineNumber,
+                    'mode' => 'header_role_mapping',
+                    'header_roles' => $headerRoles,
+                ],
+            );
+        }
+
+        return null;
+    }
+
+    /**
+     * Decide quando la tabella estratta da header è terminata.
+     */
+    private function headerDrivenTableShouldEnd(string $line): bool
+    {
+        $normalized = $this->normalizeHeaderText($line);
+
+        if ($normalized === '') {
+            return false;
+        }
+
+        foreach ([
+            'imponibile',
+            'iva ',
+            'iva 22',
+            'totale documento',
+            'totale fattura',
+            'totale iva',
+            'netto a pagare',
+            'netto da pagare',
+            'pagamento',
+            'note',
+            'garanzia',
+        ] as $signal) {
+            if (str_starts_with($normalized, $signal)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Normalizza testo header per matching ruoli colonna.
+     */
+    private function normalizeHeaderText(string $text): string
+    {
+        $normalized = mb_strtolower(trim($text));
+
+        $normalized = str_replace(
+            ['à', 'è', 'é', 'ì', 'ò', 'ù'],
+            ['a', 'e', 'e', 'i', 'o', 'u'],
+            $normalized
+        );
+
+        $normalized = preg_replace('/[^a-z0-9%]+/u', ' ', $normalized) ?: $normalized;
+
+        return trim(preg_replace('/\s+/', ' ', $normalized) ?: $normalized);
     }
 
     /**

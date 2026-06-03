@@ -197,9 +197,12 @@ class ProductUnderstandingFeedbackMatcher
                         'similarity' => round((float) $match['similarity'], 3),
                         'base_similarity' => round((float) ($match['base_similarity'] ?? $match['similarity']), 3),
                         'model_overlap' => $match['model_overlap'] ?? [],
+                        'all_model_overlap' => $match['all_model_overlap'] ?? [],
                         'model_conflict' => (bool) ($match['model_conflict'] ?? false),
                         'source_model_tokens' => $match['source_model_tokens'] ?? [],
                         'target_model_tokens' => $match['target_model_tokens'] ?? [],
+                        'source_strong_model_tokens' => $match['source_strong_model_tokens'] ?? [],
+                        'target_strong_model_tokens' => $match['target_strong_model_tokens'] ?? [],
                         'analyzer_line_type' => $match['analyzer_line_type'],
                         'analyzer_suggested_category' => $match['analyzer_suggested_category'],
                     ])
@@ -269,32 +272,42 @@ class ProductUnderstandingFeedbackMatcher
                 $targetModelTokens = $this->modelTokens($targetDescription);
 
                 $baseSimilarity = $this->jaccardSimilarity($sourceTokens, $targetTokens);
-                $modelOverlap = array_values(array_intersect($sourceModelTokens, $targetModelTokens));
+
+                $sourceStrongModelTokens = $this->strongModelTokens($sourceModelTokens);
+                $targetStrongModelTokens = $this->strongModelTokens($targetModelTokens);
+
+                $allModelOverlap = array_values(array_intersect($sourceModelTokens, $targetModelTokens));
+                $strongModelOverlap = array_values(array_intersect($sourceStrongModelTokens, $targetStrongModelTokens));
 
                 /*
                 |--------------------------------------------------------------------------
-                | Similarità model-aware
+                | Similarità model-aware prudente
                 |--------------------------------------------------------------------------
                 |
-                | Jaccard sui token resta il punto di partenza, ma i codici modello sono
-                | più importanti delle parole generiche.
+                | Non tutti i token alfanumerici sono veri codici modello.
                 |
-                | Esempio positivo:
+                | Esempi forti:
                 | - WH1000XM5
-                | - WH 1000XM5
+                | - 1000XM5
+                | - Gen11
                 |
-                | Esempio da NON forzare:
-                | - WH1000XM5
-                | - WH1000XM4
+                | Esempi deboli/generici:
+                | - 4K
+                | - E27
+                | - 65W
+                | - 1M
+                | - 20000mAh
                 |
+                | I token deboli restano nei metadata diagnostici, ma non devono alzare
+                | automaticamente la similarità.
                 */
-                $modelConflict = $sourceModelTokens !== []
-                    && $targetModelTokens !== []
-                    && $modelOverlap === [];
+                $modelConflict = $sourceStrongModelTokens !== []
+                    && $targetStrongModelTokens !== []
+                    && $strongModelOverlap === [];
 
                 $similarity = $baseSimilarity;
 
-                if ($modelOverlap !== []) {
+                if ($strongModelOverlap !== []) {
                     $similarity = max($similarity, 0.86);
                 }
 
@@ -309,10 +322,13 @@ class ProductUnderstandingFeedbackMatcher
                     'normalized_line_description' => $feedback->normalized_line_description,
                     'similarity' => $similarity,
                     'base_similarity' => $baseSimilarity,
-                    'model_overlap' => $modelOverlap,
+                    'model_overlap' => $strongModelOverlap,
+                    'all_model_overlap' => $allModelOverlap,
                     'model_conflict' => $modelConflict,
                     'source_model_tokens' => $sourceModelTokens,
                     'target_model_tokens' => $targetModelTokens,
+                    'source_strong_model_tokens' => $sourceStrongModelTokens,
+                    'target_strong_model_tokens' => $targetStrongModelTokens,
                     'analyzer_line_type' => $feedback->analyzer_line_type,
                     'analyzer_suggested_category' => $feedback->analyzer_suggested_category,
                 ];
@@ -501,12 +517,99 @@ class ProductUnderstandingFeedbackMatcher
             ) {
                 $modelTokens[] = $token . $nextToken;
             }
+
+            if (
+                $token === 'gen'
+                && preg_match('/^\d{1,3}$/', $nextToken) === 1
+            ) {
+                $modelTokens[] = $token . $nextToken;
+            }
         }
 
         return collect($modelTokens)
             ->unique()
             ->values()
             ->all();
+    }
+    
+    /**
+     * Filtra i token modello mantenendo solo quelli abbastanza specifici da
+     * giustificare un boost di similarità.
+     *
+     * I token tecnici generici restano nei metadata diagnostici, ma non devono
+     * essere usati come prova forte di identità prodotto.
+     */
+    private function strongModelTokens(array $modelTokens): array
+    {
+        return collect($modelTokens)
+            ->filter(fn (string $token): bool => $this->isStrongModelToken($token))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Decide se un token modello è abbastanza specifico.
+     */
+    private function isStrongModelToken(string $token): bool
+    {
+        $token = mb_strtolower(trim($token));
+
+        if (! $this->looksLikeModelToken($token)) {
+            return false;
+        }
+
+        if ($this->isGenericTechnicalToken($token)) {
+            return false;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Lunghezza minima
+        |--------------------------------------------------------------------------
+        |
+        | Evita boost su token come:
+        | - 4k
+        | - x1
+        | - r14
+        | - e27
+        |
+        | Mantiene invece token come:
+        | - gen11
+        | - 1000xm5
+        | - wh1000xm5
+        */
+        return mb_strlen($token) >= 5;
+    }
+
+    /**
+     * Token alfanumerici comuni che descrivono specifiche tecniche, non identità.
+     */
+    private function isGenericTechnicalToken(string $token): bool
+    {
+        $token = mb_strtolower(trim($token));
+
+        if ($token === '') {
+            return true;
+        }
+
+        $genericPatterns = [
+            '/^\d+k$/', // 4k, 8k
+            '/^\d+p$/', // 1080p
+            '/^\d+(?:w|kw|mah|wh|gb|tb|mb|hz|mhz|ghz|m|cm|mm|l)$/', // 65w, 20000mah, 16gb, 1m, 6l
+            '/^e\d{1,3}$/', // e27
+            '/^ax\d{3,4}$/', // ax1800 come classe Wi-Fi, non modello forte
+            '/^x\d{1,3}$/', // x1 da solo è troppo debole
+            '/^r\d{1,3}$/', // r14 da solo è troppo debole
+        ];
+
+        foreach ($genericPatterns as $pattern) {
+            if (preg_match($pattern, $token) === 1) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

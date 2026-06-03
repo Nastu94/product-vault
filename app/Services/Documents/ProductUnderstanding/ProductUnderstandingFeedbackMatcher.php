@@ -524,6 +524,18 @@ class ProductUnderstandingFeedbackMatcher
             ) {
                 $modelTokens[] = $token . $nextToken;
             }
+
+            $thirdToken = $tokens[$index + 2] ?? null;
+
+            if (
+                $thirdToken
+                && preg_match('/^[a-z]{1,4}$/', $token) === 1
+                && preg_match('/^\d{2,5}$/', $nextToken) === 1
+                && $this->looksLikeModelToken($thirdToken)
+            ) {
+                $modelTokens[] = $nextToken . $thirdToken;
+                $modelTokens[] = $token . $nextToken . $thirdToken;
+            }
         }
 
         return collect($modelTokens)

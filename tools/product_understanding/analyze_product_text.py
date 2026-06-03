@@ -81,6 +81,143 @@ def safe_score(value: Any) -> float:
     except Exception:
         return 0.0
 
+def text_tokens(value: str) -> List[str]:
+    return [token for token in normalize_text(value).split(" ") if token]
+
+
+def looks_like_model_token(token: str) -> bool:
+    token = token.strip().lower()
+
+    if len(token) < 2:
+        return False
+
+    return bool(re.search(r"[a-z]", token)) and bool(re.search(r"\d", token))
+
+
+def is_generic_technical_token(token: str) -> bool:
+    token = token.strip().lower()
+
+    if not token:
+        return True
+
+    generic_patterns = [
+        r"^\d+k$",  # 4k, 8k
+        r"^\d+p$",  # 1080p
+        r"^\d+(?:w|kw|mah|wh|gb|tb|mb|hz|mhz|ghz|m|cm|mm|l)$",  # 65w, 20000mah, 16gb, 1m, 6l
+        r"^e\d{1,3}$",  # e27
+        r"^ax\d{3,4}$",  # ax1800
+        r"^x\d{1,3}$",  # x1
+        r"^r\d{1,3}$",  # r14
+    ]
+
+    return any(re.match(pattern, token) for pattern in generic_patterns)
+
+
+def model_tokens(value: str) -> List[str]:
+    tokens = text_tokens(value)
+    found: List[str] = []
+
+    for token in tokens:
+        if looks_like_model_token(token):
+            found.append(token)
+
+    for index, token in enumerate(tokens):
+        next_token = tokens[index + 1] if index + 1 < len(tokens) else None
+        third_token = tokens[index + 2] if index + 2 < len(tokens) else None
+
+        if not next_token:
+            continue
+
+        if (
+            re.match(r"^[a-z]{1,4}$", token)
+            and len(next_token) >= 3
+            and looks_like_model_token(next_token)
+        ):
+            found.append(token + next_token)
+
+        if token == "gen" and re.match(r"^\d{1,3}$", next_token):
+            found.append(token + next_token)
+
+        if (
+            third_token
+            and re.match(r"^[a-z]{1,4}$", token)
+            and re.match(r"^\d{2,5}$", next_token)
+            and looks_like_model_token(third_token)
+        ):
+            found.append(next_token + third_token)
+            found.append(token + next_token + third_token)
+
+    return list(dict.fromkeys(found))
+
+
+def strong_model_tokens(value: str) -> List[str]:
+    return [
+        token
+        for token in model_tokens(value)
+        if looks_like_model_token(token)
+        and not is_generic_technical_token(token)
+        and len(token) >= 5
+    ]
+
+
+def spec_tokens(value: str) -> List[str]:
+    tokens = text_tokens(value)
+    specs: List[str] = []
+
+    for index, token in enumerate(tokens):
+        if re.match(r"^\d+k$", token):
+            specs.append(token)
+
+        if re.match(r"^\d+(?:w|kw|mah|wh|gb|tb|mb|hz|mhz|ghz|m|cm|mm|l)$", token):
+            specs.append(token)
+
+        if token in {"dual", "triple", "quad", "doppio", "doppia", "triplo"}:
+            specs.append(token)
+
+        next_token = tokens[index + 1] if index + 1 < len(tokens) else None
+
+        if next_token and re.match(r"^\d+$", token) and next_token in {"porta", "porte", "port", "ports"}:
+            specs.append(token + "_" + next_token)
+
+    return list(dict.fromkeys(specs))
+
+
+def identity_guardrails(candidate_name: str, canonical_name: str) -> Dict[str, Any]:
+    candidate_strong_models = strong_model_tokens(candidate_name)
+    canonical_strong_models = strong_model_tokens(canonical_name)
+
+    strong_model_overlap = sorted(set(candidate_strong_models) & set(canonical_strong_models))
+
+    model_conflict = (
+        bool(candidate_strong_models)
+        and bool(canonical_strong_models)
+        and not strong_model_overlap
+    )
+
+    candidate_specs = spec_tokens(candidate_name)
+    canonical_specs = spec_tokens(canonical_name)
+
+    spec_overlap = sorted(set(candidate_specs) & set(canonical_specs))
+
+    spec_difference = (
+        bool(candidate_specs)
+        and bool(canonical_specs)
+        and not spec_overlap
+    )
+
+    return {
+        "candidate_model_tokens": model_tokens(candidate_name),
+        "canonical_model_tokens": model_tokens(canonical_name),
+        "candidate_strong_model_tokens": candidate_strong_models,
+        "canonical_strong_model_tokens": canonical_strong_models,
+        "strong_model_overlap": strong_model_overlap,
+        "model_conflict": model_conflict,
+        "candidate_spec_tokens": candidate_specs,
+        "canonical_spec_tokens": canonical_specs,
+        "spec_overlap": spec_overlap,
+        "spec_difference": spec_difference,
+    }
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -161,6 +298,8 @@ def main() -> int:
 
         method, similarity = max(scored_methods, key=lambda item: item[1])
 
+        guardrails = identity_guardrails(candidate_name, canonical_name)
+
         matches.append({
             "canonical_name": canonical_name,
             "suggested_category": fact.get("suggested_category"),
@@ -174,6 +313,7 @@ def main() -> int:
                 "partial_ratio": round(partial_similarity, 2),
                 "wratio": round(weighted_similarity, 2),
             },
+            "identity_guardrails": guardrails,
         })
 
     if not matches:
@@ -187,16 +327,33 @@ def main() -> int:
     best_match = matches[0]
 
     signals: List[str] = []
+    warnings: List[str] = []
+
+    guardrails = best_match.get("identity_guardrails") or {}
+    model_conflict = bool(guardrails.get("model_conflict"))
+    spec_difference = bool(guardrails.get("spec_difference"))
 
     if best_match["similarity"] >= args.min_score:
         signals.append("high_similarity_to_global_canonical_name")
 
-        if normalize_text(candidate_name) != normalize_text(best_match["canonical_name"]):
+        if model_conflict:
+            signals.append("candidate_name_similar_but_different_model")
+            warnings.append("high_similarity_but_model_conflict")
+
+        if spec_difference:
+            signals.append("candidate_name_similar_but_spec_difference")
+            warnings.append("high_similarity_but_spec_difference")
+
+        if (
+            normalize_text(candidate_name) != normalize_text(best_match["canonical_name"])
+            and not model_conflict
+            and not spec_difference
+        ):
             signals.append("candidate_name_probably_ocr_variant")
     else:
         signals.append("low_similarity_to_global_canonical_name")
 
-    if best_match["similarity"] >= 99.5:
+    if best_match["similarity"] >= 99.5 and not model_conflict and not spec_difference:
         signals.append("candidate_name_matches_global_canonical_name")
 
     result = {
@@ -205,7 +362,7 @@ def main() -> int:
         "best_match": best_match,
         "matches": matches[:5],
         "signals": signals,
-        "warnings": [],
+        "warnings": warnings,
     }
 
     print(json.dumps(result, ensure_ascii=False))

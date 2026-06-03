@@ -195,6 +195,11 @@ class ProductUnderstandingFeedbackMatcher
                         'candidate_name' => $match['candidate_name'],
                         'normalized_line_description' => $match['normalized_line_description'],
                         'similarity' => round((float) $match['similarity'], 3),
+                        'base_similarity' => round((float) ($match['base_similarity'] ?? $match['similarity']), 3),
+                        'model_overlap' => $match['model_overlap'] ?? [],
+                        'model_conflict' => (bool) ($match['model_conflict'] ?? false),
+                        'source_model_tokens' => $match['source_model_tokens'] ?? [],
+                        'target_model_tokens' => $match['target_model_tokens'] ?? [],
                         'analyzer_line_type' => $match['analyzer_line_type'],
                         'analyzer_suggested_category' => $match['analyzer_suggested_category'],
                     ])
@@ -247,6 +252,7 @@ class ProductUnderstandingFeedbackMatcher
         }
 
         $sourceTokens = $this->tokens($normalizedDescription);
+        $sourceModelTokens = $this->modelTokens($normalizedDescription);
 
         if ($sourceTokens === []) {
             return collect();
@@ -257,15 +263,56 @@ class ProductUnderstandingFeedbackMatcher
             ->latest('id')
             ->limit(300)
             ->get()
-            ->map(function (ProductUnderstandingFeedback $feedback) use ($sourceTokens): array {
-                $targetTokens = $this->tokens((string) $feedback->normalized_line_description);
+            ->map(function (ProductUnderstandingFeedback $feedback) use ($sourceTokens, $sourceModelTokens): array {
+                $targetDescription = (string) $feedback->normalized_line_description;
+                $targetTokens = $this->tokens($targetDescription);
+                $targetModelTokens = $this->modelTokens($targetDescription);
+
+                $baseSimilarity = $this->jaccardSimilarity($sourceTokens, $targetTokens);
+                $modelOverlap = array_values(array_intersect($sourceModelTokens, $targetModelTokens));
+
+                /*
+                |--------------------------------------------------------------------------
+                | Similarità model-aware
+                |--------------------------------------------------------------------------
+                |
+                | Jaccard sui token resta il punto di partenza, ma i codici modello sono
+                | più importanti delle parole generiche.
+                |
+                | Esempio positivo:
+                | - WH1000XM5
+                | - WH 1000XM5
+                |
+                | Esempio da NON forzare:
+                | - WH1000XM5
+                | - WH1000XM4
+                |
+                */
+                $modelConflict = $sourceModelTokens !== []
+                    && $targetModelTokens !== []
+                    && $modelOverlap === [];
+
+                $similarity = $baseSimilarity;
+
+                if ($modelOverlap !== []) {
+                    $similarity = max($similarity, 0.86);
+                }
+
+                if ($modelConflict) {
+                    $similarity = min($similarity, 0.74);
+                }
 
                 return [
                     'feedback_id' => $feedback->id,
                     'review_status' => $feedback->review_status,
                     'candidate_name' => $feedback->candidate_name,
                     'normalized_line_description' => $feedback->normalized_line_description,
-                    'similarity' => $this->jaccardSimilarity($sourceTokens, $targetTokens),
+                    'similarity' => $similarity,
+                    'base_similarity' => $baseSimilarity,
+                    'model_overlap' => $modelOverlap,
+                    'model_conflict' => $modelConflict,
+                    'source_model_tokens' => $sourceModelTokens,
+                    'target_model_tokens' => $targetModelTokens,
                     'analyzer_line_type' => $feedback->analyzer_line_type,
                     'analyzer_suggested_category' => $feedback->analyzer_suggested_category,
                 ];
@@ -409,6 +456,75 @@ class ProductUnderstandingFeedbackMatcher
             ->unique()
             ->values()
             ->all();
+    }
+
+    /**
+     * Estrae token che sembrano codici modello.
+     *
+     * Esempi:
+     * - WH1000XM5
+     * - 1000XM5
+     * - AX1800
+     * - E27
+     *
+     * Inoltre crea varianti compatte per casi OCR/formattazione:
+     * - "wh 1000xm5" -> "wh1000xm5"
+     */
+    private function modelTokens(string $text): array
+    {
+        $tokens = preg_split('/\s+/', $text) ?: [];
+        $tokens = collect($tokens)
+            ->map(fn (string $token): string => trim($token))
+            ->filter()
+            ->values()
+            ->all();
+
+        $modelTokens = [];
+
+        foreach ($tokens as $token) {
+            if ($this->looksLikeModelToken($token)) {
+                $modelTokens[] = $token;
+            }
+        }
+
+        foreach ($tokens as $index => $token) {
+            $nextToken = $tokens[$index + 1] ?? null;
+
+            if (! $nextToken) {
+                continue;
+            }
+
+            if (
+                preg_match('/^[a-z]{1,4}$/', $token) === 1
+                && mb_strlen($nextToken) >= 3
+                && $this->looksLikeModelToken($nextToken)
+            ) {
+                $modelTokens[] = $token . $nextToken;
+            }
+        }
+
+        return collect($modelTokens)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Decide se un token sembra un codice modello.
+     *
+     * Non basta che sia numerico e non basta che sia alfabetico:
+     * deve mescolare lettere e numeri.
+     */
+    private function looksLikeModelToken(string $token): bool
+    {
+        $token = trim($token);
+
+        if (mb_strlen($token) < 2) {
+            return false;
+        }
+
+        return preg_match('/[a-z]/', $token) === 1
+            && preg_match('/\d/', $token) === 1;
     }
 
     /**

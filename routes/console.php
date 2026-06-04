@@ -1427,7 +1427,7 @@ Artisan::command('product-vault:run-understanding-fixtures', function () {
                     $actualCandidate->ean_code,
                 );
             }
-            
+
             if (array_key_exists('serial_number', $expectedCandidate)) {
                 $assertEquals(
                     'pipeline',
@@ -1549,3 +1549,59 @@ Artisan::command('product-vault:run-understanding-fixtures', function () {
 
     return 0;
 })->purpose('Run Product Understanding scenarios from versioned fixtures');
+
+/*
+|--------------------------------------------------------------------------
+| Product Understanding full test command
+|--------------------------------------------------------------------------
+|
+| Comando comodo per eseguire tutta la suite Product Understanding locale.
+|
+| Uso:
+| php artisan product-vault:test-understanding
+|
+| Uso da database pulito:
+| php artisan product-vault:test-understanding --fresh
+|
+*/
+Artisan::command('product-vault:test-understanding {--fresh : Reset database with migrate:fresh --seed before running understanding tests}', function () {
+    if ($this->option('fresh')) {
+        if (! app()->environment(['local', 'testing'])) {
+            $this->error('The --fresh option is allowed only in local/testing environments.');
+
+            return 1;
+        }
+
+        $this->warn('Running migrate:fresh --seed. Local database data will be deleted.');
+
+        if (! $this->confirm('Continue?', false)) {
+            $this->info('Aborted.');
+
+            return 1;
+        }
+
+        $freshExitCode = $this->call('migrate:fresh', [
+            '--seed' => true,
+        ]);
+
+        if ($freshExitCode !== 0) {
+            return $freshExitCode;
+        }
+    }
+
+    $seedExitCode = $this->call('product-vault:seed-understanding-knowledge');
+
+    if ($seedExitCode !== 0) {
+        return $seedExitCode;
+    }
+
+    $fixturesExitCode = $this->call('product-vault:run-understanding-fixtures');
+
+    if ($fixturesExitCode !== 0) {
+        return $fixturesExitCode;
+    }
+
+    $this->info('Product Understanding test suite passed.');
+
+    return 0;
+})->purpose('Seed and run the full Product Understanding fixture suite');

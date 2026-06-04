@@ -1025,3 +1025,260 @@ Artisan::command('product-vault:run-understanding-scenarios', function () {
 
     return 0;
 })->purpose('Run controlled Product Understanding scenarios without uploading files');
+
+/*
+|--------------------------------------------------------------------------
+| Product Understanding fixture runner
+|--------------------------------------------------------------------------
+|
+| Esegue scenari Product Understanding definiti in fixture versionate.
+|
+*/
+Artisan::command('product-vault:run-understanding-fixtures', function () {
+    $fixturePath = base_path('tests/Fixtures/ProductUnderstanding/scenarios.php');
+
+    if (! file_exists($fixturePath)) {
+        $this->error('Fixture mancante: '.$fixturePath);
+
+        return 1;
+    }
+
+    $fixtures = require $fixturePath;
+
+    $user = User::query()
+        ->where('email', 'understanding@example.com')
+        ->first();
+
+    if (! $user || ! $user->current_team_id) {
+        $this->error('Knowledge seed mancante. Esegui prima: php artisan product-vault:seed-understanding-knowledge');
+
+        return 1;
+    }
+
+    $team = Team::query()->find($user->current_team_id);
+
+    if (! $team) {
+        $this->error('Team/workspace seed non trovato. Esegui prima: php artisan product-vault:seed-understanding-knowledge');
+
+        return 1;
+    }
+
+    if (
+        ProductUnderstandingGlobalFact::count() < 2
+        || ProductUnderstandingFeedback::query()->where('team_id', $team->id)->count() < 5
+    ) {
+        $this->error('Knowledge incompleta. Esegui prima: php artisan product-vault:seed-understanding-knowledge');
+
+        return 1;
+    }
+
+    DocumentLine::query()
+        ->whereHas('document', fn ($query) => $query->where('original_filename', 'synthetic-understanding-fixtures.txt'))
+        ->delete();
+
+    Document::withTrashed()
+        ->where('original_filename', 'synthetic-understanding-fixtures.txt')
+        ->forceDelete();
+
+    $document = Document::query()->create([
+        'team_id' => $team->id,
+        'uploaded_by_user_id' => $user->id,
+        'status' => 'parsed',
+        'text_extraction_status' => 'completed',
+        'original_filename' => 'synthetic-understanding-fixtures.txt',
+        'mime_type' => 'text/plain',
+        'file_size' => 0,
+        'raw_text' => 'Synthetic Product Understanding fixture document.',
+    ]);
+
+    $line = DocumentLine::query()->create([
+        'document_id' => $document->id,
+        'line_number' => 1,
+        'raw_text' => 'Synthetic Product Understanding fixture line.',
+        'description' => 'Synthetic Product Understanding fixture line.',
+        'quantity' => 1,
+        'unit_price' => 0,
+        'total_price' => 0,
+        'confidence_score' => 100,
+        'metadata' => [
+            'synthetic' => true,
+            'seeded_for' => 'product_understanding_fixtures',
+        ],
+    ]);
+
+    $feedbackMatcher = app(App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackMatcher::class);
+    $pythonAnalyzer = app(App\Services\Documents\ProductUnderstanding\ProductTextSimilarityAnalyzer::class);
+
+    $rows = [];
+    $failures = [];
+
+    $record = function (string $group, string $scenario, string $assertion, bool $passed, mixed $expected = null, mixed $actual = null) use (&$rows, &$failures): void {
+        $rows[] = [
+            $group,
+            $scenario,
+            $assertion,
+            $passed ? 'OK' : 'FAIL',
+        ];
+
+        if (! $passed) {
+            $failures[] = [
+                'group' => $group,
+                'scenario' => $scenario,
+                'assertion' => $assertion,
+                'expected' => $expected,
+                'actual' => $actual,
+            ];
+        }
+    };
+
+    $assertEquals = function (string $group, string $scenario, string $assertion, mixed $expected, mixed $actual) use ($record): void {
+        $record($group, $scenario, $assertion, $expected === $actual, $expected, $actual);
+    };
+
+    $assertMin = function (string $group, string $scenario, string $assertion, float $min, mixed $actual) use ($record): void {
+        $actual = (float) $actual;
+        $record($group, $scenario, $assertion, $actual >= $min, '>= '.$min, $actual);
+    };
+
+    $assertMax = function (string $group, string $scenario, string $assertion, float $max, mixed $actual) use ($record): void {
+        $actual = (float) $actual;
+        $record($group, $scenario, $assertion, $actual <= $max, '<= '.$max, $actual);
+    };
+
+    $assertContains = function (string $group, string $scenario, string $assertion, array $needles, array $haystack) use ($record): void {
+        foreach ($needles as $needle) {
+            $record(
+                $group,
+                $scenario,
+                $assertion.': '.$needle,
+                in_array($needle, $haystack, true),
+                $needle,
+                $haystack,
+            );
+        }
+    };
+
+    $assertNotContains = function (string $group, string $scenario, string $assertion, array $needles, array $haystack) use ($record): void {
+        foreach ($needles as $needle) {
+            $record(
+                $group,
+                $scenario,
+                $assertion.': '.$needle,
+                ! in_array($needle, $haystack, true),
+                'not '.$needle,
+                $haystack,
+            );
+        }
+    };
+
+    foreach (($fixtures['feedback'] ?? []) as $scenario) {
+        $name = (string) ($scenario['name'] ?? 'unnamed_feedback_scenario');
+        $expect = $scenario['expect'] ?? [];
+
+        $result = $feedbackMatcher->match(
+            line: $line,
+            candidateName: $scenario['candidate_name'] ?? null,
+            eanCode: $scenario['ean_code'] ?? null,
+        );
+
+        if (array_key_exists('suggested_bias', $expect)) {
+            $assertEquals('feedback', $name, 'suggested_bias', $expect['suggested_bias'], data_get($result, 'suggested_bias'));
+        }
+
+        if (array_key_exists('review_hint', $expect)) {
+            $assertEquals('feedback', $name, 'review_hint', $expect['review_hint'], data_get($result, 'review_hint'));
+        }
+
+        if (array_key_exists('min_best_similarity', $expect)) {
+            $assertMin('feedback', $name, 'best_similarity', (float) $expect['min_best_similarity'], data_get($result, 'similar_description.best_similarity', 0));
+        }
+
+        if (array_key_exists('max_best_similarity', $expect)) {
+            $assertMax('feedback', $name, 'best_similarity', (float) $expect['max_best_similarity'], data_get($result, 'similar_description.best_similarity', 0));
+        }
+
+        if (array_key_exists('min_product_identity_score', $expect)) {
+            $assertMin('feedback', $name, 'product_identity_score', (float) $expect['min_product_identity_score'], data_get($result, 'product_identity_score', 0));
+        }
+
+        if (array_key_exists('min_registration_preference_score', $expect)) {
+            $assertMin('feedback', $name, 'registration_preference_score', (float) $expect['min_registration_preference_score'], data_get($result, 'registration_preference_score', 0));
+        }
+
+        if (array_key_exists('model_conflict', $expect)) {
+            $assertEquals(
+                'feedback',
+                $name,
+                'model_conflict',
+                (bool) $expect['model_conflict'],
+                (bool) data_get($result, 'similar_description.matches.0.model_conflict'),
+            );
+        }
+
+        if (! empty($expect['contains_model_overlap'])) {
+            $overlap = collect(data_get($result, 'similar_description.matches', []))
+                ->flatMap(fn ($match) => $match['model_overlap'] ?? [])
+                ->unique()
+                ->values()
+                ->all();
+
+            $assertContains('feedback', $name, 'model_overlap contains', $expect['contains_model_overlap'], $overlap);
+        }
+    }
+
+    foreach (($fixtures['python'] ?? []) as $scenario) {
+        $name = (string) ($scenario['name'] ?? 'unnamed_python_scenario');
+        $expect = $scenario['expect'] ?? [];
+
+        $result = $pythonAnalyzer->analyze(
+            candidateName: $scenario['candidate_name'] ?? '',
+            eanCode: null,
+            globalFactContext: [],
+            suggestedCategory: $scenario['suggested_category'] ?? null,
+            suggestedLineType: $scenario['suggested_line_type'] ?? null,
+        );
+
+        if (array_key_exists('best_match', $expect)) {
+            $assertEquals('python', $name, 'best_match', $expect['best_match'], data_get($result, 'best_match.canonical_name'));
+        }
+
+        if (array_key_exists('min_similarity', $expect)) {
+            $assertMin('python', $name, 'similarity', (float) $expect['min_similarity'], data_get($result, 'best_match.similarity', 0));
+        }
+
+        if (! empty($expect['contains_signals'])) {
+            $assertContains('python', $name, 'signals contains', $expect['contains_signals'], data_get($result, 'signals', []));
+        }
+
+        if (! empty($expect['not_contains_signals'])) {
+            $assertNotContains('python', $name, 'signals does not contain', $expect['not_contains_signals'], data_get($result, 'signals', []));
+        }
+
+        if (! empty($expect['contains_warnings'])) {
+            $assertContains('python', $name, 'warnings contains', $expect['contains_warnings'], data_get($result, 'warnings', []));
+        }
+
+        if (! empty($expect['not_contains_warnings'])) {
+            $assertNotContains('python', $name, 'warnings does not contain', $expect['not_contains_warnings'], data_get($result, 'warnings', []));
+        }
+    }
+
+    $this->table(['Group', 'Scenario', 'Assertion', 'Status'], $rows);
+
+    if ($failures !== []) {
+        $this->error('Product Understanding fixtures failed.');
+
+        foreach ($failures as $failure) {
+            $this->line('');
+            $this->warn($failure['group'].' / '.$failure['scenario'].' / '.$failure['assertion']);
+            $this->line('Expected: '.json_encode($failure['expected'], JSON_UNESCAPED_UNICODE));
+            $this->line('Actual:   '.json_encode($failure['actual'], JSON_UNESCAPED_UNICODE));
+        }
+
+        return 1;
+    }
+
+    $this->info('Product Understanding fixtures passed.');
+
+    return 0;
+})->purpose('Run Product Understanding scenarios from versioned fixtures');

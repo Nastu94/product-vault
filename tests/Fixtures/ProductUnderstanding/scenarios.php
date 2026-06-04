@@ -288,5 +288,83 @@ return [
                 ],
             ],
         ],
+        [
+            'name' => 'known_products_ocr_variants_invoice_table',
+            'document_type' => 'invoice',
+            'raw_text_lines' => [
+                'FATTURA',
+                'Numero: PV-SYN-PIPE-002    Data: 04/06/2026',
+                'Venditore',
+                'TechHub Italia S.r.l.',
+                '',
+                'Righe documento',
+                'Codice       Descrizione                                      Quantita  Prezzo unitario  Totale riga',
+                'LEN-X1-G11   Notebook Lenovo Thinkpad X1 Carbon Gen11         1         1.499,00         1.499,00',
+                'DOCK-UCDH-4K Dock Station USB C Dual HDMl 4K                  1         119,00           119,00',
+                'SON-WHXM5    Sony WH 1000 XM5 cuffie wireless nero            1         299,99           299,99',
+                '',
+                'Imponibile             1.572,12',
+                'IVA 22%                345,87',
+                'Totale documento EUR   1.917,99',
+            ],
+            'expect' => [
+                'line_count' => 3,
+                'candidate_count' => 3,
+                'document_status' => 'needs_review',
+                'lines' => [
+                    [
+                        'description' => 'Notebook Lenovo Thinkpad X1 Carbon Gen11',
+                        'quantity' => '1.000',
+                        'unit_price' => '1499.00',
+                        'total_price' => '1499.00',
+                        'mode' => 'text_invoice_table_header_roles',
+                    ],
+                    [
+                        'description' => 'Dock Station USB C Dual HDMl 4K',
+                        'quantity' => '1.000',
+                        'unit_price' => '119.00',
+                        'total_price' => '119.00',
+                        'mode' => 'text_invoice_table_header_roles',
+                    ],
+                    [
+                        'description' => 'Sony WH 1000 XM5 cuffie wireless nero',
+                        'quantity' => '1.000',
+                        'unit_price' => '299.99',
+                        'total_price' => '299.99',
+                        'mode' => 'text_invoice_table_header_roles',
+                    ],
+                ],
+                'candidates' => [
+                    [
+                        'name_contains' => 'X1 Carbon',
+                        'python_best_match' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+                        'python_contains_signals' => [
+                            'high_similarity_to_global_canonical_name',
+                        ],
+                        'python_not_contains_signals' => [
+                            'candidate_name_similar_but_different_model',
+                        ],
+                    ],
+                    [
+                        'name_contains' => 'Dock Station',
+                        'python_best_match' => 'Docking Station USB-C Dual HDMI 4K',
+                        'python_contains_signals' => [
+                            'candidate_name_probably_ocr_variant',
+                        ],
+                        'python_not_contains_signals' => [
+                            'candidate_name_similar_but_spec_difference',
+                        ],
+                    ],
+                    [
+                        'name_contains' => 'Sony WH 1000 XM5',
+                        'feedback_suggested_bias' => 'positive',
+                        'python_best_match' => null,
+                        'python_contains_warnings' => [
+                            'missing_global_facts',
+                        ],
+                    ],
+                ],
+            ],
+        ],
     ],
 ];

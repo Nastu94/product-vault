@@ -198,4 +198,95 @@ return [
             ],
         ],
     ],
+
+    'pipeline' => [
+        [
+            'name' => 'similar_but_different_invoice_table',
+            'document_type' => 'invoice',
+            'raw_text_lines' => [
+                'FATTURA',
+                'Numero: PV-SYN-PIPE-001    Data: 03/06/2026',
+                'Venditore',
+                'TechHub Italia S.r.l.',
+                '',
+                'Righe documento',
+                'Codice       Descrizione                                      Quantita  Prezzo unitario  Totale riga',
+                'LEN-X1-G10   Notebook Lenovo ThinkPad X1 Carbon Gen 10        1         1.299,00         1.299,00',
+                'DOCK-UCHD-2P Docking Station USB-C HDMI 2 porte               1         89,00            89,00',
+                'SON-WHXM4    Sony WH-1000XM4 cuffie wireless nero             1         249,99           249,99',
+                '',
+                'Imponibile             1.342,61',
+                'IVA 22%                295,38',
+                'Totale documento EUR   1.637,99',
+            ],
+            'expect' => [
+                'line_count' => 3,
+                'candidate_count' => 3,
+                'document_status' => 'needs_review',
+                'lines' => [
+                    [
+                        'description' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 10',
+                        'quantity' => '1.000',
+                        'unit_price' => '1299.00',
+                        'total_price' => '1299.00',
+                        'mode' => 'text_invoice_table_header_roles',
+                    ],
+                    [
+                        'description' => 'Docking Station USB-C HDMI 2 porte',
+                        'quantity' => '1.000',
+                        'unit_price' => '89.00',
+                        'total_price' => '89.00',
+                        'mode' => 'text_invoice_table_header_roles',
+                    ],
+                    [
+                        'description' => 'Sony WH-1000XM4 cuffie wireless nero',
+                        'quantity' => '1.000',
+                        'unit_price' => '249.99',
+                        'total_price' => '249.99',
+                        'mode' => 'text_invoice_table_header_roles',
+                    ],
+                ],
+                'candidates' => [
+                    [
+                        'name_contains' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 10',
+                        'feedback_suggested_bias' => 'neutral',
+                        'feedback_model_conflict' => true,
+                        'python_best_match' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+                        'python_contains_signals' => [
+                            'candidate_name_similar_but_different_model',
+                        ],
+                        'python_contains_warnings' => [
+                            'high_similarity_but_model_conflict',
+                        ],
+                        'python_not_contains_signals' => [
+                            'candidate_name_probably_ocr_variant',
+                        ],
+                    ],
+                    [
+                        'name_contains' => 'Docking Station USB-C HDMI 2 porte',
+                        'feedback_suggested_bias' => 'neutral',
+                        'python_best_match' => 'Docking Station USB-C Dual HDMI 4K',
+                        'python_contains_signals' => [
+                            'candidate_name_similar_but_spec_difference',
+                        ],
+                        'python_contains_warnings' => [
+                            'high_similarity_but_spec_difference',
+                        ],
+                        'python_not_contains_signals' => [
+                            'candidate_name_probably_ocr_variant',
+                        ],
+                    ],
+                    [
+                        'name_contains' => 'Sony WH-1000XM4 cuffie wireless nero',
+                        'feedback_suggested_bias' => 'neutral',
+                        'feedback_model_conflict' => true,
+                        'python_best_match' => null,
+                        'python_contains_warnings' => [
+                            'missing_global_facts',
+                        ],
+                    ],
+                ],
+            ],
+        ],
+    ],
 ];

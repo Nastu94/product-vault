@@ -4,6 +4,7 @@ use App\Jobs\ProcessDocumentJob;
 use App\Models\Document;
 use App\Models\DocumentLine;
 use App\Models\Plan;
+use App\Models\ProductIdentificationCandidate;
 use App\Models\ProductUnderstandingFeedback;
 use App\Models\ProductUnderstandingGlobalFact;
 use App\Models\Team;
@@ -1260,6 +1261,222 @@ Artisan::command('product-vault:run-understanding-fixtures', function () {
 
         if (! empty($expect['not_contains_warnings'])) {
             $assertNotContains('python', $name, 'warnings does not contain', $expect['not_contains_warnings'], data_get($result, 'warnings', []));
+        }
+    }
+
+    foreach (($fixtures['pipeline'] ?? []) as $scenario) {
+        $name = (string) ($scenario['name'] ?? 'unnamed_pipeline_scenario');
+        $expect = $scenario['expect'] ?? [];
+
+        $filename = 'synthetic-pipeline-'.$name.'.txt';
+
+        ProductIdentificationCandidate::query()
+            ->whereHas('document', fn ($query) => $query->where('original_filename', $filename))
+            ->delete();
+
+        DocumentLine::query()
+            ->whereHas('document', fn ($query) => $query->where('original_filename', $filename))
+            ->delete();
+
+        Document::withTrashed()
+            ->where('original_filename', $filename)
+            ->forceDelete();
+
+        $documentTypeId = App\Models\DocumentType::query()
+            ->where('code', $scenario['document_type'] ?? 'invoice')
+            ->value('id');
+
+        $rawText = implode(PHP_EOL, $scenario['raw_text_lines'] ?? []);
+
+        $pipelineDocument = Document::query()->create([
+            'team_id' => $team->id,
+            'uploaded_by_user_id' => $user->id,
+            'document_type_id' => $documentTypeId,
+            'status' => 'parsed',
+            'text_extraction_status' => 'completed',
+            'original_filename' => $filename,
+            'mime_type' => 'text/plain',
+            'file_size' => strlen($rawText),
+            'raw_text' => $rawText,
+        ]);
+
+        $lineCount = app(App\Services\Documents\DocumentLineParser::class)
+            ->parse($pipelineDocument);
+
+        $candidateCount = app(App\Services\Documents\ProductCandidateGenerator::class)
+            ->generate($pipelineDocument);
+
+        $pipelineDocument->update([
+            'status' => $candidateCount > 0 ? 'needs_review' : 'parsed',
+        ]);
+
+        $pipelineDocument->refresh();
+
+        if (array_key_exists('line_count', $expect)) {
+            $assertEquals('pipeline', $name, 'line_count', $expect['line_count'], $lineCount);
+        }
+
+        if (array_key_exists('candidate_count', $expect)) {
+            $assertEquals('pipeline', $name, 'candidate_count', $expect['candidate_count'], $candidateCount);
+        }
+
+        if (array_key_exists('document_status', $expect)) {
+            $assertEquals('pipeline', $name, 'document_status', $expect['document_status'], $pipelineDocument->status);
+        }
+
+        $actualLines = $pipelineDocument->lines()
+            ->orderBy('line_number')
+            ->get();
+
+        foreach (($expect['lines'] ?? []) as $index => $expectedLine) {
+            $actualLine = $actualLines->get($index);
+
+            $record(
+                'pipeline',
+                $name,
+                'line '.($index + 1).' exists',
+                $actualLine !== null,
+                'line exists',
+                null,
+            );
+
+            if (! $actualLine) {
+                continue;
+            }
+
+            if (array_key_exists('description', $expectedLine)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    'line '.($index + 1).' description',
+                    $expectedLine['description'],
+                    $actualLine->description,
+                );
+            }
+
+            if (array_key_exists('quantity', $expectedLine)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    'line '.($index + 1).' quantity',
+                    $expectedLine['quantity'],
+                    (string) $actualLine->quantity,
+                );
+            }
+
+            if (array_key_exists('unit_price', $expectedLine)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    'line '.($index + 1).' unit_price',
+                    $expectedLine['unit_price'],
+                    (string) $actualLine->unit_price,
+                );
+            }
+
+            if (array_key_exists('total_price', $expectedLine)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    'line '.($index + 1).' total_price',
+                    $expectedLine['total_price'],
+                    (string) $actualLine->total_price,
+                );
+            }
+
+            if (array_key_exists('mode', $expectedLine)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    'line '.($index + 1).' mode',
+                    $expectedLine['mode'],
+                    $actualLine->metadata['mode'] ?? null,
+                );
+            }
+        }
+
+        $actualCandidates = $pipelineDocument->productIdentificationCandidates()
+            ->orderBy('id')
+            ->get();
+
+        foreach (($expect['candidates'] ?? []) as $expectedCandidate) {
+            $needle = (string) ($expectedCandidate['name_contains'] ?? '');
+
+            $actualCandidate = $actualCandidates
+                ->first(fn ($candidate) => $needle !== '' && str_contains($candidate->name, $needle));
+
+            $record(
+                'pipeline',
+                $name,
+                'candidate exists: '.$needle,
+                $actualCandidate !== null,
+                'candidate containing '.$needle,
+                $actualCandidates->pluck('name')->values()->all(),
+            );
+
+            if (! $actualCandidate) {
+                continue;
+            }
+
+            if (array_key_exists('feedback_suggested_bias', $expectedCandidate)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    $needle.' feedback suggested_bias',
+                    $expectedCandidate['feedback_suggested_bias'],
+                    data_get($actualCandidate->metadata, 'product_understanding_feedback.suggested_bias'),
+                );
+            }
+
+            if (array_key_exists('feedback_model_conflict', $expectedCandidate)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    $needle.' feedback model_conflict',
+                    (bool) $expectedCandidate['feedback_model_conflict'],
+                    (bool) data_get($actualCandidate->metadata, 'product_understanding_feedback.similar_description.matches.0.model_conflict'),
+                );
+            }
+
+            if (array_key_exists('python_best_match', $expectedCandidate)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    $needle.' python best_match',
+                    $expectedCandidate['python_best_match'],
+                    data_get($actualCandidate->metadata, 'product_understanding_python.best_match.canonical_name'),
+                );
+            }
+
+            if (! empty($expectedCandidate['python_contains_signals'])) {
+                $assertContains(
+                    'pipeline',
+                    $name,
+                    $needle.' python signals contains',
+                    $expectedCandidate['python_contains_signals'],
+                    data_get($actualCandidate->metadata, 'product_understanding_python.signals', []),
+                );
+            }
+
+            if (! empty($expectedCandidate['python_not_contains_signals'])) {
+                $assertNotContains(
+                    'pipeline',
+                    $name,
+                    $needle.' python signals does not contain',
+                    $expectedCandidate['python_not_contains_signals'],
+                    data_get($actualCandidate->metadata, 'product_understanding_python.signals', []),
+                );
+            }
+
+            if (! empty($expectedCandidate['python_contains_warnings'])) {
+                $assertContains(
+                    'pipeline',
+                    $name,
+                    $needle.' python warnings contains',
+                    $expectedCandidate['python_contains_warnings'],
+                    data_get($actualCandidate->metadata, 'product_understanding_python.warnings', []),
+                );
+            }
         }
     }
 

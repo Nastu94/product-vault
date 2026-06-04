@@ -772,8 +772,22 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
         }
 
         $amountPattern = $this->amountPattern();
+        $eanPattern = '\d{8}|\d{12}|\d{13}|\d{14}';
 
         $patterns = [];
+
+        if (
+            isset($headerRoles['ean'])
+            && isset($headerRoles['quantity'])
+            && isset($headerRoles['unit_price'])
+            && isset($headerRoles['total_price'])
+        ) {
+            $patterns[] = '/^(?<description>.+?)\s+' .
+                '(?<ean>' . $eanPattern . ')\s+' .
+                '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+                '(?<unit_price>' . $amountPattern . ')\s+' .
+                '(?<total_price>' . $amountPattern . ')\s*$/u';
+        }
 
         if (
             isset($headerRoles['quantity'])
@@ -823,7 +837,7 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
                     : null,
                 discountAmount: null,
                 supportingLines: [],
-                ean: $inlineEan,
+                ean: $inlineEan ?? ($rowMatches['ean'] ?? null),
                 serialNumber: null,
                 sourceItemIds: [],
                 sourceVisualLineIds: [],

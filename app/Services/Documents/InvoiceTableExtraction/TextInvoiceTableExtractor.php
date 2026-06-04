@@ -771,7 +771,7 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
             return null;
         }
 
-        $amountPattern = $this->amountPattern();
+        $amountPattern = $this->headerDrivenAmountPattern();
         $eanPattern = '\d{8}|\d{12}|\d{13}|\d{14}';
         $serialPattern = '[A-Z0-9][A-Z0-9\-\/]{5,}';
 
@@ -1161,5 +1161,31 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
     private function amountPattern(): string
     {
         return '\-?\d{1,3}(?:[.\s]\d{3})*,\d{2}|\-?\d+,\d{2}';
+    }
+
+    /**
+    * Pattern importi per tabelle header-driven.
+    *
+    * Non accetta lo spazio come separatore migliaia perché, dopo la normalizzazione
+    * del testo, lo spazio è anche il separatore tra colonne.
+    *
+    * Esempio ambiguo:
+    * "Gen 11 2 749,50 1.499,00"
+    *
+    * Se accettassimo "2 749,50" come importo, il parser leggerebbe:
+    * quantity = 11
+    * unit_price = 2749.50
+    *
+    * In tabella header-driven preferiamo quindi:
+    * - 1.499,00
+    * - 1499,00
+    * - 749,50
+    *
+    * ma non:
+    * - 1 499,00
+    */
+    private function headerDrivenAmountPattern(): string
+    {
+        return '\-?\d{1,3}(?:\.\d{3})*,\d{2}|\-?\d+,\d{2}';
     }
 }

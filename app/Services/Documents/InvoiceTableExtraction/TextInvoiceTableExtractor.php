@@ -760,6 +760,9 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
         $code = trim((string) ($matches['code'] ?? ''));
         $body = trim((string) ($matches['body'] ?? ''));
 
+        $inlineEan = $this->extractInlineEan($body);
+        $body = $this->removeInlineEan($body);
+
         if ($code === '' || $body === '') {
             return null;
         }
@@ -820,7 +823,7 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
                     : null,
                 discountAmount: null,
                 supportingLines: [],
-                ean: null,
+                ean: $inlineEan,
                 serialNumber: null,
                 sourceItemIds: [],
                 sourceVisualLineIds: [],
@@ -986,6 +989,40 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
         }
 
         return null;
+    }
+
+    /**
+     * Estrae un EAN/GTIN scritto direttamente nella descrizione della riga.
+     *
+     * Esempi:
+     * - EAN 0196388123456
+     * - EAN: 8055555012222
+     * - Barcode 8055555012222
+     */
+    private function extractInlineEan(string $text): ?string
+    {
+        if (preg_match('/\b(?:EAN|GTIN|Barcode|Cod(?:ice)?\.?\s*barre)\s*[:\-]?\s*(?<ean>\d{8}|\d{12}|\d{13}|\d{14})\b/iu', $text, $matches)) {
+            return $matches['ean'];
+        }
+
+        return null;
+    }
+
+    /**
+     * Rimuove dal body della riga un EAN/GTIN inline già estratto.
+     *
+     * Serve per evitare che il numero EAN venga interpretato come quantità
+     * o come parte di un importo.
+     */
+    private function removeInlineEan(string $text): string
+    {
+        $cleaned = preg_replace(
+            '/\b(?:EAN|GTIN|Barcode|Cod(?:ice)?\.?\s*barre)\s*[:\-]?\s*(?:\d{8}|\d{12}|\d{13}|\d{14})\b/iu',
+            '',
+            $text
+        ) ?: $text;
+
+        return trim(preg_replace('/\s+/', ' ', $cleaned) ?: $cleaned);
     }
 
     /**

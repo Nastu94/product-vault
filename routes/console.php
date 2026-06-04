@@ -1418,6 +1418,46 @@ Artisan::command('product-vault:run-understanding-fixtures', function () {
                 continue;
             }
 
+            if (array_key_exists('ean_code', $expectedCandidate)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    $needle.' ean_code',
+                    $expectedCandidate['ean_code'],
+                    $actualCandidate->ean_code,
+                );
+            }
+
+            if (array_key_exists('global_fact_matched', $expectedCandidate)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    $needle.' global_fact matched',
+                    (bool) $expectedCandidate['global_fact_matched'],
+                    (bool) data_get($actualCandidate->metadata, 'product_understanding_global_fact.matched'),
+                );
+            }
+
+            if (array_key_exists('global_fact_canonical_name', $expectedCandidate)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    $needle.' global_fact canonical_name',
+                    $expectedCandidate['global_fact_canonical_name'],
+                    data_get($actualCandidate->metadata, 'product_understanding_global_fact.canonical_name'),
+                );
+            }
+
+            if (! empty($expectedCandidate['global_fact_contains_signals'])) {
+                $assertContains(
+                    'pipeline',
+                    $name,
+                    $needle.' global_fact signals contains',
+                    $expectedCandidate['global_fact_contains_signals'],
+                    data_get($actualCandidate->metadata, 'product_understanding_global_fact.signals', []),
+                );
+            }
+
             if (array_key_exists('feedback_suggested_bias', $expectedCandidate)) {
                 $assertEquals(
                     'pipeline',

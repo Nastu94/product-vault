@@ -508,5 +508,63 @@ return [
                 ],
             ],
         ],
+        [
+            'name' => 'serial_column_invoice_table',
+            'document_type' => 'invoice',
+            'raw_text_lines' => [
+                'FATTURA',
+                'Numero: PV-SYN-PIPE-005    Data: 07/06/2026',
+                'Venditore',
+                'TechHub Italia S.r.l.',
+                '',
+                'Righe documento',
+                'Codice       Descrizione                                      Seriale       Quantita  Prezzo unitario  Totale riga',
+                'LEN-X1-G11   Notebook Lenovo ThinkPad X1 Carbon Gen 11        PF4TEST0091   1         1.499,00         1.499,00',
+                'DOCK-UCDH-4K Docking Station USB-C Dual HDMI 4K               DS4KTEST77    1         119,00           119,00',
+                '',
+                'Imponibile             1.326,23',
+                'IVA 22%                291,77',
+                'Totale documento EUR   1.618,00',
+            ],
+            'expect' => [
+                'line_count' => 2,
+                'candidate_count' => 2,
+                'document_status' => 'needs_review',
+                'lines' => [
+                    [
+                        'description' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+                        'quantity' => '1.000',
+                        'unit_price' => '1499.00',
+                        'total_price' => '1499.00',
+                        'mode' => 'text_invoice_table_header_roles',
+                    ],
+                    [
+                        'description' => 'Docking Station USB-C Dual HDMI 4K',
+                        'quantity' => '1.000',
+                        'unit_price' => '119.00',
+                        'total_price' => '119.00',
+                        'mode' => 'text_invoice_table_header_roles',
+                    ],
+                ],
+                'candidates' => [
+                    [
+                        'name_contains' => 'ThinkPad X1 Carbon Gen 11',
+                        'serial_number' => 'PF4TEST0091',
+                        'python_best_match' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+                        'python_contains_signals' => [
+                            'high_similarity_to_global_canonical_name',
+                        ],
+                    ],
+                    [
+                        'name_contains' => 'Docking Station USB-C Dual HDMI 4K',
+                        'serial_number' => 'DS4KTEST77',
+                        'python_best_match' => 'Docking Station USB-C Dual HDMI 4K',
+                        'python_contains_signals' => [
+                            'high_similarity_to_global_canonical_name',
+                        ],
+                    ],
+                ],
+            ],
+        ],
     ],
 ];

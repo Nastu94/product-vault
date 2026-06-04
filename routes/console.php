@@ -1427,6 +1427,16 @@ Artisan::command('product-vault:run-understanding-fixtures', function () {
                     $actualCandidate->ean_code,
                 );
             }
+            
+            if (array_key_exists('serial_number', $expectedCandidate)) {
+                $assertEquals(
+                    'pipeline',
+                    $name,
+                    $needle.' serial_number',
+                    $expectedCandidate['serial_number'],
+                    $actualCandidate->serial_number,
+                );
+            }
 
             if (array_key_exists('global_fact_matched', $expectedCandidate)) {
                 $assertEquals(

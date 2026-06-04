@@ -2,8 +2,16 @@
 
 use App\Jobs\ProcessDocumentJob;
 use App\Models\Document;
+use App\Models\DocumentLine;
+use App\Models\Plan;
+use App\Models\ProductUnderstandingFeedback;
+use App\Models\ProductUnderstandingGlobalFact;
+use App\Models\Team;
+use App\Models\User;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -490,3 +498,530 @@ Artisan::command('product-vault:regression-documents {--ids= : Lista ID separati
 
     return self::SUCCESS;
 })->purpose('Run Product Vault document parsing regression on local test documents');
+
+/*
+|--------------------------------------------------------------------------
+| Product Understanding knowledge seed
+|--------------------------------------------------------------------------
+|
+| Comando di sviluppo per ricreare una base controllata di conoscenza
+| Product Understanding su database pulito.
+|
+| Non importa file, non usa storage e non crea documenti reali.
+| Serve solo a testare feedback matcher, global facts e Python similarity.
+|
+*/
+Artisan::command('product-vault:seed-understanding-knowledge', function () {
+    DB::transaction(function () {
+        $freePlan = Plan::query()
+            ->where('code', 'free')
+            ->first();
+
+        $user = User::query()->updateOrCreate(
+            ['email' => 'understanding@example.com'],
+            [
+                'name' => 'Product Understanding Test User',
+                'password' => Hash::make('password'),
+            ],
+        );
+
+        $team = Team::query()
+            ->where('user_id', $user->id)
+            ->where('name', 'Product Understanding Test Workspace')
+            ->first();
+
+        if (! $team) {
+            $team = Team::forceCreate([
+                'user_id' => $user->id,
+                'name' => 'Product Understanding Test Workspace',
+                'personal_team' => true,
+                'plan_id' => $freePlan?->id,
+            ]);
+        } else {
+            $team->forceFill([
+                'personal_team' => true,
+                'plan_id' => $freePlan?->id,
+            ])->save();
+        }
+
+        $user->forceFill([
+            'current_team_id' => $team->id,
+        ])->save();
+
+        /*
+        |--------------------------------------------------------------------------
+        | Global facts forti
+        |--------------------------------------------------------------------------
+        |
+        | Solo EAN-based. Questa è conoscenza globale sintetica, privacy-safe e
+        | controllata. Non deriva da documenti reali dell'utente.
+        */
+        $globalFacts = [
+            [
+                'fact_type' => 'ean',
+                'fact_value' => '0196388123456',
+                'canonical_name' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+                'suggested_category' => 'notebook',
+                'suggested_line_type' => 'durable_product',
+                'seen_count' => 2,
+                'confirmed_count' => 2,
+                'ignored_count' => 0,
+                'global_registration_rate' => 100.00,
+                'global_product_confidence_score' => 69,
+                'canonical_name_counts' => [
+                    'Notebook Lenovo ThinkPad X1 Carbon Gen 11' => 2,
+                ],
+                'category_counts' => [
+                    'notebook' => 2,
+                ],
+                'line_type_counts' => [
+                    'durable_product' => 2,
+                ],
+            ],
+            [
+                'fact_type' => 'ean',
+                'fact_value' => '8055555012222',
+                'canonical_name' => 'Docking Station USB-C Dual HDMI 4K',
+                'suggested_category' => 'docking_station',
+                'suggested_line_type' => 'accessory',
+                'seen_count' => 2,
+                'confirmed_count' => 1,
+                'ignored_count' => 1,
+                'global_registration_rate' => 50.00,
+                'global_product_confidence_score' => 62,
+                'canonical_name_counts' => [
+                    'Docking Station USB-C Dual HDMI 4K' => 2,
+                ],
+                'category_counts' => [
+                    'docking_station' => 2,
+                ],
+                'line_type_counts' => [
+                    'accessory' => 2,
+                ],
+            ],
+        ];
+
+        foreach ($globalFacts as $fact) {
+            ProductUnderstandingGlobalFact::query()->updateOrCreate(
+                [
+                    'fact_type' => $fact['fact_type'],
+                    'fact_key' => hash('sha256', $fact['fact_value']),
+                ],
+                $fact + [
+                    'metadata' => [
+                        'seeded_by' => 'product-vault:seed-understanding-knowledge',
+                        'purpose' => 'development_scenario_knowledge',
+                    ],
+                    'first_seen_at' => now(),
+                    'last_seen_at' => now(),
+                ],
+            );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Feedback workspace controllato
+        |--------------------------------------------------------------------------
+        |
+        | Simula revisioni utente già avvenute nello stesso workspace.
+        | Non è conoscenza globale: è team-scoped.
+        */
+        $feedbackRows = [
+            [
+                'review_status' => 'confirmed',
+                'candidate_name' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+                'final_product_name' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+                'line_description' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+                'normalized_line_description' => 'notebook lenovo thinkpad x1 carbon gen 11',
+                'analyzer_line_type' => 'durable_product',
+                'analyzer_suggested_category' => 'notebook',
+                'registerable_score' => 84,
+                'non_product_score' => 0,
+            ],
+            [
+                'review_status' => 'confirmed',
+                'candidate_name' => 'Docking Station USB-C Dual HDMI 4K',
+                'final_product_name' => 'Docking Station USB-C Dual HDMI 4K',
+                'line_description' => 'Docking Station USB-C Duat HOMI 4K',
+                'normalized_line_description' => 'docking station usb c duat homi 4k',
+                'analyzer_line_type' => 'accessory',
+                'analyzer_suggested_category' => 'docking_station',
+                'registerable_score' => 68,
+                'non_product_score' => 0,
+            ],
+            [
+                'review_status' => 'confirmed',
+                'candidate_name' => 'Sony WH-1000XM5 cuffie wireless nero',
+                'final_product_name' => 'Sony WH-1000XM5 cuffie wireless nero',
+                'line_description' => 'Sony WH-1000XM5 cuffie wireless nero',
+                'normalized_line_description' => 'sony wh 1000xm5 cuffie wireless nero',
+                'analyzer_line_type' => 'durable_product',
+                'analyzer_suggested_category' => 'audio_device',
+                'registerable_score' => 84,
+                'non_product_score' => 0,
+            ],
+            [
+                'review_status' => 'confirmed',
+                'candidate_name' => 'Sony WH1000XM5 wireless nero',
+                'final_product_name' => 'Sony WH1000XM5 wireless nero',
+                'line_description' => 'Sony WH1000XM5 wireless nero',
+                'normalized_line_description' => 'sony wh1000xm5 wireless nero',
+                'analyzer_line_type' => 'unknown',
+                'analyzer_suggested_category' => null,
+                'registerable_score' => 54,
+                'non_product_score' => 0,
+            ],
+            [
+                'review_status' => 'ignored',
+                'ignored_reason' => 'not_worth_registering',
+                'candidate_name' => 'ADATTATORE HDMI 4K USB-C',
+                'final_product_name' => null,
+                'line_description' => 'ADATTATORE HDMI 4K USB-C',
+                'normalized_line_description' => 'adattatore hdmi 4k usb c',
+                'analyzer_line_type' => 'accessory',
+                'analyzer_suggested_category' => 'cable',
+                'registerable_score' => 42,
+                'non_product_score' => 0,
+            ],
+        ];
+
+        ProductUnderstandingFeedback::query()
+            ->where('team_id', $team->id)
+            ->where('metadata->seeded_by', 'product-vault:seed-understanding-knowledge')
+            ->delete();
+
+        foreach ($feedbackRows as $row) {
+            ProductUnderstandingFeedback::query()->create($row + [
+                'team_id' => $team->id,
+                'reviewed_by_user_id' => $user->id,
+                'candidate_price' => null,
+                'candidate_ean_code' => null,
+                'raw_text_hash' => hash('sha256', $row['normalized_line_description']),
+                'analyzer_version' => 'seeded_product_understanding_fixture_v1',
+                'signals' => [],
+                'negative_signals' => [],
+                'warnings' => [],
+                'score_breakdown' => [],
+                'metadata' => [
+                    'seeded_by' => 'product-vault:seed-understanding-knowledge',
+                    'purpose' => 'development_scenario_knowledge',
+                ],
+                'reviewed_at' => now(),
+            ]);
+        }
+
+        $this->info('Product Understanding knowledge seeded.');
+        $this->table(
+            ['Metric', 'Value'],
+            [
+                ['user_id', $user->id],
+                ['team_id', $team->id],
+                ['global_facts', ProductUnderstandingGlobalFact::count()],
+                ['workspace_feedback', ProductUnderstandingFeedback::query()->where('team_id', $team->id)->count()],
+            ],
+        );
+    });
+})->purpose('Seed controlled Product Understanding knowledge for development scenarios');
+
+/*
+|--------------------------------------------------------------------------
+| Product Understanding scenario runner
+|--------------------------------------------------------------------------
+|
+| Comando di sviluppo per verificare automaticamente gli scenari principali
+| di Product Understanding senza caricare PDF e senza usare storage.
+|
+| Richiede prima:
+| php artisan product-vault:seed-understanding-knowledge
+|
+*/
+Artisan::command('product-vault:run-understanding-scenarios', function () {
+    $user = User::query()
+        ->where('email', 'understanding@example.com')
+        ->first();
+
+    if (! $user || ! $user->current_team_id) {
+        $this->error('Knowledge seed mancante. Esegui prima: php artisan product-vault:seed-understanding-knowledge');
+
+        return 1;
+    }
+
+    $team = Team::query()->find($user->current_team_id);
+
+    if (! $team) {
+        $this->error('Team/workspace seed non trovato. Esegui prima: php artisan product-vault:seed-understanding-knowledge');
+
+        return 1;
+    }
+
+    if (ProductUnderstandingGlobalFact::count() < 2 || ProductUnderstandingFeedback::query()->where('team_id', $team->id)->count() < 5) {
+        $this->error('Knowledge incompleta. Esegui prima: php artisan product-vault:seed-understanding-knowledge');
+
+        return 1;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cleanup scenari sintetici precedenti
+    |--------------------------------------------------------------------------
+    */
+    DocumentLine::query()
+        ->whereHas('document', fn ($query) => $query->where('original_filename', 'synthetic-understanding-scenario.txt'))
+        ->delete();
+
+    Document::withTrashed()
+        ->where('original_filename', 'synthetic-understanding-scenario.txt')
+        ->forceDelete();
+
+    $document = Document::query()->create([
+        'team_id' => $team->id,
+        'uploaded_by_user_id' => $user->id,
+        'status' => 'parsed',
+        'text_extraction_status' => 'completed',
+        'original_filename' => 'synthetic-understanding-scenario.txt',
+        'mime_type' => 'text/plain',
+        'file_size' => 0,
+        'raw_text' => 'Synthetic Product Understanding scenario document.',
+    ]);
+
+    $line = DocumentLine::query()->create([
+        'document_id' => $document->id,
+        'line_number' => 1,
+        'raw_text' => 'Synthetic Product Understanding test line.',
+        'description' => 'Synthetic Product Understanding test line.',
+        'quantity' => 1,
+        'unit_price' => 0,
+        'total_price' => 0,
+        'confidence_score' => 100,
+        'metadata' => [
+            'synthetic' => true,
+            'seeded_for' => 'product_understanding_scenarios',
+        ],
+    ]);
+
+    $feedbackMatcher = app(App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackMatcher::class);
+    $pythonAnalyzer = app(App\Services\Documents\ProductUnderstanding\ProductTextSimilarityAnalyzer::class);
+
+    $failures = [];
+    $rows = [];
+
+    $pass = function (string $scenario, string $assertion) use (&$rows): void {
+        $rows[] = [$scenario, $assertion, 'OK'];
+    };
+
+    $fail = function (string $scenario, string $assertion, mixed $expected, mixed $actual) use (&$rows, &$failures): void {
+        $rows[] = [$scenario, $assertion, 'FAIL'];
+
+        $failures[] = [
+            'scenario' => $scenario,
+            'assertion' => $assertion,
+            'expected' => $expected,
+            'actual' => $actual,
+        ];
+    };
+
+    $assertEquals = function (string $scenario, string $assertion, mixed $expected, mixed $actual) use ($pass, $fail): void {
+        $expected === $actual
+            ? $pass($scenario, $assertion)
+            : $fail($scenario, $assertion, $expected, $actual);
+    };
+
+    $assertContains = function (string $scenario, string $assertion, string $expected, array $actual) use ($pass, $fail): void {
+        in_array($expected, $actual, true)
+            ? $pass($scenario, $assertion)
+            : $fail($scenario, $assertion, $expected, $actual);
+    };
+
+    $assertNotContains = function (string $scenario, string $assertion, string $notExpected, array $actual) use ($pass, $fail): void {
+        ! in_array($notExpected, $actual, true)
+            ? $pass($scenario, $assertion)
+            : $fail($scenario, $assertion, 'not '.$notExpected, $actual);
+    };
+
+    $assertTrue = function (string $scenario, string $assertion, bool $actual) use ($pass, $fail): void {
+        $actual
+            ? $pass($scenario, $assertion)
+            : $fail($scenario, $assertion, true, $actual);
+    };
+
+    $sonySameModel = $feedbackMatcher->match(
+        line: $line,
+        candidateName: 'Sony WH 1000 XM5 cuffie wireless nero',
+        eanCode: null,
+    );
+
+    $sonyDifferentModel = $feedbackMatcher->match(
+        line: $line,
+        candidateName: 'Sony WH-1000XM4 cuffie wireless nero',
+        eanCode: null,
+    );
+
+    $thinkPadDifferentGeneration = $feedbackMatcher->match(
+        line: $line,
+        candidateName: 'Notebook Lenovo ThinkPad X1 Carbon Gen 10',
+        eanCode: null,
+    );
+
+    $pythonThinkPadDifferentGeneration = $pythonAnalyzer->analyze(
+        candidateName: 'Notebook Lenovo ThinkPad X1 Carbon Gen 10',
+        eanCode: null,
+        globalFactContext: [],
+        suggestedCategory: 'notebook',
+        suggestedLineType: 'durable_product',
+    );
+
+    $pythonDockingSpecDifference = $pythonAnalyzer->analyze(
+        candidateName: 'Docking Station USB-C HDMI 2 porte',
+        eanCode: null,
+        globalFactContext: [],
+        suggestedCategory: 'docking_station',
+        suggestedLineType: 'accessory',
+    );
+
+    $pythonDockingOcrVariant = $pythonAnalyzer->analyze(
+        candidateName: 'Dock Station USB C Dual HDMl 4K',
+        eanCode: null,
+        globalFactContext: [],
+        suggestedCategory: 'docking_station',
+        suggestedLineType: 'accessory',
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Assertions feedback matcher
+    |--------------------------------------------------------------------------
+    */
+    $assertEquals(
+        'feedback_sony_same_model_split',
+        'suggested_bias',
+        'positive',
+        data_get($sonySameModel, 'suggested_bias'),
+    );
+
+    $assertEquals(
+        'feedback_sony_same_model_split',
+        'review_hint',
+        'similar_description_previously_confirmed',
+        data_get($sonySameModel, 'review_hint'),
+    );
+
+    $assertTrue(
+        'feedback_sony_same_model_split',
+        'best_similarity >= 0.75',
+        (float) data_get($sonySameModel, 'similar_description.best_similarity', 0) >= 0.75,
+    );
+
+    $assertEquals(
+        'feedback_sony_different_model',
+        'suggested_bias',
+        'neutral',
+        data_get($sonyDifferentModel, 'suggested_bias'),
+    );
+
+    $assertTrue(
+        'feedback_sony_different_model',
+        'best_similarity < 0.75',
+        (float) data_get($sonyDifferentModel, 'similar_description.best_similarity', 0) < 0.75,
+    );
+
+    $assertEquals(
+        'feedback_sony_different_model',
+        'model_conflict',
+        true,
+        (bool) data_get($sonyDifferentModel, 'similar_description.matches.0.model_conflict'),
+    );
+
+    $assertEquals(
+        'feedback_thinkpad_different_generation',
+        'suggested_bias',
+        'neutral',
+        data_get($thinkPadDifferentGeneration, 'suggested_bias'),
+    );
+
+    $assertEquals(
+        'feedback_thinkpad_different_generation',
+        'model_conflict',
+        true,
+        (bool) data_get($thinkPadDifferentGeneration, 'similar_description.matches.0.model_conflict'),
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Assertions Python similarity
+    |--------------------------------------------------------------------------
+    */
+    $assertContains(
+        'python_thinkpad_different_generation',
+        'signals contains candidate_name_similar_but_different_model',
+        'candidate_name_similar_but_different_model',
+        data_get($pythonThinkPadDifferentGeneration, 'signals', []),
+    );
+
+    $assertContains(
+        'python_thinkpad_different_generation',
+        'warnings contains high_similarity_but_model_conflict',
+        'high_similarity_but_model_conflict',
+        data_get($pythonThinkPadDifferentGeneration, 'warnings', []),
+    );
+
+    $assertNotContains(
+        'python_thinkpad_different_generation',
+        'signals does not contain candidate_name_probably_ocr_variant',
+        'candidate_name_probably_ocr_variant',
+        data_get($pythonThinkPadDifferentGeneration, 'signals', []),
+    );
+
+    $assertContains(
+        'python_docking_spec_difference',
+        'signals contains candidate_name_similar_but_spec_difference',
+        'candidate_name_similar_but_spec_difference',
+        data_get($pythonDockingSpecDifference, 'signals', []),
+    );
+
+    $assertContains(
+        'python_docking_spec_difference',
+        'warnings contains high_similarity_but_spec_difference',
+        'high_similarity_but_spec_difference',
+        data_get($pythonDockingSpecDifference, 'warnings', []),
+    );
+
+    $assertNotContains(
+        'python_docking_spec_difference',
+        'signals does not contain candidate_name_probably_ocr_variant',
+        'candidate_name_probably_ocr_variant',
+        data_get($pythonDockingSpecDifference, 'signals', []),
+    );
+
+    $assertContains(
+        'python_docking_ocr_variant',
+        'signals contains candidate_name_probably_ocr_variant',
+        'candidate_name_probably_ocr_variant',
+        data_get($pythonDockingOcrVariant, 'signals', []),
+    );
+
+    $assertEquals(
+        'python_docking_ocr_variant',
+        'warnings empty',
+        [],
+        data_get($pythonDockingOcrVariant, 'warnings', []),
+    );
+
+    $this->table(['Scenario', 'Assertion', 'Status'], $rows);
+
+    if ($failures !== []) {
+        $this->error('Product Understanding scenarios failed.');
+
+        foreach ($failures as $failure) {
+            $this->line('');
+            $this->warn($failure['scenario'].' / '.$failure['assertion']);
+            $this->line('Expected: '.json_encode($failure['expected'], JSON_UNESCAPED_UNICODE));
+            $this->line('Actual:   '.json_encode($failure['actual'], JSON_UNESCAPED_UNICODE));
+        }
+
+        return 1;
+    }
+
+    $this->info('Product Understanding scenarios passed.');
+
+    return 0;
+})->purpose('Run controlled Product Understanding scenarios without uploading files');

@@ -7,6 +7,7 @@ use App\Models\IdentificationStatus;
 use App\Models\Product;
 use App\Models\ProductIdentificationCandidate;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
+use App\Services\Warranties\DefaultWarrantyCreator;
 use Illuminate\Support\Facades\DB;
 
 class ProductFromCandidateCreator
@@ -19,6 +20,7 @@ class ProductFromCandidateCreator
      */
     public function __construct(
         private readonly ProductUnderstandingFeedbackRecorder $feedbackRecorder,
+        private readonly DefaultWarrantyCreator $defaultWarrantyCreator,
     ) {
     }
 
@@ -114,6 +116,8 @@ class ProductFromCandidateCreator
                 product: $product,
                 userId: $userId,
             );
+
+            $this->defaultWarrantyCreator->createForProduct($product);
 
             $this->updateDocumentStatusAfterCandidateConfirmation($document);
 

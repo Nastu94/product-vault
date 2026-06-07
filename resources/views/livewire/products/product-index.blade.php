@@ -30,6 +30,9 @@
                                     Acquisto
                                 </th>
                                 <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                                    Garanzia
+                                </th>
+                                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                                     Affidabilità
                                 </th>
                                 <th class="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
@@ -76,6 +79,47 @@
                                                 Prezzo non disponibile
                                             @endif
                                         </div>
+                                    </td>
+
+                                    <td class="px-6 py-4 text-sm text-gray-700">
+                                        @php
+                                            $warranty = $this->primaryWarranty($product);
+                                            $remainingDays = $this->warrantyRemainingDays($warranty);
+                                        @endphp
+
+                                        <div>
+                                            <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->warrantyStatusBadgeClasses($warranty) }}">
+                                                {{ $this->warrantyStatusLabel($warranty) }}
+                                            </span>
+                                        </div>
+
+                                        @if ($warranty)
+                                            <div class="mt-2 text-xs text-gray-500">
+                                                @if ($warranty->ends_at)
+                                                    Scade il {{ $warranty->ends_at->format('d/m/Y') }}
+                                                @else
+                                                    Scadenza non disponibile
+                                                @endif
+                                            </div>
+
+                                            <div class="mt-1 text-xs text-gray-500">
+                                                Fonte: {{ $this->warrantySourceLabel($warranty) }}
+                                            </div>
+
+                                            @if ($remainingDays !== null)
+                                                <div class="mt-1 text-xs text-gray-500">
+                                                    @if ($remainingDays < 0)
+                                                        Scaduta da {{ abs($remainingDays) }} giorni
+                                                    @else
+                                                        {{ $remainingDays }} giorni residui
+                                                    @endif
+                                                </div>
+                                            @endif
+                                        @else
+                                            <div class="mt-2 text-xs text-gray-500">
+                                                Nessuna garanzia
+                                            </div>
+                                        @endif
                                     </td>
 
                                     <td class="px-6 py-4 text-sm text-gray-700">

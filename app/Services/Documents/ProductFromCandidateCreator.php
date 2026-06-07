@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\ProductIdentificationCandidate;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use App\Services\Warranties\DefaultWarrantyCreator;
+use App\Services\Products\ProductLifecycleEventRecorder;
 use Illuminate\Support\Facades\DB;
 
 class ProductFromCandidateCreator
@@ -21,6 +22,7 @@ class ProductFromCandidateCreator
     public function __construct(
         private readonly ProductUnderstandingFeedbackRecorder $feedbackRecorder,
         private readonly DefaultWarrantyCreator $defaultWarrantyCreator,
+        private readonly ProductLifecycleEventRecorder $eventRecorder,
     ) {
     }
 
@@ -111,13 +113,33 @@ class ProductFromCandidateCreator
 
             $candidate->refresh();
 
+            $this->eventRecorder->recordProductCreatedFromCandidate(
+                product: $product,
+                userId: $userId,
+                documentId: $document->id,
+                metadata: [
+                    'candidate_id' => $candidate->id,
+                    'document_line_id' => $candidate->document_line_id,
+                    'candidate_name' => $candidate->name,
+                    'candidate_ean_code' => $candidate->ean_code,
+                    'candidate_serial_number' => $candidate->serial_number,
+                ],
+            );
+
             $this->feedbackRecorder->recordConfirmedCandidate(
                 candidate: $candidate,
                 product: $product,
                 userId: $userId,
             );
 
-            $this->defaultWarrantyCreator->createForProduct($product);
+            $warranty = $this->defaultWarrantyCreator->createForProduct($product);
+
+            if ($warranty && $warranty->wasRecentlyCreated) {
+                $this->eventRecorder->recordAutomaticWarrantyCreated(
+                    warranty: $warranty,
+                    userId: $userId,
+                );
+            }
 
             $this->updateDocumentStatusAfterCandidateConfirmation($document);
 

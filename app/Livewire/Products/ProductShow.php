@@ -5,6 +5,7 @@ namespace App\Livewire\Products;
 use App\Models\Product;
 use App\Models\Warranty;
 use App\Models\WarrantyType;
+use App\Services\Products\ProductLifecycleEventRecorder;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Livewire\Component;
@@ -57,6 +58,9 @@ class ProductShow extends Component
             'documents.merchant',
             'warranties.warrantyType',
             'warranties.sourceDocument.documentType',
+            'events.productEventType',
+            'events.document',
+            'events.createdBy',
         ]);
     }
 
@@ -249,7 +253,7 @@ class ProductShow extends Component
                 ->orderByPivot('created_at')
                 ->first();
 
-            Warranty::query()->create([
+            $createdWarranty = Warranty::query()->create([
                 'product_id' => $this->product->id,
                 'warranty_type_id' => $warrantyType->id,
                 'source_document_id' => $sourceDocument?->id,
@@ -268,6 +272,11 @@ class ProductShow extends Component
                     'created_by_user_id' => auth()->id(),
                 ],
             ]);
+
+            app(ProductLifecycleEventRecorder::class)->recordManualWarrantyCreated(
+                warranty: $createdWarranty,
+                userId: auth()->id(),
+            );
 
             $this->refreshProduct();
 
@@ -321,6 +330,14 @@ class ProductShow extends Component
             'metadata' => $metadata,
         ]);
 
+        $warranty->refresh();
+
+        app(ProductLifecycleEventRecorder::class)->recordManualWarrantyUpdated(
+            warranty: $warranty,
+            previousValues: $previousValues,
+            userId: auth()->id(),
+        );
+
         $this->refreshProduct();
 
         $this->cancelWarrantyEdit();
@@ -372,6 +389,9 @@ class ProductShow extends Component
             'documents.merchant',
             'warranties.warrantyType',
             'warranties.sourceDocument.documentType',
+            'events.productEventType',
+            'events.document',
+            'events.createdBy',
         ]);
     }
 

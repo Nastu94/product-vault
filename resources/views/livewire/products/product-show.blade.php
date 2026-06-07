@@ -519,6 +519,101 @@
                         @endif
                     </div>
                 </section>
+
+                <section class="bg-white shadow-sm ring-1 ring-gray-200 sm:rounded-lg">
+                    <div class="p-6">
+                        <h2 class="text-lg font-medium text-gray-900">
+                            Storico
+                        </h2>
+
+                        <p class="mt-1 text-sm text-gray-600">
+                            Eventi principali del ciclo di vita del prodotto.
+                        </p>
+
+                        @if ($product->events->isNotEmpty())
+                            <div class="mt-6 flow-root">
+                                <ul role="list" class="-mb-8">
+                                    @foreach ($product->events->sortByDesc('created_at') as $event)
+                                        <li>
+                                            <div class="relative pb-8">
+                                                @if (! $loop->last)
+                                                    <span class="absolute left-4 top-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true"></span>
+                                                @endif
+
+                                                <div class="relative flex space-x-3">
+                                                    <div>
+                                                        <span class="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 ring-8 ring-white">
+                                                            <span class="text-xs font-semibold text-gray-700">
+                                                                {{ strtoupper(substr($event->productEventType?->code ?? 'E', 0, 1)) }}
+                                                            </span>
+                                                        </span>
+                                                    </div>
+
+                                                    <div class="flex min-w-0 flex-1 justify-between space-x-4 pt-1.5">
+                                                        <div>
+                                                            <p class="text-sm font-medium text-gray-900">
+                                                                {{ $event->title }}
+                                                            </p>
+
+                                                            @if ($event->description)
+                                                                <p class="mt-1 text-sm text-gray-600">
+                                                                    {{ $event->description }}
+                                                                </p>
+                                                            @endif
+
+                                                            <div class="mt-2 flex flex-wrap gap-2 text-xs text-gray-500">
+                                                                @if ($event->productEventType)
+                                                                    <span>{{ $event->productEventType->name }}</span>
+                                                                @endif
+
+                                                                @if ($event->source)
+                                                                    <span>Fonte: {{ $event->source }}</span>
+                                                                @endif
+
+                                                                @if ($event->confidence_score !== null)
+                                                                    <span>Affidabilità {{ $event->confidence_score }}/100</span>
+                                                                @endif
+                                                            </div>
+
+                                                            @if ($event->document)
+                                                                <div class="mt-2">
+                                                                    <a
+                                                                        href="{{ route('documents.show', $event->document) }}"
+                                                                        class="text-xs font-medium text-indigo-600 hover:text-indigo-900"
+                                                                    >
+                                                                        Documento: {{ $event->document->original_filename }}
+                                                                    </a>
+                                                                </div>
+                                                            @endif
+                                                        </div>
+
+                                                        <div class="whitespace-nowrap text-right text-xs text-gray-500">
+                                                            <div>
+                                                                {{ $event->event_date?->format('d/m/Y') ?? $event->created_at?->format('d/m/Y') }}
+                                                            </div>
+
+                                                            @if ($event->createdBy)
+                                                                <div class="mt-1">
+                                                                    {{ $event->createdBy->name }}
+                                                                </div>
+                                                            @endif
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </li>
+                                    @endforeach
+                                </ul>
+                            </div>
+                        @else
+                            <div class="mt-6 rounded-md bg-gray-50 p-4">
+                                <p class="text-sm text-gray-700">
+                                    Nessun evento registrato per questo prodotto.
+                                </p>
+                            </div>
+                        @endif
+                    </div>
+                </section>
             </div>
 
             <aside class="space-y-6">

@@ -39,7 +39,7 @@
 
                         <div class="flex shrink-0 flex-col gap-3 sm:flex-row lg:flex-col">
                             <a
-                                href="{{ url('/reviews') }}"
+                                href="{{ route('reviews.index') }}"
                                 class="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-800 transition hover:bg-slate-100"
                             >
                                 Revisioni
@@ -127,7 +127,7 @@
                 <x-dashboard.section-panel
                     title="Revisioni aperte"
                     description="Documenti e prodotti con dati incerti."
-                    :href="url('/reviews')"
+                    :href="route('reviews.index')"
                     link-label="Apri"
                     empty-title="Nessuna revisione"
                     empty-message="Le attività da completare compariranno qui."
@@ -148,7 +148,7 @@
                                         </div>
 
                                         <a
-                                            href="{{ url('/reviews/' . $document->id) }}"
+                                            href="{{ route('documents.show', $document) }}"
                                             class="shrink-0 text-xs font-semibold text-amber-700 hover:text-amber-900"
                                         >
                                             Apri

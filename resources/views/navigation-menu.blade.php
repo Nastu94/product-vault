@@ -39,7 +39,7 @@
                         Garanzie
                     </x-nav-link>
 
-                    <x-nav-link href="{{ url('/reviews') }}" :active="request()->is('reviews')">
+                    <x-nav-link href="{{ route('reviews.index') }}" :active="request()->routeIs('reviews.*')">
                         Revisioni
                     </x-nav-link>
                 </div>
@@ -219,7 +219,7 @@
                 Garanzie
             </x-responsive-nav-link>
 
-            <x-responsive-nav-link href="{{ url('/reviews') }}" :active="request()->is('reviews')">
+            <x-responsive-nav-link href="{{ route('reviews.index') }}" :active="request()->routeIs('reviews.*')">
                 Revisioni
             </x-responsive-nav-link>
         </div>

@@ -9,6 +9,7 @@ use App\Livewire\Documents\DocumentUpload;
 use App\Livewire\Documents\DocumentShow;
 use App\Livewire\Products\ProductIndex;
 use App\Livewire\Products\ProductShow;
+use App\Livewire\Reviews\ReviewIndex;
 use App\Livewire\Warranties\WarrantyIndex;
 
 Route::get('/', function () {
@@ -58,4 +59,10 @@ Route::middleware([
      */
     Route::get('/warranties', WarrantyIndex::class)
         ->name('warranties.index');
+
+    /**
+     * Rotte per la gestione delle revisioni.
+     */
+    Route::get('/reviews', ReviewIndex::class)
+        ->name('reviews.index');
 });

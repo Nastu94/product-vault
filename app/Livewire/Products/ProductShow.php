@@ -3,6 +3,8 @@
 namespace App\Livewire\Products;
 
 use App\Models\Product;
+use App\Models\Warranty;
+use App\Models\WarrantyType;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Livewire\Component;
@@ -20,6 +22,11 @@ class ProductShow extends Component
      * Stato form modifica garanzia.
      */
     public bool $isEditingWarranty = false;
+
+    /**
+     * Stato form creazione garanzia manuale.
+     */
+    public bool $isCreatingWarranty = false;
 
     /**
      * Campi editabili della garanzia principale.
@@ -183,6 +190,7 @@ class ProductShow extends Component
         $this->resetValidation();
 
         $this->isEditingWarranty = false;
+        $this->isCreatingWarranty = false;
         $this->warrantyStartsAt = null;
         $this->warrantyEndsAt = null;
         $this->warrantyDurationMonths = null;
@@ -190,19 +198,13 @@ class ProductShow extends Component
     }
 
     /**
-     * Salva una modifica manuale della garanzia principale.
+     * Salva una garanzia:
+     * - se isCreatingWarranty = true, crea una nuova garanzia manuale;
+     * - altrimenti modifica la garanzia principale esistente.
      */
     public function saveWarranty(): void
     {
         $this->authorize('update', $this->product);
-
-        $warranty = $this->primaryWarranty;
-
-        if (! $warranty) {
-            $this->addError('warranty', 'Nessuna garanzia da modificare.');
-
-            return;
-        }
 
         $this->validate([
             'warrantyStartsAt' => ['nullable', 'date'],
@@ -215,6 +217,79 @@ class ProductShow extends Component
             'warrantyDurationMonths.min' => 'La durata deve essere almeno di 1 mese.',
             'warrantyDurationMonths.max' => 'La durata non può superare 600 mesi.',
         ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Creazione manuale garanzia
+        |--------------------------------------------------------------------------
+        |
+        | Questo ramo deve stare prima della modifica, perché quando stiamo creando
+        | una garanzia il prodotto non ha ancora una primaryWarranty.
+        |
+        */
+        if ($this->isCreatingWarranty) {
+            if ($this->primaryWarranty) {
+                $this->addError('warranty', 'Questo prodotto ha già una garanzia principale.');
+
+                return;
+            }
+
+            $warrantyType = WarrantyType::query()
+                ->where('code', 'legal')
+                ->where('is_active', true)
+                ->first();
+
+            if (! $warrantyType) {
+                $this->addError('warranty', 'Tipo garanzia legale non disponibile.');
+
+                return;
+            }
+
+            $sourceDocument = $this->product->documents()
+                ->orderByPivot('created_at')
+                ->first();
+
+            Warranty::query()->create([
+                'product_id' => $this->product->id,
+                'warranty_type_id' => $warrantyType->id,
+                'source_document_id' => $sourceDocument?->id,
+                'starts_at' => $this->warrantyStartsAt ?: null,
+                'ends_at' => $this->warrantyEndsAt ?: null,
+                'duration_months' => filled($this->warrantyDurationMonths)
+                    ? (int) $this->warrantyDurationMonths
+                    : null,
+                'source' => 'manual',
+                'confidence_score' => 90,
+                'notes' => $this->warrantyNotes ?: null,
+                'metadata' => [
+                    'creator' => 'manual_warranty_creation_v1',
+                    'created_from' => 'product_show',
+                    'created_at' => now()->toISOString(),
+                    'created_by_user_id' => auth()->id(),
+                ],
+            ]);
+
+            $this->refreshProduct();
+
+            $this->cancelWarrantyEdit();
+
+            session()->flash('status', 'Garanzia creata manualmente.');
+
+            return;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Modifica manuale garanzia esistente
+        |--------------------------------------------------------------------------
+        */
+        $warranty = $this->primaryWarranty;
+
+        if (! $warranty) {
+            $this->addError('warranty', 'Nessuna garanzia da modificare.');
+
+            return;
+        }
 
         $previousValues = [
             'starts_at' => $warranty->starts_at?->format('Y-m-d'),
@@ -246,6 +321,46 @@ class ProductShow extends Component
             'metadata' => $metadata,
         ]);
 
+        $this->refreshProduct();
+
+        $this->cancelWarrantyEdit();
+
+        session()->flash('status', 'Garanzia aggiornata manualmente.');
+    }
+
+    /**
+     * Avvia la creazione manuale di una garanzia.
+     */
+    public function createWarranty(): void
+    {
+        $this->authorize('update', $this->product);
+
+        if ($this->primaryWarranty) {
+            $this->addError('warranty', 'Questo prodotto ha già una garanzia principale.');
+
+            return;
+        }
+
+        $this->resetValidation();
+
+        $this->warrantyStartsAt = $this->product->purchase_date?->format('Y-m-d');
+        $this->warrantyDurationMonths = '24';
+
+        $this->warrantyEndsAt = $this->product->purchase_date
+            ? $this->product->purchase_date->copy()->addMonthsNoOverflow(24)->format('Y-m-d')
+            : null;
+
+        $this->warrantyNotes = null;
+
+        $this->isCreatingWarranty = true;
+        $this->isEditingWarranty = false;
+    }
+
+    /**
+     * Ricarica il prodotto con tutte le relazioni usate nella pagina dettaglio.
+     */
+    private function refreshProduct(): void
+    {
         $this->product = $this->product->fresh([
             'merchant',
             'currency',
@@ -258,10 +373,6 @@ class ProductShow extends Component
             'warranties.warrantyType',
             'warranties.sourceDocument.documentType',
         ]);
-
-        $this->cancelWarrantyEdit();
-
-        session()->flash('status', 'Garanzia aggiornata manualmente.');
     }
 
     /**

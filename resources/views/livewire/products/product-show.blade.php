@@ -143,6 +143,147 @@
                         </dl>
                     </div>
                 </section>
+
+                <section class="bg-white shadow-sm ring-1 ring-gray-200 sm:rounded-lg">
+                    <div class="p-6">
+                        <div class="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                                <h2 class="text-lg font-medium text-gray-900">
+                                    Garanzia
+                                </h2>
+
+                                <p class="mt-1 text-sm text-gray-600">
+                                    Garanzia stimata in base alla data di acquisto e alle regole configurate.
+                                </p>
+                            </div>
+
+                            <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->warrantyStatusBadgeClasses }}">
+                                {{ $this->warrantyStatusLabel }}
+                            </span>
+                        </div>
+
+                        @if ($this->primaryWarranty)
+                            <dl class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Tipo
+                                    </dt>
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        {{ $this->primaryWarranty->warrantyType?->name ?? '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Durata
+                                    </dt>
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        @if ($this->primaryWarranty->duration_months)
+                                            {{ $this->primaryWarranty->duration_months }} mesi
+                                        @else
+                                            —
+                                        @endif
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Inizio
+                                    </dt>
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        {{ $this->primaryWarranty->starts_at?->format('d/m/Y') ?? '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Scadenza
+                                    </dt>
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        {{ $this->primaryWarranty->ends_at?->format('d/m/Y') ?? '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Giorni residui
+                                    </dt>
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        @if ($this->warrantyRemainingDays === null)
+                                            —
+                                        @elseif ($this->warrantyRemainingDays < 0)
+                                            Scaduta da {{ abs($this->warrantyRemainingDays) }} giorni
+                                        @else
+                                            {{ $this->warrantyRemainingDays }} giorni
+                                        @endif
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Fonte
+                                    </dt>
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        {{ $this->primaryWarranty->source === 'calculated' ? 'Calcolata automaticamente' : $this->primaryWarranty->source }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Affidabilità
+                                    </dt>
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        @if ($this->primaryWarranty->confidence_score !== null)
+                                            {{ $this->primaryWarranty->confidence_score }}/100
+                                        @else
+                                            —
+                                        @endif
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Documento sorgente
+                                    </dt>
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        @if ($this->primaryWarranty->sourceDocument)
+                                            <a
+                                                href="{{ route('documents.show', $this->primaryWarranty->sourceDocument) }}"
+                                                class="text-indigo-600 hover:text-indigo-900"
+                                            >
+                                                {{ $this->primaryWarranty->sourceDocument->original_filename }}
+                                            </a>
+                                        @else
+                                            —
+                                        @endif
+                                    </dd>
+                                </div>
+                            </dl>
+
+                            @if ($this->primaryWarranty->metadata['source_note'] ?? null)
+                                <div class="mt-6 rounded-md bg-gray-50 p-4">
+                                    <div class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Nota regola
+                                    </div>
+
+                                    <p class="mt-1 text-sm text-gray-700">
+                                        {{ $this->primaryWarranty->metadata['source_note'] }}
+                                    </p>
+                                </div>
+                            @endif
+                        @else
+                            <div class="mt-6 rounded-md bg-gray-50 p-4">
+                                <p class="text-sm text-gray-700">
+                                    Nessuna garanzia calcolata per questo prodotto.
+                                </p>
+
+                                <p class="mt-1 text-xs text-gray-500">
+                                    Di solito serve almeno una data di acquisto valida.
+                                </p>
+                            </div>
+                        @endif
+                    </div>
+                </section>
             </div>
 
             <aside class="space-y-6">

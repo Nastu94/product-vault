@@ -136,9 +136,9 @@
                         <div class="space-y-3">
                             @foreach ($openReviewDocuments as $document)
                                 <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                                    <div class="flex items-start justify-between gap-3">
-                                        <div>
-                                            <p class="line-clamp-1 text-sm font-semibold text-slate-950">
+                                    <div class="flex items-start gap-3">
+                                        <div class="min-w-0 flex-1">
+                                            <p class="truncate text-sm font-semibold text-slate-950" title="{{ $document->original_filename ?? 'Documento senza nome' }}">
                                                 {{ $document->original_filename ?? 'Documento senza nome' }}
                                             </p>
 
@@ -149,7 +149,7 @@
 
                                         <a
                                             href="{{ route('documents.show', $document) }}"
-                                            class="shrink-0 text-xs font-semibold text-amber-700 hover:text-amber-900"
+                                            class="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100 hover:text-amber-900"
                                         >
                                             Apri
                                         </a>

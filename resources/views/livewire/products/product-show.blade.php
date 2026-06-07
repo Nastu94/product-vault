@@ -157,12 +157,37 @@
                                 </p>
                             </div>
 
-                            <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->warrantyStatusBadgeClasses }}">
-                                {{ $this->warrantyStatusLabel }}
-                            </span>
+                            <div class="flex items-center gap-2">
+                                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->warrantyStatusBadgeClasses }}">
+                                    {{ $this->warrantyStatusLabel }}
+                                </span>
+
+                                @if ($this->primaryWarranty && ! $isEditingWarranty)
+                                    <button
+                                        type="button"
+                                        wire:click="editWarranty"
+                                        class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                    >
+                                        Modifica
+                                    </button>
+                                @endif
+                            </div>
                         </div>
 
+                        @if (session('status'))
+                            <div class="mt-4 rounded-md bg-green-50 p-3 text-sm text-green-700">
+                                {{ session('status') }}
+                            </div>
+                        @endif
+
+                        @error('warranty')
+                            <div class="mt-4 rounded-md bg-red-50 p-3 text-sm text-red-700">
+                                {{ $message }}
+                            </div>
+                        @enderror
+
                         @if ($this->primaryWarranty)
+
                             <dl class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
                                 <div>
                                     <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
@@ -224,7 +249,18 @@
                                         Fonte
                                     </dt>
                                     <dd class="mt-1 text-sm text-gray-900">
-                                        {{ $this->primaryWarranty->source === 'calculated' ? 'Calcolata automaticamente' : $this->primaryWarranty->source }}
+                                        @switch($this->primaryWarranty->source)
+                                            @case('calculated')
+                                                Calcolata automaticamente
+                                                @break
+
+                                            @case('manual')
+                                                Modificata manualmente
+                                                @break
+
+                                            @default
+                                                {{ $this->primaryWarranty->source }}
+                                        @endswitch
                                     </dd>
                                 </div>
 
@@ -260,7 +296,91 @@
                                 </div>
                             </dl>
 
-                            @if ($this->primaryWarranty->metadata['source_note'] ?? null)
+                                @if ($isEditingWarranty)
+                                    <form wire:submit.prevent="saveWarranty" class="mt-6 space-y-5">
+                                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                                            <div>
+                                                <label for="warrantyStartsAt" class="block text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Inizio
+                                                </label>
+                                                <input
+                                                    id="warrantyStartsAt"
+                                                    type="date"
+                                                    wire:model="warrantyStartsAt"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+                                                @error('warrantyStartsAt')
+                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label for="warrantyEndsAt" class="block text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Scadenza
+                                                </label>
+                                                <input
+                                                    id="warrantyEndsAt"
+                                                    type="date"
+                                                    wire:model="warrantyEndsAt"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+                                                @error('warrantyEndsAt')
+                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label for="warrantyDurationMonths" class="block text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Durata mesi
+                                                </label>
+                                                <input
+                                                    id="warrantyDurationMonths"
+                                                    type="number"
+                                                    min="1"
+                                                    max="600"
+                                                    wire:model="warrantyDurationMonths"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+                                                @error('warrantyDurationMonths')
+                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                @enderror
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label for="warrantyNotes" class="block text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Note
+                                            </label>
+                                            <textarea
+                                                id="warrantyNotes"
+                                                rows="3"
+                                                wire:model="warrantyNotes"
+                                                class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                placeholder="Aggiungi una nota sulla garanzia..."
+                                            ></textarea>
+                                            @error('warrantyNotes')
+                                                <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                            @enderror
+                                        </div>
+
+                                        <div class="flex justify-end gap-3">
+                                            <button
+                                                type="button"
+                                                wire:click="cancelWarrantyEdit"
+                                                class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                            >
+                                                Annulla
+                                            </button>
+
+                                            <button
+                                                type="submit"
+                                                class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+                                            >
+                                                Salva garanzia
+                                            </button>
+                                        </div>
+                                    </form>
+                                @else
                                 <div class="mt-6 rounded-md bg-gray-50 p-4">
                                     <div class="text-xs font-medium uppercase tracking-wider text-gray-500">
                                         Nota regola

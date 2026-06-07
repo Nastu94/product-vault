@@ -17,6 +17,22 @@ class ProductShow extends Component
     public Product $product;
 
     /**
+     * Stato form modifica garanzia.
+     */
+    public bool $isEditingWarranty = false;
+
+    /**
+     * Campi editabili della garanzia principale.
+     */
+    public ?string $warrantyStartsAt = null;
+
+    public ?string $warrantyEndsAt = null;
+
+    public ?string $warrantyDurationMonths = null;
+
+    public ?string $warrantyNotes = null;
+
+    /**
      * Inizializza il componente con route model binding.
      */
     public function mount(Product $product): void
@@ -132,6 +148,120 @@ class ProductShow extends Component
         }
 
         return now()->startOfDay()->diffInDays($warranty->ends_at, false);
+    }
+
+    /**
+     * Avvia la modifica manuale della garanzia principale.
+     */
+    public function editWarranty(): void
+    {
+        $this->authorize('update', $this->product);
+
+        $warranty = $this->primaryWarranty;
+
+        if (! $warranty) {
+            return;
+        }
+
+        $this->resetValidation();
+
+        $this->warrantyStartsAt = $warranty->starts_at?->format('Y-m-d');
+        $this->warrantyEndsAt = $warranty->ends_at?->format('Y-m-d');
+        $this->warrantyDurationMonths = $warranty->duration_months !== null
+            ? (string) $warranty->duration_months
+            : null;
+        $this->warrantyNotes = $warranty->notes;
+
+        $this->isEditingWarranty = true;
+    }
+
+    /**
+     * Annulla la modifica manuale della garanzia.
+     */
+    public function cancelWarrantyEdit(): void
+    {
+        $this->resetValidation();
+
+        $this->isEditingWarranty = false;
+        $this->warrantyStartsAt = null;
+        $this->warrantyEndsAt = null;
+        $this->warrantyDurationMonths = null;
+        $this->warrantyNotes = null;
+    }
+
+    /**
+     * Salva una modifica manuale della garanzia principale.
+     */
+    public function saveWarranty(): void
+    {
+        $this->authorize('update', $this->product);
+
+        $warranty = $this->primaryWarranty;
+
+        if (! $warranty) {
+            $this->addError('warranty', 'Nessuna garanzia da modificare.');
+
+            return;
+        }
+
+        $this->validate([
+            'warrantyStartsAt' => ['nullable', 'date'],
+            'warrantyEndsAt' => ['nullable', 'date', 'after_or_equal:warrantyStartsAt'],
+            'warrantyDurationMonths' => ['nullable', 'integer', 'min:1', 'max:600'],
+            'warrantyNotes' => ['nullable', 'string', 'max:5000'],
+        ], [
+            'warrantyEndsAt.after_or_equal' => 'La data di scadenza deve essere successiva o uguale alla data di inizio.',
+            'warrantyDurationMonths.integer' => 'La durata deve essere un numero intero di mesi.',
+            'warrantyDurationMonths.min' => 'La durata deve essere almeno di 1 mese.',
+            'warrantyDurationMonths.max' => 'La durata non può superare 600 mesi.',
+        ]);
+
+        $previousValues = [
+            'starts_at' => $warranty->starts_at?->format('Y-m-d'),
+            'ends_at' => $warranty->ends_at?->format('Y-m-d'),
+            'duration_months' => $warranty->duration_months,
+            'source' => $warranty->source,
+            'confidence_score' => $warranty->confidence_score,
+            'notes' => $warranty->notes,
+        ];
+
+        $metadata = $warranty->metadata ?? [];
+
+        $metadata['manual_override'] = [
+            'applied' => true,
+            'previous_values' => $previousValues,
+            'updated_at' => now()->toISOString(),
+            'updated_by_user_id' => auth()->id(),
+        ];
+
+        $warranty->update([
+            'starts_at' => $this->warrantyStartsAt ?: null,
+            'ends_at' => $this->warrantyEndsAt ?: null,
+            'duration_months' => filled($this->warrantyDurationMonths)
+                ? (int) $this->warrantyDurationMonths
+                : null,
+            'source' => 'manual',
+            'confidence_score' => 90,
+            'notes' => $this->warrantyNotes ?: null,
+            'metadata' => $metadata,
+        ]);
+
+        $this->product = $this->product->fresh([
+            'merchant',
+            'currency',
+            'identificationStatus',
+            'category',
+            'brand',
+            'createdBy',
+            'documents.documentType',
+            'documents.merchant',
+            'warranties.warrantyType',
+            'warranties.sourceDocument.documentType',
+        ]);
+
+        $this->cancelWarrantyEdit();
+
+        session()->flash('status', 'Garanzia aggiornata manualmente.');
     }
 
     /**

@@ -323,6 +323,7 @@ Priorità: bassa.
 | Media | Merchant parser | Merchant letto come `Righe documento` nei PDF smoke 17/18 | Rimandare |
 | Bassa | Product Understanding UI | `best_match` Python a bassa similarità può creare rumore | Rimandare/UI later |
 | Bassa | Classification | Documento non pertinente classificato come receipt ma senza candidati | Rimandare |
+| Alta | Product Understanding Python similarity | Best match a bassa similarità, circa 35–40%, verso prodotti senza relazione evidente o token comuni | Rimandare a dopo pagina Revisioni; valutare soglia minima, guardrail lessicale e soppressione del best_match sotto soglia |
 
 ## Stato attuale
 

@@ -15,6 +15,18 @@
             </div>
         </div>
 
+        @if (session('review_success'))
+            <div class="mb-6 rounded-md bg-green-50 p-4 text-sm text-green-700">
+                {{ session('review_success') }}
+            </div>
+        @endif
+
+        @if (session('review_warning'))
+            <div class="mb-6 rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
+                {{ session('review_warning') }}
+            </div>
+        @endif
+
         <div class="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
             <div class="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-200">
                 <div class="text-xs font-medium uppercase tracking-wider text-gray-500">
@@ -173,6 +185,24 @@
                             $pythonSignals = $python['signals'] ?? [];
                             $globalSignals = $globalFact['signals'] ?? [];
                             $feedbackSignals = $feedback['signals'] ?? [];
+
+                            $currentGlobalFact = $this->candidateCurrentGlobalFact($candidate);
+
+                            $pythonWarnings = is_array($pythonWarnings) ? $pythonWarnings : [];
+                            $pythonSignals = is_array($pythonSignals) ? $pythonSignals : [];
+                            $globalSignals = is_array($globalSignals) ? $globalSignals : [];
+                            $feedbackSignals = is_array($feedbackSignals) ? $feedbackSignals : [];
+
+                            $pythonSimilarity = $python['best_match']['similarity'] ?? null;
+                            $showPythonBestMatch = $pythonSimilarity !== null && (float) $pythonSimilarity >= 70;
+
+                            /*
+                            | Dopo la conferma non mostriamo più warning storici come missing_global_facts
+                            | come se fossero ancora attivi.
+                            */
+                            $effectivePythonWarnings = $candidate->review_status === 'pending'
+                                ? $pythonWarnings
+                                : [];
                         @endphp
 
                         <article class="p-6">
@@ -274,7 +304,15 @@
                                                 <div>
                                                     <dt class="text-xs text-gray-500">Global fact</dt>
                                                     <dd class="text-gray-900">
-                                                        @if (($globalFact['matched'] ?? false) === true)
+                                                        @if ($currentGlobalFact)
+                                                            {{ $currentGlobalFact->canonical_name ?? 'Match globale EAN' }}
+
+                                                            <span class="block text-xs text-gray-500">
+                                                                EAN {{ $currentGlobalFact->fact_value }}
+                                                                · conferme {{ $currentGlobalFact->confirmed_count }}
+                                                                · ignorati {{ $currentGlobalFact->ignored_count }}
+                                                            </span>
+                                                        @elseif (($globalFact['matched'] ?? false) === true)
                                                             {{ $globalFact['canonical_name'] ?? 'Match globale' }}
                                                         @else
                                                             Nessun match
@@ -285,12 +323,24 @@
                                                 <div>
                                                     <dt class="text-xs text-gray-500">Python best match</dt>
                                                     <dd class="text-gray-900">
-                                                        {{ $python['best_match']['canonical_name'] ?? '—' }}
+                                                        @if ($showPythonBestMatch)
+                                                            {{ $python['best_match']['canonical_name'] ?? '—' }}
 
-                                                        @if ($python['best_match']['similarity'] ?? null)
                                                             <span class="block text-xs text-gray-500">
-                                                                Similarità {{ $python['best_match']['similarity'] }}
+                                                                Similarità {{ $pythonSimilarity }}
                                                             </span>
+                                                        @elseif ($python['best_match']['canonical_name'] ?? null)
+                                                            <span class="text-gray-500">
+                                                                Nessun match affidabile
+                                                            </span>
+
+                                                            <span class="block text-xs text-gray-400">
+                                                                Match diagnostico ignorato:
+                                                                {{ $python['best_match']['canonical_name'] }}
+                                                                · similarità {{ $pythonSimilarity }}
+                                                            </span>
+                                                        @else
+                                                            —
                                                         @endif
                                                     </dd>
                                                 </div>
@@ -303,14 +353,14 @@
                                             </div>
 
                                             <div class="mt-3 space-y-3">
-                                                @if ($pythonWarnings !== [])
+                                                @if ($effectivePythonWarnings !== [])
                                                     <div>
                                                         <div class="text-xs font-medium text-red-700">
                                                             Warning
                                                         </div>
 
                                                         <div class="mt-1 flex flex-wrap gap-1">
-                                                            @foreach ($pythonWarnings as $warning)
+                                                            @foreach ($effectivePythonWarnings as $warning)
                                                                 <span class="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">
                                                                     {{ $this->formatSignal($warning) }}
                                                                 </span>
@@ -351,11 +401,31 @@
                                     </div>
                                 </div>
 
-                                <div class="flex shrink-0 flex-col gap-2 lg:w-36">
+                                <div class="flex shrink-0 flex-col gap-2 lg:w-40">
+                                    @if ($candidate->review_status === 'pending' && ! $candidate->product_id)
+                                        <button
+                                            type="button"
+                                            wire:click="confirmCandidate({{ $candidate->id }})"
+                                            wire:confirm="Confermare questo candidato e creare la scheda prodotto?"
+                                            class="inline-flex items-center justify-center rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800"
+                                        >
+                                            Conferma
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            wire:click="ignoreCandidate({{ $candidate->id }})"
+                                            wire:confirm="Ignorare questo candidato? Verrà mantenuto nello storico ma non genererà un prodotto."
+                                            class="inline-flex items-center justify-center rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                        >
+                                            Ignora
+                                        </button>
+                                    @endif
+
                                     @if ($candidate->document)
                                         <a
                                             href="{{ route('documents.show', $candidate->document) }}"
-                                            class="inline-flex items-center justify-center rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800"
+                                            class="inline-flex items-center justify-center rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
                                         >
                                             Apri revisione
                                         </a>

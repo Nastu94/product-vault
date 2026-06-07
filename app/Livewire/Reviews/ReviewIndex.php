@@ -4,6 +4,9 @@ namespace App\Livewire\Reviews;
 
 use App\Models\Document;
 use App\Models\ProductIdentificationCandidate;
+use App\Models\ProductUnderstandingGlobalFact;
+use App\Services\Documents\ProductFromCandidateCreator;
+use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
@@ -129,11 +132,44 @@ class ReviewIndex extends Component
     }
 
     /**
+     * Recupera il global fact EAN aggiornato per il candidato.
+     *
+     * I metadata del candidato sono uno snapshot del momento della generazione.
+     * Dopo la conferma prodotto, i global facts possono essere più aggiornati
+     * rispetto ai metadata salvati nel candidato.
+     */
+    public function candidateCurrentGlobalFact(ProductIdentificationCandidate $candidate): ?ProductUnderstandingGlobalFact
+    {
+        $eanCode = trim((string) $candidate->ean_code);
+
+        if ($eanCode === '') {
+            return null;
+        }
+
+        return ProductUnderstandingGlobalFact::query()
+            ->where('fact_type', 'ean')
+            ->where('fact_value', $eanCode)
+            ->first();
+    }
+
+    /**
      * Etichetta rischio/qualità conoscenza candidato.
      */
     public function candidateKnowledgeLabel(ProductIdentificationCandidate $candidate): string
     {
+        $currentGlobalFact = $this->candidateCurrentGlobalFact($candidate);
+
+        if ($candidate->review_status === 'confirmed' || $candidate->product_id !== null) {
+            return $currentGlobalFact ? 'Conoscenza globale' : 'Confermato';
+        }
+
+        if ($candidate->review_status === 'ignored') {
+            return 'Ignorato';
+        }
+
         $pythonWarnings = data_get($candidate->metadata, 'product_understanding_python.warnings', []);
+        $pythonWarnings = is_array($pythonWarnings) ? $pythonWarnings : [];
+
         $globalFactMatched = data_get($candidate->metadata, 'product_understanding_global_fact.matched') === true;
         $feedbackBias = data_get($candidate->metadata, 'product_understanding_feedback.suggested_bias');
 
@@ -141,7 +177,7 @@ class ReviewIndex extends Component
             return 'Richiede attenzione';
         }
 
-        if ($globalFactMatched) {
+        if ($globalFactMatched || $currentGlobalFact) {
             return 'Conoscenza globale';
         }
 
@@ -166,6 +202,8 @@ class ReviewIndex extends Component
             'Conoscenza globale' => 'bg-indigo-50 text-indigo-700 ring-indigo-600/20',
             'Feedback utile' => 'bg-green-50 text-green-700 ring-green-600/20',
             'Bassa affidabilità' => 'bg-yellow-50 text-yellow-800 ring-yellow-600/20',
+            'Confermato' => 'bg-green-50 text-green-700 ring-green-600/20',
+            'Ignorato' => 'bg-gray-100 text-gray-700 ring-gray-500/20',
             default => 'bg-gray-100 text-gray-700 ring-gray-500/20',
         };
     }
@@ -180,6 +218,137 @@ class ReviewIndex extends Component
         }
 
         return ucfirst(str_replace('_', ' ', $signal));
+    }
+
+    /**
+     * Conferma rapidamente un candidato dalla pagina revisioni.
+     */
+    public function confirmCandidate(
+        int $candidateId,
+        ProductFromCandidateCreator $productFromCandidateCreator
+    ): void {
+        abort_unless(Auth::user()?->can('documents.review'), 403);
+
+        $candidate = $this->findReviewableCandidate($candidateId);
+
+        if ($candidate->product_id) {
+            session()->flash('review_warning', 'Questo candidato ha già generato un prodotto.');
+
+            return;
+        }
+
+        if ($candidate->review_status !== 'pending') {
+            session()->flash('review_warning', 'Questo candidato è già stato revisionato.');
+
+            return;
+        }
+
+        $product = $productFromCandidateCreator->create(
+            candidate: $candidate,
+            userId: (int) Auth::id(),
+        );
+
+        session()->flash('review_success', 'Prodotto creato correttamente: ' . $product->name);
+
+        $this->resetPage();
+    }
+
+    /**
+     * Ignora rapidamente un candidato dalla pagina revisioni.
+     */
+    public function ignoreCandidate(
+        int $candidateId,
+        ProductUnderstandingFeedbackRecorder $feedbackRecorder
+    ): void {
+        abort_unless(Auth::user()?->can('documents.review'), 403);
+
+        $candidate = $this->findReviewableCandidate($candidateId);
+
+        if ($candidate->product_id) {
+            session()->flash('review_warning', 'Questo candidato ha già generato un prodotto e non può essere ignorato.');
+
+            return;
+        }
+
+        if ($candidate->review_status === 'ignored') {
+            session()->flash('review_warning', 'Questo candidato è già stato ignorato.');
+
+            return;
+        }
+
+        $candidate->update([
+            'review_status' => 'ignored',
+            'ignored_reason' => 'not_to_register',
+            'ignored_note' => null,
+            'reviewed_by_user_id' => Auth::id(),
+            'reviewed_at' => now(),
+            'is_selected' => false,
+        ]);
+
+        $candidate->refresh();
+
+        $feedbackRecorder->recordIgnoredCandidate(
+            candidate: $candidate,
+            userId: (int) Auth::id(),
+            reason: 'not_to_register',
+            note: null,
+        );
+
+        $this->updateDocumentStatusAfterCandidateReview($candidate->document_id);
+
+        session()->flash('review_success', 'Candidato escluso dalla revisione.');
+
+        $this->resetPage();
+    }
+
+    /**
+     * Recupera un candidato del workspace corrente.
+     */
+    private function findReviewableCandidate(int $candidateId): ProductIdentificationCandidate
+    {
+        return ProductIdentificationCandidate::query()
+            ->with(['document'])
+            ->whereKey($candidateId)
+            ->whereHas('document', fn (Builder $query) => $query->where('team_id', $this->currentTeamId()))
+            ->firstOrFail();
+    }
+
+    /**
+     * Aggiorna lo stato del documento dopo conferma/esclusione candidati.
+     */
+    private function updateDocumentStatusAfterCandidateReview(int $documentId): void
+    {
+        $document = Document::query()
+            ->where('team_id', $this->currentTeamId())
+            ->whereKey($documentId)
+            ->firstOrFail();
+
+        $pendingCandidatesCount = $document
+            ->productIdentificationCandidates()
+            ->where('review_status', 'pending')
+            ->whereNull('product_id')
+            ->count();
+
+        $confirmedCandidatesCount = $document
+            ->productIdentificationCandidates()
+            ->where('review_status', 'confirmed')
+            ->whereNotNull('product_id')
+            ->count();
+
+        $bestConfirmedCandidateScore = $document
+            ->productIdentificationCandidates()
+            ->where('review_status', 'confirmed')
+            ->whereNotNull('product_id')
+            ->max('confidence_score');
+
+        $document->update([
+            'status' => $pendingCandidatesCount > 0
+                ? 'needs_review'
+                : ($confirmedCandidatesCount > 0 ? 'linked_to_product' : 'parsed'),
+            'product_reliability_score' => $bestConfirmedCandidateScore !== null
+                ? (int) $bestConfirmedCandidateScore
+                : null,
+        ]);
     }
 
     /**

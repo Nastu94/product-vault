@@ -10,6 +10,9 @@ use App\Models\Product;
 use App\Models\Team;
 use App\Models\User;
 use App\Models\Warranty;
+use App\Models\ProductEvent;
+use App\Models\WarrantyType;
+use App\Services\Products\ProductLifecycleEventRecorder;
 use App\Services\Warranties\DefaultWarrantyCreator;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -21,7 +24,10 @@ class TestWarrantyLifecycleCommand extends Command
 
     protected $description = 'Run controlled Warranty lifecycle checks';
 
-    public function handle(DefaultWarrantyCreator $defaultWarrantyCreator): int
+    public function handle(
+        DefaultWarrantyCreator $defaultWarrantyCreator,
+        ProductLifecycleEventRecorder $eventRecorder
+    ): int 
     {
         $user = $this->testUser();
         $team = $this->testTeam($user);
@@ -106,6 +112,41 @@ class TestWarrantyLifecycleCommand extends Command
 
         /*
         |--------------------------------------------------------------------------
+        | Scenario 1B: eventi lifecycle su prodotto e garanzia automatica
+        |--------------------------------------------------------------------------
+        */
+        $productCreatedEvent = $eventRecorder->recordProductCreatedFromCandidate(
+            product: $genericProduct,
+            userId: $user->id,
+            documentId: null,
+            metadata: [
+                'test_scenario' => 'generic_legal_warranty',
+            ],
+        )->load('productEventType');
+
+        $automaticWarrantyEvent = $genericWarranty
+            ? $eventRecorder->recordAutomaticWarrantyCreated(
+                warranty: $genericWarranty,
+                userId: $user->id,
+            )->load('productEventType')
+            : null;
+
+        $assertNotNull('lifecycle_events', 'product created event exists', $productCreatedEvent);
+        $assertEquals('lifecycle_events', 'product created event type', 'purchase', $productCreatedEvent->productEventType?->code);
+        $assertEquals('lifecycle_events', 'product created event title', 'Prodotto creato', $productCreatedEvent->title);
+        $assertEquals('lifecycle_events', 'product created event source', 'candidate_confirmation', $productCreatedEvent->source);
+        $assertEquals('lifecycle_events', 'product created event product id', $genericProduct->id, $productCreatedEvent->product_id);
+        $assertEquals('lifecycle_events', 'product created event metadata source', 'product_from_candidate_creator', data_get($productCreatedEvent->metadata, 'event_source'));
+
+        $assertNotNull('lifecycle_events', 'automatic warranty event exists', $automaticWarrantyEvent);
+        $assertEquals('lifecycle_events', 'automatic warranty event type', 'warranty_update', $automaticWarrantyEvent?->productEventType?->code);
+        $assertEquals('lifecycle_events', 'automatic warranty event title', 'Garanzia calcolata', $automaticWarrantyEvent?->title);
+        $assertEquals('lifecycle_events', 'automatic warranty event source', 'calculated', $automaticWarrantyEvent?->source);
+        $assertEquals('lifecycle_events', 'automatic warranty event warranty id', $genericWarranty?->id, data_get($automaticWarrantyEvent?->metadata, 'warranty_id'));
+        $assertEquals('lifecycle_events', 'automatic warranty event duration', 24, data_get($automaticWarrantyEvent?->metadata, 'duration_months'));
+
+        /*
+        |--------------------------------------------------------------------------
         | Scenario 2: regola categoria più specifica
         |--------------------------------------------------------------------------
         */
@@ -180,6 +221,105 @@ class TestWarrantyLifecycleCommand extends Command
             }
 
             return self::FAILURE;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scenario 4: eventi lifecycle su garanzia manuale
+        |--------------------------------------------------------------------------
+        */
+        $warrantyType = WarrantyType::query()
+            ->where('code', 'legal')
+            ->where('is_active', true)
+            ->first();
+
+        $assertNotNull('manual_warranty_events', 'legal warranty type exists', $warrantyType);
+
+        if ($warrantyType) {
+            $manualProduct = Product::query()->create([
+                'team_id' => $team->id,
+                'created_by_user_id' => $user->id,
+                'category_id' => null,
+                'brand_id' => null,
+                'merchant_id' => null,
+                'identification_status_id' => $identificationStatusId,
+                'currency_id' => $currencyId,
+                'name' => 'Warranty Fixture Manual Event Product',
+                'model' => 'WFMANUAL-001',
+                'serial_number' => 'WFMANUALSN001',
+                'ean_code' => '8099999900042',
+                'purchase_date' => '2026-06-15',
+                'purchase_price' => 249.90,
+                'reliability_score' => 90,
+                'notes' => null,
+            ]);
+
+            $manualWarranty = Warranty::query()->create([
+                'product_id' => $manualProduct->id,
+                'warranty_type_id' => $warrantyType->id,
+                'source_document_id' => null,
+                'starts_at' => '2026-06-15',
+                'ends_at' => '2028-06-15',
+                'duration_months' => 24,
+                'source' => 'manual',
+                'confidence_score' => 90,
+                'notes' => 'Garanzia inserita manualmente dal test.',
+                'metadata' => [
+                    'creator' => 'test_warranty_lifecycle_command',
+                ],
+            ]);
+
+            $manualCreatedEvent = $eventRecorder->recordManualWarrantyCreated(
+                warranty: $manualWarranty,
+                userId: $user->id,
+            )->load('productEventType');
+
+            $assertNotNull('manual_warranty_events', 'manual created event exists', $manualCreatedEvent);
+            $assertEquals('manual_warranty_events', 'manual created event type', 'warranty_update', $manualCreatedEvent->productEventType?->code);
+            $assertEquals('manual_warranty_events', 'manual created event title', 'Garanzia creata manualmente', $manualCreatedEvent->title);
+            $assertEquals('manual_warranty_events', 'manual created event source', 'manual', $manualCreatedEvent->source);
+            $assertEquals('manual_warranty_events', 'manual created event warranty id', $manualWarranty->id, data_get($manualCreatedEvent->metadata, 'warranty_id'));
+
+            $previousValues = [
+                'starts_at' => $manualWarranty->starts_at?->format('Y-m-d'),
+                'ends_at' => $manualWarranty->ends_at?->format('Y-m-d'),
+                'duration_months' => $manualWarranty->duration_months,
+                'source' => $manualWarranty->source,
+                'confidence_score' => $manualWarranty->confidence_score,
+                'notes' => $manualWarranty->notes,
+            ];
+
+            $manualWarranty->update([
+                'ends_at' => '2029-06-15',
+                'duration_months' => 36,
+                'notes' => 'Garanzia manuale aggiornata dal test.',
+                'metadata' => array_merge($manualWarranty->metadata ?? [], [
+                    'manual_override' => [
+                        'applied' => true,
+                        'previous_values' => $previousValues,
+                        'updated_at' => now()->toISOString(),
+                        'updated_by_user_id' => $user->id,
+                    ],
+                ]),
+            ]);
+
+            $manualWarranty->refresh();
+
+            $manualUpdatedEvent = $eventRecorder->recordManualWarrantyUpdated(
+                warranty: $manualWarranty,
+                previousValues: $previousValues,
+                userId: $user->id,
+            )->load('productEventType');
+
+            $assertNotNull('manual_warranty_events', 'manual updated event exists', $manualUpdatedEvent);
+            $assertEquals('manual_warranty_events', 'manual updated event type', 'warranty_update', $manualUpdatedEvent->productEventType?->code);
+            $assertEquals('manual_warranty_events', 'manual updated event title', 'Garanzia modificata', $manualUpdatedEvent->title);
+            $assertEquals('manual_warranty_events', 'manual updated event source', 'manual', $manualUpdatedEvent->source);
+            $assertEquals('manual_warranty_events', 'manual updated previous ends_at', '2028-06-15', data_get($manualUpdatedEvent->metadata, 'previous_values.ends_at'));
+            $assertEquals('manual_warranty_events', 'manual updated new ends_at', '2029-06-15', data_get($manualUpdatedEvent->metadata, 'new_values.ends_at'));
+            $assertEquals('manual_warranty_events', 'manual updated new duration', 36, data_get($manualUpdatedEvent->metadata, 'new_values.duration_months'));
+
+            $assertEquals('manual_warranty_events', 'manual product event count', 2, $manualProduct->events()->count());
         }
 
         $this->info('Warranty lifecycle checks passed.');

@@ -35,7 +35,7 @@
                         Prodotti
                     </x-nav-link>
 
-                    <x-nav-link href="{{ url('/warranties') }}" :active="request()->is('warranties')">
+                    <x-nav-link href="{{ route('warranties.index') }}" :active="request()->routeIs('warranties.*')">
                         Garanzie
                     </x-nav-link>
 
@@ -215,7 +215,7 @@
                 Prodotti
             </x-responsive-nav-link>
 
-            <x-responsive-nav-link href="{{ url('/warranties') }}" :active="request()->is('warranties')">
+            <x-responsive-nav-link href="{{ route('warranties.index') }}" :active="request()->routeIs('warranties.*')">
                 Garanzie
             </x-responsive-nav-link>
 

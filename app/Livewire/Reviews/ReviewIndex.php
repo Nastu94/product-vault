@@ -35,10 +35,17 @@ class ReviewIndex extends Component
     ];
 
     /**
+     * Candidato selezionato per il drawer di dettaglio conoscenza.
+     */
+    public ?int $selectedCandidateId = null;
+
+    /**
      * Reset paginazione quando cambia filtro.
      */
     public function updatedFilter(): void
     {
+        $this->selectedCandidateId = null;
+
         $this->resetPage();
     }
 
@@ -349,6 +356,69 @@ class ReviewIndex extends Component
                 ? (int) $bestConfirmedCandidateScore
                 : null,
         ]);
+    }
+
+    /**
+     * Apre il drawer di dettaglio conoscenza candidato.
+     */
+    public function openCandidateKnowledgeDrawer(int $candidateId): void
+    {
+        abort_unless(Auth::user()?->can('documents.review'), 403);
+
+        $candidate = $this->findReviewableCandidate($candidateId);
+
+        $this->selectedCandidateId = $candidate->id;
+    }
+
+    /**
+     * Chiude il drawer di dettaglio conoscenza candidato.
+     */
+    public function closeCandidateKnowledgeDrawer(): void
+    {
+        $this->selectedCandidateId = null;
+    }
+
+    /**
+     * Candidato selezionato per il drawer.
+     */
+    public function getSelectedCandidateProperty(): ?ProductIdentificationCandidate
+    {
+        if (! $this->selectedCandidateId) {
+            return null;
+        }
+
+        return ProductIdentificationCandidate::query()
+            ->with([
+                'document.documentType',
+                'document.merchant',
+                'document.currency',
+                'documentLine',
+                'product',
+                'category',
+                'brand',
+            ])
+            ->whereKey($this->selectedCandidateId)
+            ->whereHas('document', fn (Builder $query) => $query->where('team_id', $this->currentTeamId()))
+            ->first();
+    }
+
+    /**
+     * Normalizza liste metadata che possono arrivare come array, stringa o null.
+     */
+    public function metadataList(mixed $value): array
+    {
+        if ($value === null || $value === '') {
+            return [];
+        }
+
+        if (is_array($value)) {
+            return array_values(array_filter(
+                $value,
+                fn ($item): bool => $item !== null && trim((string) $item) !== ''
+            ));
+        }
+
+        return [trim((string) $value)];
     }
 
     /**

@@ -422,6 +422,14 @@
                                         </button>
                                     @endif
 
+                                    <button
+                                        type="button"
+                                        wire:click="openCandidateKnowledgeDrawer({{ $candidate->id }})"
+                                        class="inline-flex items-center justify-center rounded-md border border-indigo-200 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+                                    >
+                                        Dettaglio conoscenza
+                                    </button>
+
                                     @if ($candidate->document)
                                         <a
                                             href="{{ route('documents.show', $candidate->document) }}"
@@ -470,4 +478,548 @@
             @endif
         </section>
     </div>
+    @if ($this->selectedCandidate)
+        @php
+            $selectedCandidate = $this->selectedCandidate;
+
+            $selectedFeedback = $selectedCandidate->metadata['product_understanding_feedback'] ?? [];
+            $selectedGlobalFactSnapshot = $selectedCandidate->metadata['product_understanding_global_fact'] ?? [];
+            $selectedPython = $selectedCandidate->metadata['product_understanding_python'] ?? [];
+            $selectedUnderstanding = $selectedCandidate->metadata['product_understanding'] ?? [];
+
+            $selectedCurrentGlobalFact = $this->candidateCurrentGlobalFact($selectedCandidate);
+
+            $selectedPythonWarnings = $this->metadataList($selectedPython['warnings'] ?? []);
+            $selectedPythonSignals = $this->metadataList($selectedPython['signals'] ?? []);
+            $selectedGlobalSignals = $this->metadataList($selectedGlobalFactSnapshot['signals'] ?? []);
+            $selectedFeedbackSignals = $this->metadataList($selectedFeedback['signals'] ?? []);
+
+            /*
+            | I warning Python sono uno snapshot del momento in cui il candidato
+            | è stato generato. Se il candidato è già stato revisionato, oppure
+            | oggi esiste un global fact attuale, non mostriamo più missing_global_facts
+            | come warning attivo.
+            */
+            $selectedEffectivePythonWarnings = $selectedPythonWarnings;
+
+            if ($selectedCandidate->review_status !== 'pending' || $selectedCurrentGlobalFact) {
+                $selectedEffectivePythonWarnings = array_values(array_filter(
+                    $selectedEffectivePythonWarnings,
+                    fn ($warning) => $warning !== 'missing_global_facts'
+                ));
+            }
+
+            $selectedIdentityGuardrails = $selectedPython['best_match']['identity_guardrails'] ?? [];
+            $selectedPythonBestMatch = $selectedPython['best_match'] ?? [];
+        @endphp
+
+        <div class="fixed inset-0 z-50 overflow-hidden" role="dialog" aria-modal="true">
+            <div
+                class="absolute inset-0 bg-gray-900/40"
+                wire:click="closeCandidateKnowledgeDrawer"
+            ></div>
+
+            <div class="pointer-events-none fixed inset-y-0 right-0 flex max-w-full pl-10">
+                <div class="pointer-events-auto w-screen max-w-3xl">
+                    <div class="flex h-full flex-col overflow-y-auto bg-white shadow-xl">
+                        <div class="border-b border-gray-200 px-6 py-5">
+                            <div class="flex items-start justify-between gap-4">
+                                <div class="min-w-0">
+                                    <h2 class="text-lg font-semibold text-gray-900">
+                                        Dettaglio conoscenza
+                                    </h2>
+
+                                    <p class="mt-1 truncate text-sm text-gray-600">
+                                        {{ $selectedCandidate->name }}
+                                    </p>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    wire:click="closeCandidateKnowledgeDrawer"
+                                    class="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="space-y-6 px-6 py-6">
+                            <section class="rounded-lg border border-gray-200 p-4">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->candidateReviewStatusBadgeClasses($selectedCandidate) }}">
+                                        {{ $this->candidateReviewStatusLabel($selectedCandidate) }}
+                                    </span>
+
+                                    <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->candidateKnowledgeBadgeClasses($selectedCandidate) }}">
+                                        {{ $this->candidateKnowledgeLabel($selectedCandidate) }}
+                                    </span>
+                                </div>
+
+                                <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Nome candidato
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $selectedCandidate->name }}
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Affidabilità
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $selectedCandidate->confidence_score !== null ? $selectedCandidate->confidence_score . '/100' : '—' }}
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Modello
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $selectedCandidate->model ?? '—' }}
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            EAN
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $selectedCandidate->ean_code ?? '—' }}
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Seriale
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $selectedCandidate->serial_number ?? '—' }}
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Prezzo
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            @if ($selectedCandidate->price)
+                                                {{ number_format((float) $selectedCandidate->price, 2, ',', '.') }}
+                                                {{ $selectedCandidate->document?->currency?->code }}
+                                            @else
+                                                —
+                                            @endif
+                                        </dd>
+                                    </div>
+                                </dl>
+                            </section>
+
+                            <section class="rounded-lg border border-gray-200 p-4">
+                                <h3 class="text-sm font-semibold text-gray-900">
+                                    Origine nel documento
+                                </h3>
+
+                                <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Documento
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            @if ($selectedCandidate->document)
+                                                <a
+                                                    href="{{ route('documents.show', $selectedCandidate->document) }}"
+                                                    class="text-indigo-600 hover:text-indigo-900"
+                                                >
+                                                    {{ $selectedCandidate->document->original_filename }}
+                                                </a>
+                                            @else
+                                                —
+                                            @endif
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Tipo documento
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $selectedCandidate->document?->documentType?->name ?? '—' }}
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Venditore
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $selectedCandidate->document?->merchant?->name ?? '—' }}
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Data acquisto
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $selectedCandidate->document?->purchase_date?->format('d/m/Y') ?? '—' }}
+                                        </dd>
+                                    </div>
+                                </dl>
+
+                                @if ($selectedCandidate->documentLine)
+                                    <div class="mt-4 rounded-md bg-gray-50 p-3">
+                                        <div class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Riga documento
+                                        </div>
+
+                                        <p class="mt-1 text-sm text-gray-700">
+                                            {{ $selectedCandidate->documentLine->description }}
+                                        </p>
+
+                                        <div class="mt-2 text-xs text-gray-500">
+                                            Quantità:
+                                            {{ $selectedCandidate->documentLine->quantity ?? '—' }}
+                                            · Prezzo unitario:
+                                            {{ $selectedCandidate->documentLine->unit_price ?? '—' }}
+                                            · Totale:
+                                            {{ $selectedCandidate->documentLine->total_price ?? '—' }}
+                                        </div>
+                                    </div>
+                                @endif
+                            </section>
+
+                            <section class="rounded-lg border border-gray-200 p-4">
+                                <h3 class="text-sm font-semibold text-gray-900">
+                                    Conoscenza globale
+                                </h3>
+
+                                @if ($selectedCurrentGlobalFact)
+                                    <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Nome canonico attuale
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $selectedCurrentGlobalFact->canonical_name }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Fact
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $selectedCurrentGlobalFact->fact_type }}:
+                                                {{ $selectedCurrentGlobalFact->fact_value }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Conteggi globali
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                Visti {{ $selectedCurrentGlobalFact->seen_count }}
+                                                · confermati {{ $selectedCurrentGlobalFact->confirmed_count }}
+                                                · ignorati {{ $selectedCurrentGlobalFact->ignored_count }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Score globale
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $selectedCurrentGlobalFact->global_product_confidence_score ?? '—' }}
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                @else
+                                    <div class="mt-4 rounded-md bg-gray-50 p-3">
+                                        <p class="text-sm text-gray-700">
+                                            Nessun global fact attuale trovato per questo candidato.
+                                        </p>
+                                    </div>
+                                @endif
+
+                                @if ($selectedGlobalFactSnapshot)
+                                    <details class="mt-4">
+                                        <summary class="cursor-pointer text-sm font-medium text-gray-700">
+                                            Snapshot global fact salvato nel candidato
+                                        </summary>
+
+                                        <dl class="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                                            <div>
+                                                <dt class="text-xs text-gray-500">Matched</dt>
+                                                <dd>{{ ($selectedGlobalFactSnapshot['matched'] ?? false) ? 'Sì' : 'No' }}</dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs text-gray-500">Nome canonico snapshot</dt>
+                                                <dd>{{ $selectedGlobalFactSnapshot['canonical_name'] ?? '—' }}</dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs text-gray-500">Tipo match</dt>
+                                                <dd>{{ $selectedGlobalFactSnapshot['match_type'] ?? '—' }}</dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs text-gray-500">Score snapshot</dt>
+                                                <dd>{{ $selectedGlobalFactSnapshot['global_product_confidence_score'] ?? '—' }}</dd>
+                                            </div>
+                                        </dl>
+                                    </details>
+                                @endif
+                            </section>
+
+                            <section class="rounded-lg border border-gray-200 p-4">
+                                <h3 class="text-sm font-semibold text-gray-900">
+                                    Feedback e preferenze
+                                </h3>
+
+                                <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Bias suggerito
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $selectedFeedback['suggested_bias'] ?? '—' }}
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Review hint
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $this->formatSignal($selectedFeedback['review_hint'] ?? null) }}
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Product identity score
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $selectedFeedback['product_identity_score'] ?? '—' }}
+                                        </dd>
+                                    </div>
+
+                                    <div>
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Registration preference score
+                                        </dt>
+                                        <dd class="mt-1 text-sm text-gray-900">
+                                            {{ $selectedFeedback['registration_preference_score'] ?? '—' }}
+                                        </dd>
+                                    </div>
+                                </dl>
+                            </section>
+
+                            <section class="rounded-lg border border-gray-200 p-4">
+                                <h3 class="text-sm font-semibold text-gray-900">
+                                    Analisi Python
+                                </h3>
+
+                                @if ($selectedPythonBestMatch)
+                                    <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Best match
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $selectedPythonBestMatch['canonical_name'] ?? '—' }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Similarità
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $selectedPythonBestMatch['similarity'] ?? '—' }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Metodo
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $selectedPythonBestMatch['method'] ?? '—' }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Confidence
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $selectedPythonBestMatch['confidence'] ?? '—' }}
+                                            </dd>
+                                        </div>
+                                    </dl>
+
+                                    @if (($selectedPythonBestMatch['similarity'] ?? 0) < 70)
+                                        <div class="mt-4 rounded-md bg-yellow-50 p-3">
+                                            <p class="text-sm text-yellow-800">
+                                                Match mostrato solo come dato diagnostico: la similarità è sotto la soglia di affidabilità.
+                                            </p>
+                                        </div>
+                                    @endif
+                                @else
+                                    <div class="mt-4 rounded-md bg-gray-50 p-3">
+                                        <p class="text-sm text-gray-700">
+                                            Nessun risultato Python disponibile.
+                                        </p>
+                                    </div>
+                                @endif
+
+                                @if ($selectedEffectivePythonWarnings !== [])
+                                    <div class="mt-4">
+                                        <div class="text-xs font-medium uppercase tracking-wider text-red-700">
+                                            Warning
+                                        </div>
+
+                                        <div class="mt-2 flex flex-wrap gap-2">
+                                            @foreach ($selectedEffectivePythonWarnings as $warning)
+                                                <span class="rounded-full bg-red-50 px-2 py-1 text-xs text-red-700">
+                                                    {{ $this->formatSignal($warning) }}
+                                                </span>
+                                            @endforeach
+                                        </div>
+                                    </div>
+                                @elseif ($selectedPythonWarnings !== [])
+                                    <div class="mt-4 rounded-md bg-gray-50 p-3">
+                                        <p class="text-sm text-gray-600">
+                                            Alcuni warning storici sono stati nascosti perché non risultano più attivi rispetto alla conoscenza attuale.
+                                        </p>
+                                    </div>
+                                @endif
+                            </section>
+
+                            @if ($selectedIdentityGuardrails)
+                                <section class="rounded-lg border border-gray-200 p-4">
+                                    <h3 class="text-sm font-semibold text-gray-900">
+                                        Guardrail identità
+                                    </h3>
+
+                                    <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Token modello candidato
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ implode(', ', $this->metadataList($selectedIdentityGuardrails['candidate_model_tokens'] ?? [])) ?: '—' }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Token modello canonico
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ implode(', ', $this->metadataList($selectedIdentityGuardrails['canonical_model_tokens'] ?? [])) ?: '—' }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Conflitto modello
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ ($selectedIdentityGuardrails['model_conflict'] ?? false) ? 'Sì' : 'No' }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Differenza specifiche
+                                            </dt>
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ ($selectedIdentityGuardrails['spec_difference'] ?? false) ? 'Sì' : 'No' }}
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                </section>
+                            @endif
+
+                            <section class="rounded-lg border border-gray-200 p-4">
+                                <h3 class="text-sm font-semibold text-gray-900">
+                                    Segnali aggregati
+                                </h3>
+
+                                @php
+                                    $selectedAllSignals = collect($selectedPythonSignals)
+                                        ->merge($selectedGlobalSignals)
+                                        ->merge($selectedFeedbackSignals)
+                                        ->unique()
+                                        ->values();
+                                @endphp
+
+                                @if ($selectedAllSignals->isNotEmpty())
+                                    <div class="mt-3 flex flex-wrap gap-2">
+                                        @foreach ($selectedAllSignals as $signal)
+                                            <span class="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-700">
+                                                {{ $this->formatSignal($signal) }}
+                                            </span>
+                                        @endforeach
+                                    </div>
+                                @else
+                                    <p class="mt-3 text-sm text-gray-500">
+                                        Nessun segnale aggregato disponibile.
+                                    </p>
+                                @endif
+                            </section>
+
+                            <section class="rounded-lg border border-gray-200 p-4">
+                                <details>
+                                    <summary class="cursor-pointer text-sm font-semibold text-gray-900">
+                                        Metadata tecnici
+                                    </summary>
+
+                                    <pre class="mt-4 max-h-96 overflow-auto rounded-md bg-gray-950 p-4 text-xs text-gray-100">{{ json_encode($selectedCandidate->metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}</pre>
+                                </details>
+                            </section>
+                        </div>
+
+                        <div class="border-t border-gray-200 px-6 py-4">
+                            <div class="flex flex-wrap justify-end gap-3">
+                                <button
+                                    type="button"
+                                    wire:click="closeCandidateKnowledgeDrawer"
+                                    class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                >
+                                    Chiudi
+                                </button>
+
+                                @if ($selectedCandidate->document)
+                                    <a
+                                        href="{{ route('documents.show', $selectedCandidate->document) }}"
+                                        class="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+                                    >
+                                        Apri revisione documento
+                                    </a>
+                                @endif
+
+                                @if ($selectedCandidate->product)
+                                    <a
+                                        href="{{ route('products.show', $selectedCandidate->product) }}"
+                                        class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                    >
+                                        Apri prodotto
+                                    </a>
+                                @endif
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
 </div>

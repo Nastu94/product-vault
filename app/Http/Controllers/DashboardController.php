@@ -99,11 +99,37 @@ class DashboardController extends Controller
                 ->count()
             : 0;
 
+        $warrantiesCount = $activeTeamId
+            ? Warranty::query()
+                ->whereIn(
+                    'product_id',
+                    Product::query()
+                        ->select('id')
+                        ->where('team_id', $activeTeamId)
+                )
+                ->count()
+            : 0;
+
+        $expiredWarrantiesCount = $activeTeamId
+            ? Warranty::query()
+                ->whereIn(
+                    'product_id',
+                    Product::query()
+                        ->select('id')
+                        ->where('team_id', $activeTeamId)
+                )
+                ->whereNotNull('ends_at')
+                ->whereDate('ends_at', '<', now()->toDateString())
+                ->count()
+            : 0;
+
         $stats = [
             'documents_count' => $documentsCount,
             'products_count' => $productsCount,
             'open_reviews_count' => $openReviewsCount,
+            'warranties_count' => $warrantiesCount,
             'expiring_warranties_count' => $expiringWarrantiesCount,
+            'expired_warranties_count' => $expiredWarrantiesCount,
         ];
 
         /*
@@ -140,6 +166,28 @@ class DashboardController extends Controller
                 ->get(['id', 'name', 'created_at'])
             : collect();
 
+        $expiringWarranties = $activeTeamId
+            ? Warranty::query()
+                ->with([
+                    'product',
+                    'warrantyType',
+                ])
+                ->whereIn(
+                    'product_id',
+                    Product::query()
+                        ->select('id')
+                        ->where('team_id', $activeTeamId)
+                )
+                ->whereNotNull('ends_at')
+                ->whereBetween('ends_at', [
+                    now()->toDateString(),
+                    now()->addDays(30)->toDateString(),
+                ])
+                ->orderBy('ends_at')
+                ->limit(3)
+                ->get()
+            : collect();
+
         return view('dashboard', [
             'userName' => $user->name,
             'activeWorkspaceName' => $activeWorkspaceName,
@@ -148,6 +196,7 @@ class DashboardController extends Controller
             'openReviewDocuments' => $openReviewDocuments,
             'recentDocuments' => $recentDocuments,
             'recentProducts' => $recentProducts,
+            'expiringWarranties' => $expiringWarranties,
         ]);
     }
 }

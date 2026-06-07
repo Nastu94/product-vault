@@ -102,15 +102,16 @@
 
                 <x-dashboard.stat-card
                     title="Revisioni"
-                    :value="$stats['reviews_count'] ?? 0"
+                    :value="$stats['open_reviews_count'] ?? 0"
                     tone="warning"
                     description="Aperte"
                 />
 
                 <x-dashboard.stat-card
                     title="Garanzie"
-                    :value="$stats['warranties_count'] ?? 0"
-                    description="In scadenza"
+                    :value="$stats['expiring_warranties_count'] ?? 0"
+                    tone="warning"
+                    description="In scadenza entro 30 giorni"
                 />
             </section>
 
@@ -161,12 +162,46 @@
 
                 <x-dashboard.section-panel
                     title="Garanzie da controllare"
-                    description="Scadenze stimate o non confermate."
-                    :href="url('/warranties')"
+                    description="Scadenze nei prossimi 30 giorni."
+                    :href="route('warranties.index')"
                     link-label="Apri"
-                    empty-title="Nessuna garanzia"
-                    empty-message="Le scadenze appariranno quando avrai prodotti salvati."
-                />
+                    empty-title="Nessuna garanzia in scadenza"
+                    empty-message="Le scadenze appariranno qui quando saranno vicine."
+                >
+                    @if (($expiringWarranties ?? collect())->isNotEmpty())
+                        <div class="space-y-3">
+                            @foreach ($expiringWarranties as $warranty)
+                                <div class="rounded-2xl border border-yellow-200 bg-yellow-50 p-4">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <p class="line-clamp-1 text-sm font-semibold text-slate-950">
+                                                {{ $warranty->product?->name ?? 'Prodotto senza nome' }}
+                                            </p>
+
+                                            <p class="mt-1 text-xs text-yellow-700">
+                                                Scade il {{ $warranty->ends_at?->format('d/m/Y') ?? '—' }}
+                                            </p>
+
+                                            <p class="mt-1 text-xs text-slate-500">
+                                                {{ $warranty->warrantyType?->name ?? 'Garanzia' }}
+                                                · {{ $warranty->source === 'manual' ? 'Manuale' : 'Calcolata' }}
+                                            </p>
+                                        </div>
+
+                                        @if ($warranty->product)
+                                            <a
+                                                href="{{ route('products.show', $warranty->product) }}"
+                                                class="shrink-0 text-xs font-semibold text-yellow-700 hover:text-yellow-900"
+                                            >
+                                                Apri
+                                            </a>
+                                        @endif
+                                    </div>
+                                </div>
+                            @endforeach
+                        </div>
+                    @endif
+                </x-dashboard.section-panel>
             </section>
 
             {{-- Recenti compatti --}}

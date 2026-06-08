@@ -1,356 +1,238 @@
 # Product Vault
 
-Product Vault è una web app Laravel pensata per aiutare utenti privati, famiglie e, in futuro, negozi o piccoli business a conservare e organizzare documenti legati a prodotti fisici: scontrini, fatture, certificati di garanzia, manuali, documenti di riparazione e prove d'acquisto.
+Product Vault è una web app Laravel pensata per aiutare utenti privati, famiglie e, in futuro, negozi o piccoli business a conservare e organizzare documenti legati a prodotti fisici: scontrini, fatture, conferme ordine, certificati di garanzia, manuali, documenti di riparazione e prove d'acquisto.
 
-L'obiettivo dell'MVP non è identificare automaticamente ogni prodotto in modo perfetto, ma creare un flusso affidabile in cui il sistema conserva il documento originale, prova a estrarre i dati utili e permette all'utente di revisionare e completare le informazioni mancanti.
+L'obiettivo dell'MVP non è identificare automaticamente ogni prodotto in modo perfetto. L'obiettivo corretto è creare un flusso affidabile in cui il sistema conserva il documento originale, estrae ciò che riesce a leggere, propone candidati prodotto revisionabili e permette all'utente di confermare o correggere i dati.
 
-## Stato del progetto
+## Stato attuale
 
-Progetto in fase iniziale di sviluppo.
+Il progetto è in fase MVP attiva.
 
-Funzionalità già impostate:
+Sono presenti prime versioni funzionanti di:
 
-- Laravel installato
-- Laravel Jetstream con Livewire
-- Team Jetstream usati come workspace/account
-- Autenticazione utente
-- Ruoli e permessi con Spatie Permission
-- Permessi contestuali rispetto al team/workspace corrente
-- Middleware per collegare il team Jetstream corrente al contesto Spatie
-- Model `Document`
-- Policy `DocumentPolicy`
-- Integrazione iniziale con Spatie Media Library sul model `Document`
-- Repository GitHub collegata
+* autenticazione con Jetstream;
+* workspace basati su Jetstream Teams;
+* permessi contestuali con Spatie Permission e `team_id`;
+* dashboard;
+* upload documenti;
+* estrazione testo da PDF e immagini;
+* OCR/fallback;
+* parsing righe documento;
+* generazione candidati prodotto;
+* Product Understanding;
+* feedback workspace;
+* global facts;
+* analyzer Python con RapidFuzz;
+* conferma e ignore candidati;
+* creazione prodotti;
+* creazione garanzia stimata;
+* lifecycle events;
+* pagina prodotti;
+* pagina garanzie;
+* pagina Revisioni;
+* comandi di test Product Understanding e warranty lifecycle.
 
-Funzionalità non ancora completate:
-
-- Upload documenti tramite Livewire
-- Lista documenti
-- Dettaglio documento
-- Estrazione testo da PDF
-- OCR immagini
-- Classificazione documento
-- Parsing dati
-- Revisione manuale post-upload
-- Creazione prodotti
-- Gestione garanzie
-- Barcode
-- Notifiche
-- Audit log completo
-
-## Visione MVP
-
-Product Vault vuole trasformare documenti passivi in schede prodotto revisionabili.
-
-Esempio di flusso previsto:
-
-1. L'utente carica un documento.
-2. Il sistema salva il file originale.
-3. Il sistema prova a estrarre testo e metadati.
-4. Il documento viene classificato.
-5. Se possibile, viene proposta una bozza prodotto.
-6. L'utente revisiona e conferma i dati.
-7. Il prodotto può essere collegato a garanzie, documenti e storico eventi.
+Queste parti non sono definitive, ma rappresentano una prima base MVP funzionante.
 
 ## Principi di progetto
 
 ### Documento diverso da prodotto
 
-Uno scontrino o una fattura non sono il prodotto, ma una prova o un documento collegato.
+Uno scontrino, una fattura o una conferma ordine non sono il prodotto. Sono prove o documenti collegati.
+
 Il prodotto è una entità separata e può avere più documenti associati.
 
 ### Workspace prima dell'utente
 
-Documenti e prodotti appartengono a un workspace/account, non direttamente a un singolo utente.
+Documenti, prodotti e garanzie appartengono a un workspace/team, non direttamente a un singolo utente.
 
-Nel progetto attuale, il team Jetstream rappresenta il workspace/account.
+Nel progetto attuale, Jetstream Teams rappresenta il workspace/account.
 
 ### Non inventare dati
 
-Se il sistema non riesce a identificare un prodotto con sufficiente affidabilità, deve salvare il documento e chiedere conferma all'utente, non creare dati falsi.
+Se il sistema non riesce a identificare un prodotto con sufficiente affidabilità, deve salvare il documento e chiedere conferma all'utente.
+
+Il sistema non deve creare dati falsi solo per sembrare più automatico.
 
 ### Revisione manuale centrale
 
-L'automazione deve aiutare l'utente, non sostituirlo completamente.
-La schermata di revisione sarà una parte centrale dell'MVP.
+La revisione non è un fallback secondario. È parte del prodotto.
+
+Product Vault deve aiutare l'utente a confermare più velocemente, non sostituire la conferma quando i dati sono incerti.
 
 ### Privacy by design
 
-I documenti possono contenere dati personali, fiscali o commerciali.
-Per questo motivo l'accesso ai file dovrà essere protetto tramite autorizzazioni e policy.
+Ricevute, fatture e documenti prodotto possono contenere dati personali, fiscali o commerciali.
+
+I file devono essere trattati come documenti sensibili e protetti tramite storage privato, policy e autorizzazioni.
+
+## Moduli principali
+
+### Documenti
+
+Il modulo documenti gestisce:
+
+* upload;
+* salvataggio file;
+* estrazione testo;
+* OCR;
+* classificazione;
+* parsing;
+* righe documento;
+* candidati prodotto;
+* revisione.
+
+### Product Understanding
+
+Il Product Understanding arricchisce i candidati prodotto usando:
+
+* EAN;
+* seriali;
+* feedback workspace;
+* global facts;
+* similarità testuale;
+* analyzer Python;
+* guardrail;
+* metadata diagnostici.
+
+Lo scopo è trasformare testo sporco o incompleto in candidati più facili da revisionare.
+
+### Revisioni
+
+La pagina `/reviews` raccoglie i candidati da controllare.
+
+Permette di filtrare candidati pending, candidati a bassa affidabilità, warning Python, global facts e candidati già revisionati.
+
+Include un drawer "Dettaglio conoscenza" per ispezionare global facts, feedback, Python analysis, guardrail e metadata tecnici.
+
+### Prodotti
+
+La conferma di un candidato genera o collega una scheda prodotto.
+
+Il prodotto può essere collegato al documento di origine, a garanzie e a eventi lifecycle.
+
+### Garanzie
+
+Dopo la conferma di un candidato, Product Vault può creare una garanzia stimata usando `WarrantyRule`.
+
+La garanzia automatica è una stima tecnica, non una certezza legale assoluta.
+
+L'utente può modificare o creare manualmente garanzie.
+
+### Lifecycle events
+
+Gli eventi lifecycle registrano passaggi importanti nella vita del prodotto, come:
+
+* prodotto creato da candidato;
+* garanzia calcolata automaticamente;
+* garanzia creata manualmente;
+* garanzia modificata manualmente.
 
 ## Stack tecnico
 
-- PHP 8.4
-- Laravel 13
-- MySQL
-- Laravel Jetstream
-- Laravel Fortify
-- Laravel Sanctum
-- Livewire
-- Spatie Laravel Permission
-- Spatie Laravel Media Library
-- Smalot PDF Parser
-- Intervention Image
-- Tailwind CSS
-- Vite
-- Laragon per sviluppo locale
+* PHP 8.4
+* Laravel 13
+* MySQL
+* Laravel Jetstream
+* Laravel Fortify
+* Laravel Sanctum
+* Livewire
+* Tailwind CSS
+* Vite
+* Spatie Laravel Permission
+* Spatie Laravel Media Library
+* Smalot PDF Parser
+* Tesseract OCR
+* Poppler
+* Python
+* RapidFuzz
+* Laragon per sviluppo locale Windows
 
-## Architettura applicativa
+## Documentazione interna
 
-Il progetto seguirà una struttura orientata a componenti Livewire, Action, Service e Job.
+La documentazione tecnica viva si trova nella cartella `docs/`.
 
-### Controller
+Documenti principali:
 
-I controller saranno usati il meno possibile e solo quando realmente utili, ad esempio per rotte specifiche, download protetti o endpoint particolari.
+* `docs/00-project-status.md`
+* `docs/01-product-understanding.md`
+* `docs/02-warranty-lifecycle.md`
+* `docs/03-reviews-workflow.md`
+* `docs/04-tests-and-fixtures.md`
+* `docs/05-technical-backlog.md`
 
-### Livewire Components
+Il README deve restare una panoramica breve. I dettagli tecnici vanno mantenuti nei documenti dedicati.
 
-I componenti Livewire gestiranno la UI e l'interazione utente.
+## Comandi principali
 
-Esempi previsti:
+Pulizia cache Laravel:
 
-- lista documenti
-- upload documento
-- dettaglio documento
-- revisione documento
-- gestione prodotti
-- gestione garanzie
-
-### Actions
-
-Le Action conterranno operazioni applicative specifiche.
-
-Esempi:
-
-- salvare un documento caricato
-- creare una bozza prodotto
-- confermare un prodotto
-- associare un documento a un prodotto
-
-### Services
-
-I Service coordineranno logiche più ampie o riutilizzabili.
-
-Esempi:
-
-- pipeline di estrazione testo
-- classificazione documento
-- parsing dati
-- calcolo affidabilità
-- gestione garanzie
-
-### Jobs
-
-I Job gestiranno operazioni asincrone o potenzialmente lente.
-
-Esempi:
-
-- elaborazione documento
-- OCR
-- parsing
-- generazione anteprime
-- notifiche
-
-### Policies
-
-Le Policy Laravel proteggeranno l'accesso alle risorse sensibili.
-
-Un utente potrà accedere solo ai documenti appartenenti al proprio workspace/team corrente.
-
-## Workspace e permessi
-
-Il progetto usa Jetstream Teams come base per il concetto di workspace/account.
-
-Relazione logica attuale:
-
-```text
-User
- -> currentTeam
- -> Documents
- -> Products
- -> Warranties
+```
+php artisan optimize:clear
 ```
 
-Spatie Permission viene usato con supporto teams abilitato.
+Test Product Understanding:
 
-Ruolo iniziale:
-
-```text
-account_owner
+```
+php artisan product-vault:test-understanding
 ```
 
-Permessi iniziali:
+Test warranty lifecycle:
 
-```text
-documents.view
-documents.upload
+```
+php artisan product-vault:test-warranty-lifecycle
 ```
 
-Permessi futuri previsti:
+Seed conoscenza sintetica Product Understanding:
 
-```text
-documents.update
-documents.delete
-documents.review
-
-products.view
-products.create
-products.update
-products.delete
-
-warranties.view
-warranties.create
-warranties.update
-warranties.delete
-
-barcodes.create
-barcodes.delete
-
-account.members.view
-account.members.invite
-account.members.remove
-account.settings.update
+```
+php artisan product-vault:seed-understanding-knowledge
 ```
 
-## Model principali previsti
+Esecuzione fixture Product Understanding:
 
-### Già avviati
+```
+php artisan product-vault:run-understanding-fixtures
+```
 
-- `User`
-- `Team`
-- `Document`
+Tinker:
 
-### Da implementare
-
-- `Product`
-- `Warranty`
-- `DocumentLine`
-- `DocumentTextExtraction`
-- `DocumentClassification`
-- `ProductIdentificationCandidate`
-- `BarcodeScan`
-- `AuditLog`
-
-## Document model
-
-Il model `Document` rappresenta un documento caricato dall'utente.
-
-Tipologie previste:
-
-- scontrino
-- fattura
-- certificato di garanzia
-- manuale
-- documento di riparazione
-- foto prodotto
-- foto seriale
-- documento sconosciuto
-- documento non supportato
-
-Stati previsti:
-
-- uploaded
-- processing
-- text_extracted
-- classified
-- parsed
-- needs_review
-- low_confidence
-- linked_to_product
-- unsupported
-- failed
-
-## Roadmap MVP
-
-### 1. Setup base
-
-- Laravel
-- Jetstream
-- Livewire
-- GitHub
-- Spatie Permission
-- Team/workspace
-
-### 2. Area documenti
-
-- lista documenti
-- upload documento
-- salvataggio file originale
-- storage privato
-- policy di accesso
-- dettaglio documento
-
-### 3. Processing documenti
-
-- job asincrono
-- estrazione testo PDF
-- fallback parser
-- OCR immagini
-- salvataggio testo grezzo
-
-### 4. Classificazione e parsing
-
-- classificazione documento
-- parsing venditore
-- parsing data
-- parsing totale
-- parsing righe candidate
-
-### 5. Revisione manuale
-
-- schermata di revisione
-- correzione dati
-- conferma documento
-- creazione bozza prodotto
-
-### 6. Prodotti e garanzie
-
-- model prodotto
-- collegamento documenti/prodotti
-- garanzie stimate
-- scadenze
-- affidabilità dati
-
-### 7. Funzioni evolutive
-
-- barcode
-- notifiche
-- audit log
-- backoffice
-- supporto multi-account avanzato
-- supporto negozi
+```
+php artisan tinker
+```
 
 ## Installazione locale
 
 Clonare la repository:
 
-```bash
+```
 git clone https://github.com/Nastu94/product-vault.git
 cd product-vault
 ```
 
 Installare dipendenze PHP:
 
-```bash
+```
 composer install
 ```
 
 Installare dipendenze frontend:
 
-```bash
+```
 npm install
 ```
 
 Copiare il file ambiente:
 
-```bash
+```
 cp .env.example .env
 ```
 
+Su Windows si può copiare manualmente `.env.example` in `.env`.
+
 Generare la chiave applicativa:
 
-```bash
+```
 php artisan key:generate
 ```
 
@@ -358,71 +240,104 @@ Configurare database e variabili nel file `.env`.
 
 Eseguire le migration:
 
-```bash
+```
 php artisan migrate
 ```
 
-Eseguire i seeder:
+Eseguire i seeder necessari:
 
-```bash
-php artisan db:seed --class=PermissionSeeder
+```
+php artisan db:seed
 ```
 
 Avviare il server locale:
 
-```bash
+```
 php artisan serve
 ```
 
 Avviare Vite:
 
-```bash
+```
 npm run dev
 ```
 
-## Comandi utili
+## Tool esterni usati in sviluppo
 
-Pulizia cache:
+Product Vault usa strumenti locali per estrazione testo e OCR.
 
-```bash
+Componenti rilevanti:
+
+* Poppler, per conversione/lettura PDF;
+* Tesseract OCR, per immagini e scansioni;
+* Python virtual environment per tool Product Understanding;
+* RapidFuzz per similarità testuale.
+
+I percorsi locali e virtual environment non devono essere committati.
+
+## Regole operative
+
+Lo sviluppo procede a micro-patch.
+
+Dopo ogni patch significativa:
+
+```
+git status
+
 php artisan optimize:clear
+
+php artisan product-vault:test-understanding
+
+php artisan product-vault:test-warranty-lifecycle
 ```
 
-Tinker:
+Committare solo file intenzionali.
 
-```bash
-php artisan tinker
+Non committare:
+
+* `.env`;
+* file caricati manualmente;
+* file generati in `storage`;
+* virtual environment Python;
+* output OCR temporanei;
+* file temporanei di debug;
+* dump locali;
+* documenti personali o sensibili.
+
+## Backlog sintetico
+
+Priorità principali dopo la documentazione:
+
+1. progettare knowledge base iniziale;
+2. correggere Python similarity troppo permissiva;
+3. introdurre guardrail lessicali più forti;
+4. migliorare parser `order_confirmation`;
+5. migliorare merchant parser;
+6. migliorare classificazione documenti non pertinenti;
+7. ridurre duplicazione logica candidato tra dettaglio documento e Revisioni.
+
+Il backlog completo è in:
+
+```
+docs/05-technical-backlog.md
 ```
 
-Esecuzione migration:
+## Fuori ambito MVP attuale
 
-```bash
-php artisan migrate
-```
+Non sono parte del consolidamento immediato:
 
-Rollback ultimo batch migration:
+* marketplace;
+* vendita usato;
+* pagamenti;
+* integrazioni Amazon/eBay/Gmail;
+* app mobile;
+* AI obbligatoria;
+* reclami automatici;
+* B2B avanzato;
+* notifiche complesse;
+* backoffice completo.
 
-```bash
-php artisan migrate:rollback
-```
-
-Build frontend:
-
-```bash
-npm run build
-```
-
-## Note di sviluppo
-
-Il progetto è in fase attiva di costruzione.
-
-Per evitare complessità premature:
-
-- non verrà aggiunto OCR finché il flusso upload non sarà stabile;
-- non verranno creati controller pieni di logica;
-- non verranno implementate funzioni marketplace nell'MVP;
-- non verranno automatizzate decisioni incerte senza revisione utente;
-- non verranno salvati documenti sensibili in cartelle pubbliche senza controllo autorizzativo.
+Queste aree potranno arrivare dopo il consolidamento dei flussi core: documento, prodotto, garanzia, revisione e knowledge base.
 
 ## Licenza
 

@@ -186,6 +186,21 @@ return [
             ],
         ],
         [
+            'name' => 'generic_accessory_should_not_use_weak_docking_match',
+            'candidate_name' => 'Cavo USB-C nero 1 metro',
+            'suggested_category' => null,
+            'suggested_line_type' => 'accessory',
+            'expect' => [
+                'best_match' => null,
+                'contains_signals' => [
+                    'low_similarity_to_global_canonical_name',
+                ],
+                'contains_warnings' => [
+                    'unusable_similarity_match',
+                ],
+            ],
+        ],
+        [
             'name' => 'powerbank_specs_should_not_match_anything',
             'candidate_name' => 'Powerbank 20000mAh PD 20W',
             'suggested_category' => 'powerbank',

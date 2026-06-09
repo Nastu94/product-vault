@@ -84,6 +84,110 @@ def safe_score(value: Any) -> float:
 def text_tokens(value: str) -> List[str]:
     return [token for token in normalize_text(value).split(" ") if token]
 
+WEAK_SIMILARITY_STOPWORDS = {
+    "pro",
+    "max",
+    "plus",
+    "mini",
+    "smart",
+    "new",
+    "black",
+    "white",
+    "blue",
+    "red",
+    "green",
+    "nero",
+    "bianco",
+    "blu",
+    "rosso",
+    "verde",
+    "wireless",
+    "usb",
+    "type",
+    "c",
+    "hdmi",
+}
+
+
+def informative_tokens(value: str) -> List[str]:
+    """
+    Estrae token utili per capire se due nomi condividono identità reale.
+
+    Non basta una similarity fuzzy alta: due prodotti possono condividere token
+    molto comuni come colore, USB, wireless o pro/max/mini senza essere lo
+    stesso prodotto.
+    """
+    tokens: List[str] = []
+
+    for token in text_tokens(value):
+        if token in WEAK_SIMILARITY_STOPWORDS:
+            continue
+
+        if len(token) < 3 and not re.match(r"^\d+k$", token):
+            continue
+
+        if token.isdigit():
+            continue
+
+        tokens.append(token)
+
+    return list(dict.fromkeys(tokens))
+
+
+def token_overlap_summary(candidate_name: str, canonical_name: str) -> Dict[str, Any]:
+    candidate_tokens = informative_tokens(candidate_name)
+    canonical_tokens = informative_tokens(canonical_name)
+
+    overlap = sorted(set(candidate_tokens) & set(canonical_tokens))
+
+    candidate_count = len(candidate_tokens)
+    canonical_count = len(canonical_tokens)
+
+    denominator = max(1, min(candidate_count, canonical_count))
+
+    return {
+        "candidate_informative_tokens": candidate_tokens,
+        "canonical_informative_tokens": canonical_tokens,
+        "informative_token_overlap": overlap,
+        "informative_token_overlap_count": len(overlap),
+        "informative_token_overlap_ratio": round(len(overlap) / denominator, 4),
+    }
+
+
+def match_quality(
+    *,
+    similarity: float,
+    min_score: float,
+    guardrails: Dict[str, Any],
+    overlap: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Decide se un match è usabile o solo diagnostico.
+
+    Un match sotto soglia non deve diventare best_match.
+    Un match sopra soglia ma senza token informativi condivisi resta sospetto.
+    I conflitti modello/spec non eliminano il match, perché servono proprio
+    alla revisione come warning forte.
+    """
+    reasons: List[str] = []
+
+    if similarity < min_score:
+        reasons.append("similarity_below_min_score")
+
+    strong_model_overlap = guardrails.get("strong_model_overlap") or []
+    informative_overlap_count = int(overlap.get("informative_token_overlap_count") or 0)
+    informative_overlap_ratio = float(overlap.get("informative_token_overlap_ratio") or 0)
+
+    if not strong_model_overlap and informative_overlap_count < 2:
+        reasons.append("insufficient_informative_token_overlap")
+
+    if not strong_model_overlap and informative_overlap_ratio < 0.25:
+        reasons.append("low_informative_token_overlap_ratio")
+
+    return {
+        "usable": reasons == [],
+        "reasons": reasons,
+    }
 
 def looks_like_model_token(token: str) -> bool:
     token = token.strip().lower()
@@ -299,6 +403,13 @@ def main() -> int:
         method, similarity = max(scored_methods, key=lambda item: item[1])
 
         guardrails = identity_guardrails(candidate_name, canonical_name)
+        overlap = token_overlap_summary(candidate_name, canonical_name)
+        quality = match_quality(
+            similarity=similarity,
+            min_score=args.min_score,
+            guardrails=guardrails,
+            overlap=overlap,
+        )
 
         matches.append({
             "canonical_name": canonical_name,
@@ -314,6 +425,8 @@ def main() -> int:
                 "wratio": round(weighted_similarity, 2),
             },
             "identity_guardrails": guardrails,
+            "token_overlap": overlap,
+            "match_quality": quality,
         })
 
     if not matches:
@@ -324,16 +437,24 @@ def main() -> int:
         return 0
 
     matches = sorted(matches, key=lambda item: item["similarity"], reverse=True)
-    best_match = matches[0]
+
+    diagnostic_best_match = matches[0]
+    usable_matches = [
+        match
+        for match in matches
+        if bool((match.get("match_quality") or {}).get("usable"))
+    ]
+
+    best_match = usable_matches[0] if usable_matches else None
 
     signals: List[str] = []
     warnings: List[str] = []
 
-    guardrails = best_match.get("identity_guardrails") or {}
-    model_conflict = bool(guardrails.get("model_conflict"))
-    spec_difference = bool(guardrails.get("spec_difference"))
+    if best_match:
+        guardrails = best_match.get("identity_guardrails") or {}
+        model_conflict = bool(guardrails.get("model_conflict"))
+        spec_difference = bool(guardrails.get("spec_difference"))
 
-    if best_match["similarity"] >= args.min_score:
         signals.append("high_similarity_to_global_canonical_name")
 
         if model_conflict:
@@ -350,19 +471,24 @@ def main() -> int:
             and not spec_difference
         ):
             signals.append("candidate_name_probably_ocr_variant")
+
+        if best_match["similarity"] >= 99.5 and not model_conflict and not spec_difference:
+            signals.append("candidate_name_matches_global_canonical_name")
     else:
         signals.append("low_similarity_to_global_canonical_name")
+        warnings.append("unusable_similarity_match")
 
-    if best_match["similarity"] >= 99.5 and not model_conflict and not spec_difference:
-        signals.append("candidate_name_matches_global_canonical_name")
+        for reason in (diagnostic_best_match.get("match_quality") or {}).get("reasons", []):
+            warnings.append(reason)
 
     result = {
         "version": VERSION,
         "enabled": True,
         "best_match": best_match,
+        "diagnostic_best_match": diagnostic_best_match,
         "matches": matches[:5],
-        "signals": signals,
-        "warnings": warnings,
+        "signals": list(dict.fromkeys(signals)),
+        "warnings": list(dict.fromkeys(warnings)),
     }
 
     print(json.dumps(result, ensure_ascii=False))

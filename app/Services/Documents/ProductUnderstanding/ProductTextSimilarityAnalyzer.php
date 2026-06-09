@@ -215,6 +215,9 @@ class ProductTextSimilarityAnalyzer
             'best_match' => is_array($result['best_match'] ?? null)
                 ? $result['best_match']
                 : null,
+            'diagnostic_best_match' => is_array($result['diagnostic_best_match'] ?? null)
+                ? $result['diagnostic_best_match']
+                : null,
             'matches' => collect($result['matches'] ?? [])
                 ->filter(fn ($match): bool => is_array($match))
                 ->take(5)

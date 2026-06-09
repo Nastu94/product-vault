@@ -1,0 +1,303 @@
+<?php
+
+namespace App\Console\Commands\ProductVault;
+
+use App\Models\Brand;
+use Illuminate\Console\Attributes\Description;
+use Illuminate\Console\Attributes\Signature;
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
+
+#[Signature('product-vault:test-initial-knowledge')]
+#[Description('Run controlled checks for the initial Product Vault knowledge pack')]
+class TestInitialKnowledgeCommand extends Command
+{
+    /**
+     * Esegue verifiche controllate sul knowledge pack iniziale.
+     *
+     * Questo comando non testa fixture Product Understanding e non deve creare
+     * global facts, feedback, prodotti, categorie o line type. L'unico import
+     * ammesso nella prima versione è quello dei brand globali.
+     */
+    public function handle(): int
+    {
+        $rows = [];
+        $failures = [];
+
+        $record = function (
+            string $scenario,
+            string $assertion,
+            bool $passed,
+            mixed $expected = null,
+            mixed $actual = null
+        ) use (&$rows, &$failures): void {
+            $rows[] = [
+                $scenario,
+                $assertion,
+                $passed ? 'OK' : 'FAIL',
+            ];
+
+            if (! $passed) {
+                $failures[] = [
+                    'scenario' => $scenario,
+                    'assertion' => $assertion,
+                    'expected' => $expected,
+                    'actual' => $actual,
+                ];
+            }
+        };
+
+        $assertEquals = function (
+            string $scenario,
+            string $assertion,
+            mixed $expected,
+            mixed $actual
+        ) use ($record): void {
+            $record($scenario, $assertion, $expected === $actual, $expected, $actual);
+        };
+
+        $assertTrue = function (
+            string $scenario,
+            string $assertion,
+            bool $actual
+        ) use ($record): void {
+            $record($scenario, $assertion, $actual === true, true, $actual);
+        };
+
+        $packPath = base_path('data/product_vault/knowledge/v1');
+
+        $metadata = $this->safeLoadKnowledgeFile($packPath.'/metadata.php');
+        $brands = $this->safeLoadKnowledgeFile($packPath.'/brands.php');
+        $brandAliases = $this->safeLoadKnowledgeFile($packPath.'/brand_aliases.php');
+        $linePatterns = $this->safeLoadKnowledgeFile($packPath.'/line_patterns.php');
+        $exclusionPatterns = $this->safeLoadKnowledgeFile($packPath.'/exclusion_patterns.php');
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scenario 1: file e metadata
+        |--------------------------------------------------------------------------
+        */
+        $assertTrue('pack_files', 'metadata file returns array', is_array($metadata));
+        $assertTrue('pack_files', 'brands file returns array', is_array($brands));
+        $assertTrue('pack_files', 'brand aliases file returns array', is_array($brandAliases));
+        $assertTrue('pack_files', 'line patterns file returns array', is_array($linePatterns));
+        $assertTrue('pack_files', 'exclusion patterns file returns array', is_array($exclusionPatterns));
+
+        $assertEquals('metadata', 'version', 'initial_knowledge_pack_v1', data_get($metadata, 'version'));
+        $assertEquals('metadata', 'brands import enabled', true, data_get($metadata, 'imports.brands'));
+        $assertEquals('metadata', 'brand aliases import disabled', false, data_get($metadata, 'imports.brand_aliases'));
+        $assertEquals('metadata', 'line patterns import disabled', false, data_get($metadata, 'imports.line_patterns'));
+        $assertEquals('metadata', 'exclusion patterns import disabled', false, data_get($metadata, 'imports.exclusion_patterns'));
+        $assertEquals('metadata', 'global facts import disabled', false, data_get($metadata, 'imports.global_facts'));
+        $assertEquals('metadata', 'do not create global facts', true, data_get($metadata, 'rules.do_not_create_global_facts'));
+        $assertEquals('metadata', 'do not touch user feedback', true, data_get($metadata, 'rules.do_not_touch_user_feedback'));
+        $assertEquals('metadata', 'do not touch user products', true, data_get($metadata, 'rules.do_not_touch_user_products'));
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scenario 2: validità brand
+        |--------------------------------------------------------------------------
+        */
+        $expectedBrandCount = 20;
+        $normalizedBrandNames = collect($brands)
+            ->pluck('normalized_name')
+            ->map(fn ($value) => $this->normalize((string) $value))
+            ->filter()
+            ->values();
+
+        $assertEquals('brands_pack', 'brand count', $expectedBrandCount, count($brands));
+        $assertEquals('brands_pack', 'normalized names count', $expectedBrandCount, $normalizedBrandNames->count());
+        $assertEquals('brands_pack', 'no duplicate normalized names', $normalizedBrandNames->count(), $normalizedBrandNames->unique()->count());
+
+        foreach ($brands as $index => $brand) {
+            $row = $index + 1;
+
+            $assertTrue(
+                'brands_pack',
+                "row {$row} has name",
+                trim((string) ($brand['name'] ?? '')) !== ''
+            );
+
+            $assertTrue(
+                'brands_pack',
+                "row {$row} has normalized_name",
+                trim((string) ($brand['normalized_name'] ?? '')) !== ''
+            );
+
+            $assertTrue(
+                'brands_pack',
+                "row {$row} does not define team_id",
+                ! array_key_exists('team_id', $brand)
+            );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scenario 3: pattern coerenti con line type reali
+        |--------------------------------------------------------------------------
+        */
+        $allowedLineTypes = DB::table('document_line_types')
+            ->pluck('code')
+            ->all();
+
+        $assertEquals(
+            'line_types',
+            'real line types',
+            ['discount', 'merchant_info', 'payment', 'product', 'tax', 'total', 'unknown'],
+            $allowedLineTypes
+        );
+
+        foreach ($this->extractPatternRows($linePatterns) as $index => $pattern) {
+            $row = $index + 1;
+
+            $assertTrue(
+                'line_patterns',
+                "row {$row} has allowed document_line_type",
+                in_array($pattern['document_line_type'] ?? null, $allowedLineTypes, true)
+            );
+        }
+
+        foreach ($this->extractPatternRows($exclusionPatterns) as $index => $pattern) {
+            $row = $index + 1;
+
+            $assertTrue(
+                'exclusion_patterns',
+                "row {$row} has allowed document_line_type",
+                in_array($pattern['document_line_type'] ?? null, $allowedLineTypes, true)
+            );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scenario 4: protezione dati non coinvolti
+        |--------------------------------------------------------------------------
+        */
+        $before = $this->protectedCounts();
+
+        $dryRunExitCode = Artisan::call('product-vault:seed-initial-knowledge', [
+            '--dry-run' => true,
+        ]);
+
+        $afterDryRun = $this->protectedCounts();
+
+        $assertEquals('dry_run', 'exit code', 0, $dryRunExitCode);
+        $assertEquals('dry_run', 'protected counts unchanged', $before, $afterDryRun);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scenario 5: import reale e idempotenza
+        |--------------------------------------------------------------------------
+        */
+        $firstImportExitCode = Artisan::call('product-vault:seed-initial-knowledge');
+
+        $afterFirstImport = $this->protectedCounts();
+
+        $assertEquals('first_import', 'exit code', 0, $firstImportExitCode);
+        $assertEquals('first_import', 'global facts unchanged', $before['global_facts'], $afterFirstImport['global_facts']);
+        $assertEquals('first_import', 'feedback unchanged', $before['feedback'], $afterFirstImport['feedback']);
+        $assertEquals('first_import', 'products unchanged', $before['products'], $afterFirstImport['products']);
+        $assertEquals('first_import', 'categories unchanged', $before['categories'], $afterFirstImport['categories']);
+        $assertEquals('first_import', 'document line types unchanged', $before['document_line_types'], $afterFirstImport['document_line_types']);
+
+        $importedBrands = Brand::query()
+            ->whereNull('team_id')
+            ->whereIn('normalized_name', $normalizedBrandNames->all())
+            ->get();
+
+        $assertEquals('first_import', 'expected global brands imported', $expectedBrandCount, $importedBrands->count());
+        $assertEquals('first_import', 'imported brands verified', $expectedBrandCount, $importedBrands->where('is_verified', true)->count());
+        $assertEquals('first_import', 'imported brands active', $expectedBrandCount, $importedBrands->where('is_active', true)->count());
+
+        $brandCountAfterFirstImport = Brand::query()->count();
+
+        $secondImportExitCode = Artisan::call('product-vault:seed-initial-knowledge');
+
+        $afterSecondImport = $this->protectedCounts();
+        $brandCountAfterSecondImport = Brand::query()->count();
+
+        $assertEquals('second_import', 'exit code', 0, $secondImportExitCode);
+        $assertEquals('second_import', 'brand count unchanged', $brandCountAfterFirstImport, $brandCountAfterSecondImport);
+        $assertEquals('second_import', 'protected counts unchanged', $afterFirstImport, $afterSecondImport);
+
+        $this->table(['Scenario', 'Assertion', 'Status'], $rows);
+
+        if ($failures !== []) {
+            $this->error('Initial knowledge checks failed.');
+
+            foreach ($failures as $failure) {
+                $this->line('');
+                $this->warn($failure['scenario'].' / '.$failure['assertion']);
+                $this->line('Expected: '.json_encode($failure['expected'], JSON_UNESCAPED_UNICODE));
+                $this->line('Actual:   '.json_encode($failure['actual'], JSON_UNESCAPED_UNICODE));
+            }
+
+            return self::FAILURE;
+        }
+
+        $this->info('Initial knowledge checks passed.');
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * Carica un file dati del knowledge pack senza interrompere brutalmente il comando.
+     */
+    private function safeLoadKnowledgeFile(string $path): array
+    {
+        if (! file_exists($path)) {
+            return [];
+        }
+
+        $data = require $path;
+
+        return is_array($data) ? $data : [];
+    }
+
+    /**
+     * Estrae righe pattern da strutture raggruppate.
+     */
+    private function extractPatternRows(array $groups): array
+    {
+        $rows = [];
+
+        foreach ($groups as $group) {
+            if (! is_array($group)) {
+                continue;
+            }
+
+            foreach ($group as $item) {
+                if (is_array($item) && array_key_exists('document_line_type', $item)) {
+                    $rows[] = $item;
+                }
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Conteggi che il seed iniziale non deve modificare.
+     */
+    private function protectedCounts(): array
+    {
+        return [
+            'categories' => DB::table('categories')->count(),
+            'document_line_types' => DB::table('document_line_types')->count(),
+            'global_facts' => DB::table('product_understanding_global_facts')->count(),
+            'feedback' => DB::table('product_understanding_feedback')->count(),
+            'products' => DB::table('products')->count(),
+        ];
+    }
+
+    /**
+     * Normalizzazione minima per confrontare i dati del pack.
+     */
+    private function normalize(string $value): string
+    {
+        $value = mb_strtolower(trim($value));
+        $value = preg_replace('/\s+/', ' ', $value) ?? $value;
+
+        return $value;
+    }
+}

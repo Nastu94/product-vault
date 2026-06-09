@@ -43,6 +43,12 @@ class TestUnderstandingCommand extends Command
             return $seedExitCode;
         }
 
+        $initialKnowledgeExitCode = $this->call('product-vault:seed-initial-knowledge');
+
+        if ($initialKnowledgeExitCode !== self::SUCCESS) {
+            return $initialKnowledgeExitCode;
+        }
+
         $fixturesExitCode = $this->call('product-vault:run-understanding-fixtures');
 
         if ($fixturesExitCode !== self::SUCCESS) {

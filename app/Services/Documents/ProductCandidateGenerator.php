@@ -5,6 +5,7 @@ namespace App\Services\Documents;
 use App\Models\Document;
 use App\Models\DocumentLine;
 use App\Models\ProductIdentificationCandidate;
+use App\Models\Brand;
 use App\Services\Documents\ProductUnderstanding\ProductLineAnalyzer;
 use App\Services\Documents\ProductUnderstanding\ProductTextSimilarityAnalyzer;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackMatcher;
@@ -149,6 +150,11 @@ class ProductCandidateGenerator
             $model = $this->guessModel($productCode)
                 ?: $analysis->modelCandidate;
 
+            $brandKnowledge = $this->resolveBrandFromInitialKnowledge(
+                brandCandidate: $analysis->brandCandidate,
+                candidateName: $productName,
+            );
+
             $legacyConfidenceScore = $this->estimateConfidenceScore($line, $productCode);
             $understandingConfidenceScore = $analysis->candidateConfidenceScore();
 
@@ -175,7 +181,7 @@ class ProductCandidateGenerator
                 'document_id' => $document->id,
                 'document_line_id' => $line->id,
                 'product_id' => null,
-                'brand_id' => null,
+                'brand_id' => $brandKnowledge['brand_id'],
                 'category_id' => null,
                 'name' => $productName,
                 'model' => $model,
@@ -201,6 +207,7 @@ class ProductCandidateGenerator
                     'unit_price' => $line->unit_price,
                     'total_price' => $line->total_price,
                     'product_understanding' => $analysis->toMetadata(),
+                    'product_understanding_brand' => $brandKnowledge,
                     'product_understanding_feedback' => $feedbackContext,
                     'product_understanding_global_fact' => $globalFactContext,
                     'product_understanding_python' => $productTextSimilarityContext,
@@ -1200,5 +1207,105 @@ class ProductCandidateGenerator
         }
 
         return min($score, 100);
+    }
+
+    /**
+     * Risolve il brand del candidato usando la knowledge base iniziale.
+     *
+     * Questa patch non modifica il nome candidato e non forza decisioni automatiche.
+     * Collega solo brand globali già presenti nella tabella brands.
+     */
+    private function resolveBrandFromInitialKnowledge(?string $brandCandidate, ?string $candidateName): array
+    {
+        $normalizedBrandCandidate = $this->normalizeKnowledgeToken((string) $brandCandidate);
+
+        if ($normalizedBrandCandidate !== '') {
+            $brand = Brand::query()
+                ->whereNull('team_id')
+                ->where('normalized_name', $normalizedBrandCandidate)
+                ->where('is_active', true)
+                ->first();
+
+            if ($brand) {
+                return [
+                    'matched' => true,
+                    'match_type' => 'analysis_brand_candidate',
+                    'brand_id' => $brand->id,
+                    'brand_name' => $brand->name,
+                    'normalized_name' => $brand->normalized_name,
+                    'is_verified' => (bool) $brand->is_verified,
+                    'source' => 'initial_knowledge_pack_v1',
+                ];
+            }
+        }
+
+        $normalizedCandidateName = $this->normalizeKnowledgeToken((string) $candidateName);
+
+        if ($normalizedCandidateName !== '') {
+            $brand = Brand::query()
+                ->whereNull('team_id')
+                ->where('is_active', true)
+                ->get()
+                ->sortByDesc(fn (Brand $brand): int => mb_strlen($brand->normalized_name))
+                ->first(
+                    fn (Brand $brand): bool => $this->containsKnowledgeToken(
+                        text: $normalizedCandidateName,
+                        token: $brand->normalized_name,
+                    )
+                );
+
+            if ($brand) {
+                return [
+                    'matched' => true,
+                    'match_type' => 'candidate_name_scan',
+                    'brand_id' => $brand->id,
+                    'brand_name' => $brand->name,
+                    'normalized_name' => $brand->normalized_name,
+                    'is_verified' => (bool) $brand->is_verified,
+                    'source' => 'initial_knowledge_pack_v1',
+                ];
+            }
+        }
+
+        return [
+            'matched' => false,
+            'match_type' => null,
+            'brand_id' => null,
+            'brand_name' => null,
+            'normalized_name' => null,
+            'is_verified' => false,
+            'source' => 'initial_knowledge_pack_v1',
+        ];
+    }
+
+    /**
+     * Normalizzazione minima per confronti con la knowledge base.
+     */
+    private function normalizeKnowledgeToken(string $value): string
+    {
+        $value = mb_strtolower(trim($value));
+        $value = preg_replace('/[^a-z0-9]+/u', ' ', $value) ?: $value;
+        $value = preg_replace('/\s+/', ' ', $value) ?: $value;
+
+        return trim($value);
+    }
+
+    /**
+     * Verifica token intero per evitare falsi positivi.
+     *
+     * Esempio: "hp" non deve matchare dentro "shipping".
+     */
+    private function containsKnowledgeToken(string $text, string $token): bool
+    {
+        $token = $this->normalizeKnowledgeToken($token);
+
+        if ($text === '' || $token === '') {
+            return false;
+        }
+
+        return preg_match(
+            '/(?<![a-z0-9])'.preg_quote($token, '/').'(?![a-z0-9])/u',
+            $text
+        ) === 1;
     }
 }

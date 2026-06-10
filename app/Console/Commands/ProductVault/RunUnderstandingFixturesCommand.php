@@ -490,6 +490,27 @@ class RunUnderstandingFixturesCommand extends Command
                     );
                 }
 
+                if (! empty($expectedCandidate['initial_line_pattern_match_types'])) {
+                    $actualPatterns = collect(data_get(
+                        $actualCandidate->metadata,
+                        'product_understanding_initial_knowledge.line_patterns',
+                        []
+                    ));
+
+                    foreach ($expectedCandidate['initial_line_pattern_match_types'] as $pattern => $expectedMatchType) {
+                        $actualPattern = $actualPatterns
+                            ->first(fn ($item): bool => ($item['pattern'] ?? null) === $pattern);
+
+                        $assertEquals(
+                            'pipeline',
+                            $name,
+                            $needle.' initial line pattern '.$pattern.' match type',
+                            $expectedMatchType,
+                            $actualPattern['match_type'] ?? null,
+                        );
+                    }
+                }
+
                 if (array_key_exists('global_fact_matched', $expectedCandidate)) {
                     $assertEquals(
                         'pipeline',

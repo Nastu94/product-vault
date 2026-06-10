@@ -237,6 +237,46 @@ class TestInitialKnowledgeCommand extends Command
             $notebookPatterns[0]['pattern'] ?? null
         );
 
+        $notebookTypoPatterns = $repository->matchLinePatterns(
+            description: 'Notebok Lenovo ThinkPad X1 Carbon Gen 11',
+            rawText: 'Notebok Lenovo ThinkPad X1 Carbon Gen 11',
+            documentLineTypeCode: 'product',
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'notebook typo pattern matched',
+            'notebook',
+            $notebookTypoPatterns[0]['pattern'] ?? null
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'notebook typo pattern match type',
+            'fuzzy_pattern',
+            $notebookTypoPatterns[0]['match_type'] ?? null
+        );
+
+        $stampanteTypoPatterns = $repository->matchLinePatterns(
+            description: 'Stanpamte Epson EcoTank ET-2850',
+            rawText: 'Stanpamte Epson EcoTank ET-2850',
+            documentLineTypeCode: 'product',
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'stampante typo pattern matched',
+            'stampante',
+            $stampanteTypoPatterns[0]['pattern'] ?? null
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'stampante typo pattern match type',
+            'fuzzy_pattern',
+            $stampanteTypoPatterns[0]['match_type'] ?? null
+        );
+
         $assertEquals(
             'knowledge_repository',
             'notebook pattern line type matches',

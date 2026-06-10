@@ -717,5 +717,69 @@ return [
                 ],
             ],
         ],
+        [
+            'name' => 'typo_line_pattern_invoice_table',
+            'document_type' => 'invoice',
+            'raw_text_lines' => [
+                'FATTURA',
+                'Numero: PV-SYN-PIPE-TYPO-PATTERN    Data: 09/06/2026',
+                'Venditore',
+                'TechHub Italia S.r.l.',
+                '',
+                'Righe documento',
+                'Codice       Descrizione                                      Quantita  Prezzo unitario  Totale riga',
+                'TYPO-X1-G11  Notebok Lenovo ThinkPad X1 Carbon Gen 11         1         1.499,00         1.499,00',
+                'TYPO-PRINT   Stanpamte Epson EcoTank ET-2850                  1         249,00           249,00',
+                '',
+                'Imponibile             1.433,61',
+                'IVA 22%                315,39',
+                'Totale documento EUR   1.748,00',
+            ],
+            'expect' => [
+                'line_count' => 2,
+                'candidate_count' => 2,
+                'document_status' => 'needs_review',
+                'lines' => [
+                    [
+                        'description' => 'Notebok Lenovo ThinkPad X1 Carbon Gen 11',
+                        'quantity' => '1.000',
+                        'unit_price' => '1499.00',
+                        'total_price' => '1499.00',
+                        'mode' => 'text_invoice_table_header_roles',
+                    ],
+                    [
+                        'description' => 'Stanpamte Epson EcoTank ET-2850',
+                        'quantity' => '1.000',
+                        'unit_price' => '249.00',
+                        'total_price' => '249.00',
+                        'mode' => 'text_invoice_table_header_roles',
+                    ],
+                ],
+                'candidates' => [
+                    [
+                        'name_contains' => 'Notebok Lenovo ThinkPad',
+                        'brand_name' => 'Lenovo',
+                        'brand_candidate' => 'Lenovo',
+                        'initial_line_patterns_contain' => [
+                            'notebook',
+                        ],
+                        'initial_line_pattern_match_types' => [
+                            'notebook' => 'fuzzy_pattern',
+                        ],
+                    ],
+                    [
+                        'name_contains' => 'Stanpamte Epson EcoTank',
+                        'brand_name' => 'Epson',
+                        'brand_candidate' => 'Epson',
+                        'initial_line_patterns_contain' => [
+                            'stampante',
+                        ],
+                        'initial_line_pattern_match_types' => [
+                            'stampante' => 'fuzzy_pattern',
+                        ],
+                    ],
+                ],
+            ],
+        ],
     ],
 ];

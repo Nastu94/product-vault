@@ -354,6 +354,9 @@ return [
                         'name_contains' => 'X1 Carbon',
                         'brand_name' => 'Lenovo',
                         'brand_candidate' => 'Lenovo',
+                        'initial_line_patterns_contain' => [
+                            'notebook',
+                        ],
                         'python_best_match' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
                         'python_contains_signals' => [
                             'high_similarity_to_global_canonical_name',
@@ -376,6 +379,9 @@ return [
                         'name_contains' => 'Sony WH 1000 XM5',
                         'brand_name' => 'Sony',
                         'brand_candidate' => 'Sony',
+                        'initial_line_patterns_contain' => [
+                            'cuffie',
+                        ],
                         'feedback_suggested_bias' => 'positive',
                         'python_best_match' => null,
                         'python_contains_warnings' => [
@@ -702,6 +708,9 @@ return [
                         'name_contains' => 'HEWLETT PACKARD Notebook EliteBook',
                         'brand_name' => 'HP',
                         'brand_candidate' => null,
+                        'initial_line_patterns_contain' => [
+                            'notebook',
+                        ],
                         'brand_match_type' => 'initial_brand_alias',
                         'brand_alias' => 'Hewlett Packard',
                     ],

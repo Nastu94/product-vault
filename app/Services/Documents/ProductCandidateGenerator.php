@@ -157,6 +157,12 @@ class ProductCandidateGenerator
                 candidateName: $productName,
             );
 
+            $initialKnowledgeLinePatterns = $this->initialKnowledgeRepository->matchLinePatterns(
+                description: (string) $line->description,
+                rawText: (string) $line->raw_text,
+                documentLineTypeCode: $line->documentLineType?->code,
+            );
+
             $legacyConfidenceScore = $this->estimateConfidenceScore($line, $productCode);
             $understandingConfidenceScore = $analysis->candidateConfidenceScore();
 
@@ -210,6 +216,10 @@ class ProductCandidateGenerator
                     'total_price' => $line->total_price,
                     'product_understanding' => $analysis->toMetadata(),
                     'product_understanding_brand' => $brandKnowledge,
+                    'product_understanding_initial_knowledge' => [
+                        'source' => 'initial_knowledge_pack_v1',
+                        'line_patterns' => $initialKnowledgeLinePatterns,
+                    ],
                     'product_understanding_feedback' => $feedbackContext,
                     'product_understanding_global_fact' => $globalFactContext,
                     'product_understanding_python' => $productTextSimilarityContext,

@@ -224,6 +224,39 @@ class TestInitialKnowledgeCommand extends Command
             $productWithDiscountWord
         );
 
+        $notebookPatterns = $repository->matchLinePatterns(
+            description: 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+            rawText: 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+            documentLineTypeCode: 'product',
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'notebook line pattern matched',
+            'notebook',
+            $notebookPatterns[0]['pattern'] ?? null
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'notebook pattern line type matches',
+            true,
+            $notebookPatterns[0]['line_type_matches_document_line_type'] ?? null
+        );
+
+        $shippingPatterns = $repository->matchLinePatterns(
+            description: 'Spedizione express',
+            rawText: 'Spedizione express',
+            documentLineTypeCode: 'unknown',
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'shipping service pattern matched',
+            'spedizione',
+            $shippingPatterns[0]['pattern'] ?? null
+        );
+
         /*
         |--------------------------------------------------------------------------
         | Scenario 3: pattern coerenti con line type reali

@@ -29,6 +29,78 @@ class InitialKnowledgeRepository
     }
 
     /**
+     * Restituisce i line pattern dal knowledge pack iniziale.
+     */
+    public function linePatterns(): array
+    {
+        return $this->loadKnowledgeFile('line_patterns.php');
+    }
+
+    /**
+     * Cerca pattern lessicali applicabili alla riga.
+     *
+     * Questo metodo è osservativo: non decide se generare o bloccare candidati.
+     * Serve a salvare nei metadata quali segnali del knowledge pack hanno matchato.
+     */
+    public function matchLinePatterns(
+        string $description,
+        string $rawText,
+        ?string $documentLineTypeCode = null,
+    ): array {
+        $description = $this->normalize($description);
+        $rawText = $this->normalize($rawText);
+        $lineType = $this->normalize($documentLineTypeCode ?? '');
+
+        $matches = [];
+
+        foreach ($this->linePatterns() as $group => $patterns) {
+            if (! is_array($patterns)) {
+                continue;
+            }
+
+            foreach ($patterns as $pattern) {
+                if (! is_array($pattern)) {
+                    continue;
+                }
+
+                $patternText = $this->normalize((string) ($pattern['pattern'] ?? ''));
+
+                if ($patternText === '') {
+                    continue;
+                }
+
+                if (
+                    ! $this->containsToken($description, $patternText)
+                    && ! $this->containsToken($rawText, $patternText)
+                ) {
+                    continue;
+                }
+
+                $patternLineType = $this->normalize((string) ($pattern['document_line_type'] ?? ''));
+
+                $matches[] = [
+                    'matched' => true,
+                    'group' => (string) $group,
+                    'pattern' => (string) ($pattern['pattern'] ?? ''),
+                    'normalized_pattern' => $patternText,
+                    'document_line_type' => $patternLineType !== '' ? $patternLineType : null,
+                    'line_type_matches_document_line_type' => $lineType !== ''
+                        && $patternLineType !== ''
+                        && $patternLineType === $lineType,
+                    'suggested_category_slug' => $pattern['suggested_category_slug'] ?? null,
+                    'product_kind' => $pattern['product_kind'] ?? null,
+                    'semantic_group' => $pattern['semantic_group'] ?? null,
+                    'candidate_bias' => $pattern['candidate_bias'] ?? null,
+                    'weight' => (int) ($pattern['weight'] ?? 0),
+                    'source' => 'initial_knowledge_pack_v1',
+                ];
+            }
+        }
+
+        return $matches;
+    }
+
+    /**
      * Cerca un alias brand nel knowledge pack iniziale.
      *
      * Gli alias non sono importati in database: restano dati versionati usati

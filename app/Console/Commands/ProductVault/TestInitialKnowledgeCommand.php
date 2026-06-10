@@ -8,6 +8,7 @@ use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use App\Services\Documents\ProductUnderstanding\InitialKnowledgeRepository;
 
 #[Signature('product-vault:test-initial-knowledge')]
 #[Description('Run controlled checks for the initial Product Vault knowledge pack')]
@@ -180,6 +181,48 @@ class TestInitialKnowledgeCommand extends Command
                 in_array($brandNormalizedName, $knownBrandNames, true)
             );
         }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scenario 2C: repository knowledge base
+        |--------------------------------------------------------------------------
+        */
+        $repository = app(InitialKnowledgeRepository::class);
+
+        $hpAlias = $repository->findBrandAlias('HEWLETT PACKARD Notebook EliteBook 840 G10');
+
+        $assertEquals(
+            'knowledge_repository',
+            'hewlett packard resolves to hp',
+            'hp',
+            $hpAlias['brand_normalized_name'] ?? null
+        );
+
+        $discountSuppression = $repository->matchCandidateSuppressionPattern(
+            description: 'Sconto promozionale',
+            rawText: 'Sconto promozionale',
+            documentLineTypeCode: 'discount',
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'discount line suppression matched',
+            'discount_line',
+            $discountSuppression['reason'] ?? null
+        );
+
+        $productWithDiscountWord = $repository->matchCandidateSuppressionPattern(
+            description: 'Notebook Lenovo con sconto incluso',
+            rawText: 'Notebook Lenovo con sconto incluso',
+            documentLineTypeCode: 'product',
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'product line with discount word is not suppressed',
+            null,
+            $productWithDiscountWord
+        );
 
         /*
         |--------------------------------------------------------------------------

@@ -10,6 +10,7 @@ use App\Services\Documents\ProductUnderstanding\ProductLineAnalyzer;
 use App\Services\Documents\ProductUnderstanding\ProductTextSimilarityAnalyzer;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackMatcher;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingGlobalFactMatcher;
+use App\Services\Documents\ProductUnderstanding\InitialKnowledgeRepository;
 
 class ProductCandidateGenerator
 {
@@ -24,6 +25,7 @@ class ProductCandidateGenerator
         private readonly ProductUnderstandingFeedbackMatcher $feedbackMatcher,
         private readonly ProductUnderstandingGlobalFactMatcher $globalFactMatcher,
         private readonly ProductTextSimilarityAnalyzer $productTextSimilarityAnalyzer,
+        private readonly InitialKnowledgeRepository $initialKnowledgeRepository,
     ) {
     }
 
@@ -39,7 +41,7 @@ class ProductCandidateGenerator
 
         $lines = $document
             ->lines()
-            ->with('document.documentType')
+            ->with(['document.documentType', 'documentLineType'])
             ->orderBy('line_number')
             ->get();
 
@@ -427,6 +429,13 @@ class ProductCandidateGenerator
         |
         */
         if ($this->lineLooksLikeHardNonProductLine($line)) {
+            return false;
+        }
+
+        /**
+         * Esclusioni deboli da knowledge pack iniziale
+         */
+        if ($this->lineMatchesInitialKnowledgeExclusionPattern($line)) {
             return false;
         }
 
@@ -1315,52 +1324,27 @@ class ProductCandidateGenerator
 
     /**
      * Cerca un alias brand nel knowledge pack iniziale.
-     *
-     * Gli alias non sono ancora importati in database. Restano file dati versionati
-     * e vengono usati solo come supporto leggero al matching del candidato.
      */
     private function matchInitialKnowledgeBrandAlias(string $value): ?array
     {
-        $text = $this->normalizeKnowledgeToken($value);
+        return $this->initialKnowledgeRepository->findBrandAlias($value);
+    }
 
-        if ($text === '') {
-            return null;
-        }
+    /**
+     * Applica i pattern di esclusione iniziali in modo prudente.
+     *
+     * Il blocco avviene solo se il pattern dichiara lo stesso document_line_type
+     * assegnato alla riga. Questo evita falsi negativi su prodotti validi.
+     */
+    private function lineMatchesInitialKnowledgeExclusionPattern(DocumentLine $line): bool
+    {
+        $match = $this->initialKnowledgeRepository->matchCandidateSuppressionPattern(
+            description: (string) $line->description,
+            rawText: (string) $line->raw_text,
+            documentLineTypeCode: $line->documentLineType?->code,
+        );
 
-        $aliasesPath = base_path('data/product_vault/knowledge/v1/brand_aliases.php');
-
-        if (! file_exists($aliasesPath)) {
-            return null;
-        }
-
-        $aliases = require $aliasesPath;
-
-        if (! is_array($aliases)) {
-            return null;
-        }
-
-        $aliases = collect($aliases)
-            ->filter(fn ($alias): bool => is_array($alias))
-            ->filter(fn ($alias): bool => trim((string) ($alias['normalized_alias'] ?? '')) !== '')
-            ->sortByDesc(fn ($alias): int => mb_strlen((string) $alias['normalized_alias']))
-            ->values();
-
-        foreach ($aliases as $alias) {
-            $normalizedAlias = $this->normalizeKnowledgeToken((string) ($alias['normalized_alias'] ?? ''));
-
-            if (! $this->containsKnowledgeToken($text, $normalizedAlias)) {
-                continue;
-            }
-
-            return [
-                'alias' => (string) ($alias['alias'] ?? ''),
-                'normalized_alias' => $normalizedAlias,
-                'brand_normalized_name' => $this->normalizeKnowledgeToken((string) ($alias['brand_normalized_name'] ?? '')),
-                'confidence_score' => (int) ($alias['confidence_score'] ?? 0),
-            ];
-        }
-
-        return null;
+        return $match !== null;
     }
 
     /**

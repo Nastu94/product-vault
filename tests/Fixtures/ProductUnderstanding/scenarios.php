@@ -667,5 +667,46 @@ return [
                 ],
             ],
         ],
+        [
+            'name' => 'brand_alias_invoice_table',
+            'document_type' => 'invoice',
+            'raw_text_lines' => [
+                'FATTURA',
+                'Numero: PV-SYN-PIPE-BRAND-ALIAS    Data: 08/06/2026',
+                'Venditore',
+                'TechHub Italia S.r.l.',
+                '',
+                'Righe documento',
+                'Codice       Descrizione                                      Quantita  Prezzo unitario  Totale riga',
+                'ELITE-840G10 HEWLETT PACKARD Notebook EliteBook 840 G10       1         999,00           999,00',
+                '',
+                'Imponibile             818,85',
+                'IVA 22%                180,15',
+                'Totale documento EUR   999,00',
+            ],
+            'expect' => [
+                'line_count' => 1,
+                'candidate_count' => 1,
+                'document_status' => 'needs_review',
+                'lines' => [
+                    [
+                        'description' => 'HEWLETT PACKARD Notebook EliteBook 840 G10',
+                        'quantity' => '1.000',
+                        'unit_price' => '999.00',
+                        'total_price' => '999.00',
+                        'mode' => 'text_invoice_table_header_roles',
+                    ],
+                ],
+                'candidates' => [
+                    [
+                        'name_contains' => 'HEWLETT PACKARD Notebook EliteBook',
+                        'brand_name' => 'HP',
+                        'brand_candidate' => null,
+                        'brand_match_type' => 'initial_brand_alias',
+                        'brand_alias' => 'Hewlett Packard',
+                    ],
+                ],
+            ],
+        ],
     ],
 ];

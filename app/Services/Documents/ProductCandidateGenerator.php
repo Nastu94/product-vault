@@ -1233,6 +1233,35 @@ class ProductCandidateGenerator
                     'brand_id' => $brand->id,
                     'brand_name' => $brand->name,
                     'normalized_name' => $brand->normalized_name,
+                    'alias' => null,
+                    'alias_normalized' => null,
+                    'alias_confidence_score' => null,
+                    'is_verified' => (bool) $brand->is_verified,
+                    'source' => 'initial_knowledge_pack_v1',
+                ];
+            }
+        }
+
+        $aliasMatch = $this->matchInitialKnowledgeBrandAlias((string) $brandCandidate)
+            ?: $this->matchInitialKnowledgeBrandAlias((string) $candidateName);
+
+        if ($aliasMatch !== null) {
+            $brand = Brand::query()
+                ->whereNull('team_id')
+                ->where('normalized_name', $aliasMatch['brand_normalized_name'])
+                ->where('is_active', true)
+                ->first();
+
+            if ($brand) {
+                return [
+                    'matched' => true,
+                    'match_type' => 'initial_brand_alias',
+                    'brand_id' => $brand->id,
+                    'brand_name' => $brand->name,
+                    'normalized_name' => $brand->normalized_name,
+                    'alias' => $aliasMatch['alias'],
+                    'alias_normalized' => $aliasMatch['normalized_alias'],
+                    'alias_confidence_score' => $aliasMatch['confidence_score'],
                     'is_verified' => (bool) $brand->is_verified,
                     'source' => 'initial_knowledge_pack_v1',
                 ];
@@ -1261,6 +1290,9 @@ class ProductCandidateGenerator
                     'brand_id' => $brand->id,
                     'brand_name' => $brand->name,
                     'normalized_name' => $brand->normalized_name,
+                    'alias' => null,
+                    'alias_normalized' => null,
+                    'alias_confidence_score' => null,
                     'is_verified' => (bool) $brand->is_verified,
                     'source' => 'initial_knowledge_pack_v1',
                 ];
@@ -1273,9 +1305,62 @@ class ProductCandidateGenerator
             'brand_id' => null,
             'brand_name' => null,
             'normalized_name' => null,
+            'alias' => null,
+            'alias_normalized' => null,
+            'alias_confidence_score' => null,
             'is_verified' => false,
             'source' => 'initial_knowledge_pack_v1',
         ];
+    }
+
+    /**
+     * Cerca un alias brand nel knowledge pack iniziale.
+     *
+     * Gli alias non sono ancora importati in database. Restano file dati versionati
+     * e vengono usati solo come supporto leggero al matching del candidato.
+     */
+    private function matchInitialKnowledgeBrandAlias(string $value): ?array
+    {
+        $text = $this->normalizeKnowledgeToken($value);
+
+        if ($text === '') {
+            return null;
+        }
+
+        $aliasesPath = base_path('data/product_vault/knowledge/v1/brand_aliases.php');
+
+        if (! file_exists($aliasesPath)) {
+            return null;
+        }
+
+        $aliases = require $aliasesPath;
+
+        if (! is_array($aliases)) {
+            return null;
+        }
+
+        $aliases = collect($aliases)
+            ->filter(fn ($alias): bool => is_array($alias))
+            ->filter(fn ($alias): bool => trim((string) ($alias['normalized_alias'] ?? '')) !== '')
+            ->sortByDesc(fn ($alias): int => mb_strlen((string) $alias['normalized_alias']))
+            ->values();
+
+        foreach ($aliases as $alias) {
+            $normalizedAlias = $this->normalizeKnowledgeToken((string) ($alias['normalized_alias'] ?? ''));
+
+            if (! $this->containsKnowledgeToken($text, $normalizedAlias)) {
+                continue;
+            }
+
+            return [
+                'alias' => (string) ($alias['alias'] ?? ''),
+                'normalized_alias' => $normalizedAlias,
+                'brand_normalized_name' => $this->normalizeKnowledgeToken((string) ($alias['brand_normalized_name'] ?? '')),
+                'confidence_score' => (int) ($alias['confidence_score'] ?? 0),
+            ];
+        }
+
+        return null;
     }
 
     /**

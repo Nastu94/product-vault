@@ -451,6 +451,26 @@ class RunUnderstandingFixturesCommand extends Command
                     );
                 }
 
+                if (array_key_exists('brand_match_type', $expectedCandidate)) {
+                    $assertEquals(
+                        'pipeline',
+                        $name,
+                        $needle.' brand match type',
+                        $expectedCandidate['brand_match_type'],
+                        data_get($actualCandidate->metadata, 'product_understanding_brand.match_type'),
+                    );
+                }
+
+                if (array_key_exists('brand_alias', $expectedCandidate)) {
+                    $assertEquals(
+                        'pipeline',
+                        $name,
+                        $needle.' brand alias',
+                        $expectedCandidate['brand_alias'],
+                        data_get($actualCandidate->metadata, 'product_understanding_brand.alias'),
+                    );
+                }
+
                 if (array_key_exists('global_fact_matched', $expectedCandidate)) {
                     $assertEquals(
                         'pipeline',

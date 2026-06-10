@@ -134,6 +134,55 @@ class TestInitialKnowledgeCommand extends Command
 
         /*
         |--------------------------------------------------------------------------
+        | Scenario 2B: validità alias brand
+        |--------------------------------------------------------------------------
+        */
+        $expectedBrandAliasCount = 10;
+        $normalizedAliases = collect($brandAliases)
+            ->pluck('normalized_alias')
+            ->map(fn ($value) => $this->normalize((string) $value))
+            ->filter()
+            ->values();
+
+        $knownBrandNames = $normalizedBrandNames->all();
+
+        $assertEquals('brand_aliases_pack', 'brand alias count', $expectedBrandAliasCount, count($brandAliases));
+        $assertEquals('brand_aliases_pack', 'normalized aliases count', $expectedBrandAliasCount, $normalizedAliases->count());
+        $assertEquals('brand_aliases_pack', 'no duplicate normalized aliases', $normalizedAliases->count(), $normalizedAliases->unique()->count());
+
+        foreach ($brandAliases as $index => $alias) {
+            $row = $index + 1;
+
+            $normalizedAlias = $this->normalize((string) ($alias['normalized_alias'] ?? ''));
+            $brandNormalizedName = $this->normalize((string) ($alias['brand_normalized_name'] ?? ''));
+
+            $assertTrue(
+                'brand_aliases_pack',
+                "row {$row} has alias",
+                trim((string) ($alias['alias'] ?? '')) !== ''
+            );
+
+            $assertTrue(
+                'brand_aliases_pack',
+                "row {$row} has normalized_alias",
+                $normalizedAlias !== ''
+            );
+
+            $assertTrue(
+                'brand_aliases_pack',
+                "row {$row} has brand_normalized_name",
+                $brandNormalizedName !== ''
+            );
+
+            $assertTrue(
+                'brand_aliases_pack',
+                "row {$row} points to existing brand",
+                in_array($brandNormalizedName, $knownBrandNames, true)
+            );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
         | Scenario 3: pattern coerenti con line type reali
         |--------------------------------------------------------------------------
         */

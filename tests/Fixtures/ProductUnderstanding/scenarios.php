@@ -364,6 +364,8 @@ return [
                         'python_not_contains_signals' => [
                             'candidate_name_similar_but_different_model',
                         ],
+                        'category_slug' => 'computers',
+                        'initial_category_matched' => true,
                     ],
                     [
                         'name_contains' => 'Dock Station',
@@ -387,6 +389,8 @@ return [
                         'python_contains_warnings' => [
                             'missing_global_facts',
                         ],
+                        'category_slug' => 'tv-audio',
+                        'initial_category_matched' => true,
                     ],
                 ],
             ],
@@ -713,6 +717,8 @@ return [
                         ],
                         'brand_match_type' => 'initial_brand_alias',
                         'brand_alias' => 'Hewlett Packard',
+                        'category_slug' => 'computers',
+                        'initial_category_matched' => true,
                     ],
                 ],
             ],
@@ -772,6 +778,8 @@ return [
                             'fuzzy_pattern_count' => 1,
                             'has_fuzzy_positive_match' => true,
                         ],
+                        'category_slug' => 'computers',
+                        'initial_category_matched' => true,
                     ],
                     [
                         'name_contains' => 'Stanpamte Epson EcoTank',
@@ -789,6 +797,8 @@ return [
                             'fuzzy_pattern_count' => 1,
                             'has_fuzzy_positive_match' => true,
                         ],
+                        'category_slug' => 'computers',
+                        'initial_category_matched' => true,
                     ],
                 ],
             ],

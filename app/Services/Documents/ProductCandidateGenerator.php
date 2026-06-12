@@ -6,6 +6,7 @@ use App\Models\Document;
 use App\Models\DocumentLine;
 use App\Models\ProductIdentificationCandidate;
 use App\Models\Brand;
+use App\Models\Category;
 use App\Services\Documents\ProductUnderstanding\ProductLineAnalyzer;
 use App\Services\Documents\ProductUnderstanding\ProductTextSimilarityAnalyzer;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackMatcher;
@@ -167,6 +168,10 @@ class ProductCandidateGenerator
                 $initialKnowledgeLinePatterns
             );
 
+            $initialKnowledgeCategory = $this->resolveCategoryFromInitialKnowledge(
+                $initialKnowledgeSummary
+            );
+
             $legacyConfidenceScore = $this->estimateConfidenceScore($line, $productCode);
             $understandingConfidenceScore = $analysis->candidateConfidenceScore();
 
@@ -194,7 +199,7 @@ class ProductCandidateGenerator
                 'document_line_id' => $line->id,
                 'product_id' => null,
                 'brand_id' => $brandKnowledge['brand_id'],
-                'category_id' => null,
+                'category_id' => $initialKnowledgeCategory['category_id'],
                 'name' => $productName,
                 'model' => $model,
                 'serial_number' => $serialNumber,
@@ -220,6 +225,7 @@ class ProductCandidateGenerator
                     'total_price' => $line->total_price,
                     'product_understanding' => $analysis->toMetadata(),
                     'product_understanding_brand' => $brandKnowledge,
+                    'product_understanding_category' => $initialKnowledgeCategory,
                     'product_understanding_initial_knowledge' => [
                         'source' => 'initial_knowledge_pack_v1',
                         'summary' => $initialKnowledgeSummary,
@@ -1360,6 +1366,60 @@ class ProductCandidateGenerator
         );
 
         return $match !== null;
+    }
+
+    /**
+     * Risolve la categoria del candidato usando la summary dei pattern iniziali.
+     *
+     * Non forza decisioni automatiche e non crea categorie.
+     * Collega solo categorie globali già presenti e attive.
+     */
+    private function resolveCategoryFromInitialKnowledge(array $initialKnowledgeSummary): array
+    {
+        $suggestedCategorySlug = trim((string) ($initialKnowledgeSummary['best_suggested_category_slug'] ?? ''));
+
+        if ($suggestedCategorySlug === '') {
+            return [
+                'matched' => false,
+                'match_type' => null,
+                'category_id' => null,
+                'category_name' => null,
+                'category_slug' => null,
+                'suggested_category_slug' => null,
+                'source_pattern' => null,
+                'source' => 'initial_knowledge_pack_v1',
+            ];
+        }
+
+        $category = Category::query()
+            ->whereNull('team_id')
+            ->where('slug', $suggestedCategorySlug)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $category) {
+            return [
+                'matched' => false,
+                'match_type' => 'initial_line_pattern_summary',
+                'category_id' => null,
+                'category_name' => null,
+                'category_slug' => null,
+                'suggested_category_slug' => $suggestedCategorySlug,
+                'source_pattern' => $initialKnowledgeSummary['best_positive_pattern'] ?? null,
+                'source' => 'initial_knowledge_pack_v1',
+            ];
+        }
+
+        return [
+            'matched' => true,
+            'match_type' => 'initial_line_pattern_summary',
+            'category_id' => $category->id,
+            'category_name' => $category->name,
+            'category_slug' => $category->slug,
+            'suggested_category_slug' => $suggestedCategorySlug,
+            'source_pattern' => $initialKnowledgeSummary['best_positive_pattern'] ?? null,
+            'source' => 'initial_knowledge_pack_v1',
+        ];
     }
 
     /**

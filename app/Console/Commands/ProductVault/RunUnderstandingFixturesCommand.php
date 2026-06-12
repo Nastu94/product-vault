@@ -471,6 +471,28 @@ class RunUnderstandingFixturesCommand extends Command
                     );
                 }
 
+                if (array_key_exists('category_slug', $expectedCandidate)) {
+                    $actualCandidate->loadMissing('category');
+
+                    $assertEquals(
+                        'pipeline',
+                        $name,
+                        $needle.' category slug',
+                        $expectedCandidate['category_slug'],
+                        $actualCandidate->category?->slug,
+                    );
+                }
+
+                if (array_key_exists('initial_category_matched', $expectedCandidate)) {
+                    $assertEquals(
+                        'pipeline',
+                        $name,
+                        $needle.' initial category matched',
+                        (bool) $expectedCandidate['initial_category_matched'],
+                        (bool) data_get($actualCandidate->metadata, 'product_understanding_category.matched'),
+                    );
+                }
+
                 if (! empty($expectedCandidate['initial_line_patterns_contain'])) {
                     $actualPatterns = collect(data_get(
                         $actualCandidate->metadata,

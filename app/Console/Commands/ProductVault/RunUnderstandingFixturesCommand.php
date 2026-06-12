@@ -511,6 +511,24 @@ class RunUnderstandingFixturesCommand extends Command
                     }
                 }
 
+                if (! empty($expectedCandidate['initial_knowledge_summary'])) {
+                    $actualSummary = data_get(
+                        $actualCandidate->metadata,
+                        'product_understanding_initial_knowledge.summary',
+                        []
+                    );
+
+                    foreach ($expectedCandidate['initial_knowledge_summary'] as $key => $expectedValue) {
+                        $assertEquals(
+                            'pipeline',
+                            $name,
+                            $needle.' initial knowledge summary '.$key,
+                            $expectedValue,
+                            data_get($actualSummary, $key),
+                        );
+                    }
+                }
+
                 if (array_key_exists('global_fact_matched', $expectedCandidate)) {
                     $assertEquals(
                         'pipeline',

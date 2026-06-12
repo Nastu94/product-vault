@@ -114,6 +114,96 @@ class InitialKnowledgeRepository
     }
 
     /**
+     * Riassume i pattern iniziali matchati su una riga.
+     *
+     * La summary è solo diagnostica/osservativa:
+     * non crea, non blocca e non modifica candidati.
+     */
+    public function summarizeLinePatternMatches(array $matches): array
+    {
+        $matches = collect($matches)
+            ->filter(fn ($match): bool => is_array($match))
+            ->values();
+
+        $positiveMatches = $matches
+            ->filter(fn (array $match): bool => (int) ($match['weight'] ?? 0) > 0)
+            ->values();
+
+        $negativeMatches = $matches
+            ->filter(fn (array $match): bool => (int) ($match['weight'] ?? 0) < 0)
+            ->values();
+
+        $exactPatternCount = $matches
+            ->where('match_type', 'exact_pattern')
+            ->count();
+
+        $fuzzyPatternCount = $matches
+            ->where('match_type', 'fuzzy_pattern')
+            ->count();
+
+        $bestPositiveMatch = $positiveMatches
+            ->sortByDesc(function (array $match): int {
+                $weight = (int) ($match['weight'] ?? 0);
+                $exactBoost = ($match['match_type'] ?? null) === 'exact_pattern' ? 2 : 0;
+
+                return ($weight * 10) + $exactBoost;
+            })
+            ->first();
+
+        $strongestNegativeMatch = $negativeMatches
+            ->sortBy(fn (array $match): int => (int) ($match['weight'] ?? 0))
+            ->first();
+
+        $signals = [];
+
+        if ($matches->isNotEmpty()) {
+            $signals[] = 'initial_line_patterns_matched';
+        }
+
+        if ($exactPatternCount > 0) {
+            $signals[] = 'initial_exact_line_pattern_match';
+        }
+
+        if ($fuzzyPatternCount > 0) {
+            $signals[] = 'initial_fuzzy_line_pattern_match';
+        }
+
+        if (($bestPositiveMatch['product_kind'] ?? null) === 'durable_product') {
+            $signals[] = 'initial_durable_product_pattern';
+        }
+
+        if (($bestPositiveMatch['product_kind'] ?? null) === 'accessory') {
+            $signals[] = 'initial_accessory_pattern';
+        }
+
+        if ($negativeMatches->isNotEmpty()) {
+            $signals[] = 'initial_negative_line_pattern';
+        }
+
+        return [
+            'source' => 'initial_knowledge_pack_v1',
+            'matched' => $matches->isNotEmpty(),
+            'total_matches' => $matches->count(),
+            'exact_pattern_count' => $exactPatternCount,
+            'fuzzy_pattern_count' => $fuzzyPatternCount,
+            'positive_pattern_count' => $positiveMatches->count(),
+            'negative_pattern_count' => $negativeMatches->count(),
+            'best_positive_pattern' => $bestPositiveMatch['pattern'] ?? null,
+            'best_positive_group' => $bestPositiveMatch['group'] ?? null,
+            'best_product_kind' => $bestPositiveMatch['product_kind'] ?? null,
+            'best_suggested_category_slug' => $bestPositiveMatch['suggested_category_slug'] ?? null,
+            'best_positive_weight' => $bestPositiveMatch['weight'] ?? null,
+            'strongest_negative_pattern' => $strongestNegativeMatch['pattern'] ?? null,
+            'strongest_negative_group' => $strongestNegativeMatch['group'] ?? null,
+            'strongest_negative_weight' => $strongestNegativeMatch['weight'] ?? null,
+            'has_fuzzy_positive_match' => $positiveMatches
+                ->where('match_type', 'fuzzy_pattern')
+                ->isNotEmpty(),
+            'signals' => array_values(array_unique($signals)),
+        ];
+    }
+
+    /**
      * Cerca un alias brand nel knowledge pack iniziale.
      *
      * Gli alias non sono importati in database: restano dati versionati usati

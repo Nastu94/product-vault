@@ -766,6 +766,12 @@ return [
                         'initial_line_pattern_match_types' => [
                             'notebook' => 'fuzzy_pattern',
                         ],
+                        'initial_knowledge_summary' => [
+                            'best_positive_pattern' => 'notebook',
+                            'best_product_kind' => 'durable_product',
+                            'fuzzy_pattern_count' => 1,
+                            'has_fuzzy_positive_match' => true,
+                        ],
                     ],
                     [
                         'name_contains' => 'Stanpamte Epson EcoTank',
@@ -776,6 +782,12 @@ return [
                         ],
                         'initial_line_pattern_match_types' => [
                             'stampante' => 'fuzzy_pattern',
+                        ],
+                        'initial_knowledge_summary' => [
+                            'best_positive_pattern' => 'stampante',
+                            'best_product_kind' => 'durable_product',
+                            'fuzzy_pattern_count' => 1,
+                            'has_fuzzy_positive_match' => true,
                         ],
                     ],
                 ],

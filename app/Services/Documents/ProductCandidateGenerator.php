@@ -163,6 +163,10 @@ class ProductCandidateGenerator
                 documentLineTypeCode: $line->documentLineType?->code,
             );
 
+            $initialKnowledgeSummary = $this->initialKnowledgeRepository->summarizeLinePatternMatches(
+                $initialKnowledgeLinePatterns
+            );
+
             $legacyConfidenceScore = $this->estimateConfidenceScore($line, $productCode);
             $understandingConfidenceScore = $analysis->candidateConfidenceScore();
 
@@ -218,6 +222,7 @@ class ProductCandidateGenerator
                     'product_understanding_brand' => $brandKnowledge,
                     'product_understanding_initial_knowledge' => [
                         'source' => 'initial_knowledge_pack_v1',
+                        'summary' => $initialKnowledgeSummary,
                         'line_patterns' => $initialKnowledgeLinePatterns,
                     ],
                     'product_understanding_feedback' => $feedbackContext,

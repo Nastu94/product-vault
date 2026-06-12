@@ -257,6 +257,29 @@ class TestInitialKnowledgeCommand extends Command
             $notebookTypoPatterns[0]['match_type'] ?? null
         );
 
+        $notebookTypoSummary = $repository->summarizeLinePatternMatches($notebookTypoPatterns);
+
+        $assertEquals(
+            'knowledge_repository',
+            'notebook typo summary best pattern',
+            'notebook',
+            $notebookTypoSummary['best_positive_pattern'] ?? null
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'notebook typo summary fuzzy count',
+            1,
+            $notebookTypoSummary['fuzzy_pattern_count'] ?? null
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'notebook typo summary fuzzy positive',
+            true,
+            $notebookTypoSummary['has_fuzzy_positive_match'] ?? null
+        );
+
         $stampanteTypoPatterns = $repository->matchLinePatterns(
             description: 'Stanpamte Epson EcoTank ET-2850',
             rawText: 'Stanpamte Epson EcoTank ET-2850',
@@ -275,6 +298,22 @@ class TestInitialKnowledgeCommand extends Command
             'stampante typo pattern match type',
             'fuzzy_pattern',
             $stampanteTypoPatterns[0]['match_type'] ?? null
+        );
+
+        $stampanteTypoSummary = $repository->summarizeLinePatternMatches($stampanteTypoPatterns);
+
+        $assertEquals(
+            'knowledge_repository',
+            'stampante typo summary best pattern',
+            'stampante',
+            $stampanteTypoSummary['best_positive_pattern'] ?? null
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'stampante typo summary product kind',
+            'durable_product',
+            $stampanteTypoSummary['best_product_kind'] ?? null
         );
 
         $assertEquals(

@@ -336,6 +336,80 @@ class TestInitialKnowledgeCommand extends Command
             $shippingPatterns[0]['pattern'] ?? null
         );
 
+        $nasPatterns = $repository->matchLinePatterns(
+            description: 'NAS TerraVault Home Duo 8TB',
+            rawText: 'NAS TerraVault Home Duo 8TB',
+            documentLineTypeCode: 'product',
+        );
+
+        $nasSummary = $repository->summarizeLinePatternMatches($nasPatterns);
+
+        $assertEquals(
+            'knowledge_repository',
+            'nas pattern matched',
+            'nas',
+            $nasSummary['best_positive_pattern'] ?? null
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'nas pattern category',
+            'computers',
+            $nasSummary['best_suggested_category_slug'] ?? null
+        );
+
+        $fotocameraPatterns = $repository->matchLinePatterns(
+            description: 'Fotocamera LumioShot Z5 Mirrorless',
+            rawText: 'Fotocamera LumioShot Z5 Mirrorless',
+            documentLineTypeCode: 'product',
+        );
+
+        $fotocameraSummary = $repository->summarizeLinePatternMatches($fotocameraPatterns);
+
+        $assertEquals(
+            'knowledge_repository',
+            'fotocamera pattern matched',
+            'fotocamera',
+            $fotocameraSummary['best_positive_pattern'] ?? null
+        );
+
+        $assertEquals(
+            'knowledge_repository',
+            'fotocamera pattern category',
+            'electronics',
+            $fotocameraSummary['best_suggested_category_slug'] ?? null
+        );
+
+        $obiettivoPatterns = $repository->matchLinePatterns(
+            description: 'Obiettivo LumioPrime 35mm F1.8',
+            rawText: 'Obiettivo LumioPrime 35mm F1.8',
+            documentLineTypeCode: 'product',
+        );
+
+        $obiettivoSummary = $repository->summarizeLinePatternMatches($obiettivoPatterns);
+
+        $assertEquals(
+            'knowledge_repository',
+            'obiettivo pattern matched',
+            'obiettivo',
+            $obiettivoSummary['best_positive_pattern'] ?? null
+        );
+
+        $gimbalPatterns = $repository->matchLinePatterns(
+            description: 'Stabilizzatore Gimbal SteadyCam Mini 3',
+            rawText: 'Stabilizzatore Gimbal SteadyCam Mini 3',
+            documentLineTypeCode: 'product',
+        );
+
+        $gimbalSummary = $repository->summarizeLinePatternMatches($gimbalPatterns);
+
+        $assertEquals(
+            'knowledge_repository',
+            'gimbal pattern matched',
+            'gimbal',
+            $gimbalSummary['best_positive_pattern'] ?? null
+        );
+
         /*
         |--------------------------------------------------------------------------
         | Scenario 3: pattern coerenti con line type reali

@@ -15,6 +15,7 @@ use App\Models\Team;
 use App\Models\User;
 use App\Services\Documents\DocumentLineParser;
 use App\Services\Documents\ProductCandidateGenerator;
+use App\Services\Documents\DocumentLines\DocumentLineAmountConsistencyChecker;
 use App\Services\Documents\ProductUnderstanding\ProductTextSimilarityAnalyzer;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackMatcher;
 
@@ -100,6 +101,7 @@ class RunUnderstandingFixturesCommand extends Command
 
         $feedbackMatcher = app(ProductUnderstandingFeedbackMatcher::class);
         $pythonAnalyzer = app(ProductTextSimilarityAnalyzer::class);
+        $amountConsistencyChecker = app(DocumentLineAmountConsistencyChecker::class);
 
         $rows = [];
         $failures = [];
@@ -252,6 +254,78 @@ class RunUnderstandingFixturesCommand extends Command
 
             if (! empty($expect['not_contains_warnings'])) {
                 $assertNotContains('python', $name, 'warnings does not contain', $expect['not_contains_warnings'], data_get($result, 'warnings', []));
+            }
+        }
+
+        foreach (($fixtures['amount_consistency'] ?? []) as $scenario) {
+            $name = (string) ($scenario['name'] ?? 'unnamed_amount_consistency_scenario');
+            $expect = $scenario['expect'] ?? [];
+
+            $result = $amountConsistencyChecker->check(
+                quantity: $scenario['quantity'] ?? null,
+                unitPrice: $scenario['unit_price'] ?? null,
+                totalPrice: $scenario['total_price'] ?? null,
+                tolerance: array_key_exists('tolerance', $scenario)
+                    ? (float) $scenario['tolerance']
+                    : null,
+            );
+
+            if (array_key_exists('checked', $expect)) {
+                $assertEquals(
+                    'amount_consistency',
+                    $name,
+                    'checked',
+                    (bool) $expect['checked'],
+                    (bool) data_get($result, 'checked'),
+                );
+            }
+
+            if (array_key_exists('is_consistent', $expect)) {
+                $assertEquals(
+                    'amount_consistency',
+                    $name,
+                    'is_consistent',
+                    $expect['is_consistent'],
+                    data_get($result, 'is_consistent'),
+                );
+            }
+
+            foreach (['expected_total', 'actual_total', 'delta', 'tolerance'] as $key) {
+                if (! array_key_exists($key, $expect)) {
+                    continue;
+                }
+
+                $expectedValue = $expect[$key] === null ? null : (float) $expect[$key];
+                $actualValue = data_get($result, $key);
+                $actualValue = $actualValue === null ? null : (float) $actualValue;
+
+                $assertEquals(
+                    'amount_consistency',
+                    $name,
+                    $key,
+                    $expectedValue,
+                    $actualValue,
+                );
+            }
+
+            if (array_key_exists('reason', $expect)) {
+                $assertEquals(
+                    'amount_consistency',
+                    $name,
+                    'reason',
+                    $expect['reason'],
+                    data_get($result, 'reason'),
+                );
+            }
+
+            if (! empty($expect['contains_signals'])) {
+                $assertContains(
+                    'amount_consistency',
+                    $name,
+                    'signals contains',
+                    $expect['contains_signals'],
+                    data_get($result, 'signals', []),
+                );
             }
         }
 

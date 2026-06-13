@@ -214,6 +214,135 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Document line amount consistency scenarios
+    |--------------------------------------------------------------------------
+    |
+    | Testano il controllo diagnostico quantity × unit_price = total_price.
+    | Non modificano righe, candidati, score o stato documento.
+    |
+    */
+    'amount_consistency' => [
+        [
+            'name' => 'coherent_quantity_two',
+            'quantity' => 2,
+            'unit_price' => '10.00',
+            'total_price' => '20.00',
+            'expect' => [
+                'checked' => true,
+                'is_consistent' => true,
+                'expected_total' => 20.00,
+                'actual_total' => 20.00,
+                'delta' => 0.00,
+                'tolerance' => 0.02,
+                'reason' => 'amounts_consistent',
+                'contains_signals' => [
+                    'quantity_x_unit_price_matches_total_price',
+                ],
+            ],
+        ],
+        [
+            'name' => 'coherent_rounding',
+            'quantity' => 3,
+            'unit_price' => '3.33',
+            'total_price' => '9.99',
+            'expect' => [
+                'checked' => true,
+                'is_consistent' => true,
+                'expected_total' => 9.99,
+                'actual_total' => 9.99,
+                'delta' => 0.00,
+                'tolerance' => 0.02,
+                'reason' => 'amounts_consistent',
+                'contains_signals' => [
+                    'quantity_x_unit_price_matches_total_price',
+                ],
+            ],
+        ],
+        [
+            'name' => 'amount_mismatch',
+            'quantity' => 2,
+            'unit_price' => '10.00',
+            'total_price' => '15.00',
+            'expect' => [
+                'checked' => true,
+                'is_consistent' => false,
+                'expected_total' => 20.00,
+                'actual_total' => 15.00,
+                'delta' => 5.00,
+                'tolerance' => 0.02,
+                'reason' => 'amounts_mismatch',
+                'contains_signals' => [
+                    'quantity_x_unit_price_differs_from_total_price',
+                ],
+            ],
+        ],
+        [
+            'name' => 'missing_quantity',
+            'quantity' => null,
+            'unit_price' => '10.00',
+            'total_price' => '10.00',
+            'expect' => [
+                'checked' => false,
+                'is_consistent' => null,
+                'expected_total' => null,
+                'actual_total' => 10.00,
+                'delta' => null,
+                'tolerance' => 0.02,
+                'reason' => 'missing_amount_data',
+                'contains_signals' => [
+                    'missing_quantity',
+                ],
+            ],
+        ],
+        [
+            'name' => 'single_total_only',
+            'quantity' => null,
+            'unit_price' => null,
+            'total_price' => '10.00',
+            'expect' => [
+                'checked' => false,
+                'is_consistent' => null,
+                'expected_total' => null,
+                'actual_total' => 10.00,
+                'delta' => null,
+                'tolerance' => 0.02,
+                'reason' => 'missing_amount_data',
+                'contains_signals' => [
+                    'missing_quantity',
+                    'missing_unit_price',
+                ],
+            ],
+        ],
+        [
+            'name' => 'non_positive_amount_data',
+            'quantity' => 1,
+            'unit_price' => '-10.00',
+            'total_price' => '-10.00',
+            'expect' => [
+                'checked' => false,
+                'is_consistent' => null,
+                'expected_total' => null,
+                'actual_total' => -10.00,
+                'delta' => null,
+                'tolerance' => 0.02,
+                'reason' => 'non_positive_amount_data',
+                'contains_signals' => [
+                    'non_positive_amount_data',
+                ],
+            ],
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Full pipeline scenarios
+    |--------------------------------------------------------------------------
+    | Testano l'intero processo su casi di fatture con prodotti tecnologici, con vari gradi di difficoltà su parsing, matching e coerenza importi.
+    | Non modificano righe, candidati, score o stato documento.
+    |
+    */
     'pipeline' => [
         [
             'name' => 'similar_but_different_invoice_table',

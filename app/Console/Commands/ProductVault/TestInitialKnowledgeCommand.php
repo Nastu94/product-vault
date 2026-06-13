@@ -412,6 +412,111 @@ class TestInitialKnowledgeCommand extends Command
 
         /*
         |--------------------------------------------------------------------------
+        | Scenario 2D: audit command smoke checks
+        |--------------------------------------------------------------------------
+        |
+        | Il comando audit lavora sui candidati realmente presenti nel database.
+        | Per questo motivo non facciamo assert su nomi specifici come Stanpamte
+        | o Notebok: renderebbe il test dipendente dai dati locali.
+        |
+        | Qui verifichiamo invece che i nuovi filtri fuzzy siano eseguibili,
+        | producano sempre output leggibile e validino correttamente la soglia.
+        */
+        $onlyFuzzyExitCode = Artisan::call('product-vault:audit-initial-knowledge', [
+            '--only-fuzzy' => true,
+            '--limit' => 200,
+        ]);
+
+        $onlyFuzzyOutput = Artisan::output();
+
+        $assertEquals(
+            'audit_command',
+            'only fuzzy exit code',
+            self::SUCCESS,
+            $onlyFuzzyExitCode
+        );
+
+        $assertTrue(
+            'audit_command',
+            'only fuzzy output is not empty',
+            trim($onlyFuzzyOutput) !== ''
+        );
+
+        $assertTrue(
+            'audit_command',
+            'only fuzzy output is readable',
+            str_contains($onlyFuzzyOutput, 'fuzzy_pattern')
+                || str_contains($onlyFuzzyOutput, 'Nessun candidato trovato')
+        );
+
+        $maxSimilarityExitCode = Artisan::call('product-vault:audit-initial-knowledge', [
+            '--only-fuzzy' => true,
+            '--max-similarity' => '0.85',
+            '--limit' => 200,
+        ]);
+
+        $maxSimilarityOutput = Artisan::output();
+
+        $assertEquals(
+            'audit_command',
+            'max similarity exit code',
+            self::SUCCESS,
+            $maxSimilarityExitCode
+        );
+
+        $assertTrue(
+            'audit_command',
+            'max similarity output is not empty',
+            trim($maxSimilarityOutput) !== ''
+        );
+
+        $assertTrue(
+            'audit_command',
+            'max similarity output is readable',
+            str_contains($maxSimilarityOutput, 'fuzzy_pattern')
+                || str_contains($maxSimilarityOutput, 'Nessun candidato trovato')
+        );
+
+        $invalidSimilarityExitCode = Artisan::call('product-vault:audit-initial-knowledge', [
+            '--max-similarity' => 'abc',
+        ]);
+
+        $invalidSimilarityOutput = Artisan::output();
+
+        $assertEquals(
+            'audit_command',
+            'invalid max similarity exit code',
+            self::FAILURE,
+            $invalidSimilarityExitCode
+        );
+
+        $assertTrue(
+            'audit_command',
+            'invalid max similarity output',
+            str_contains($invalidSimilarityOutput, 'deve essere numerico')
+        );
+
+        $outOfRangeSimilarityExitCode = Artisan::call('product-vault:audit-initial-knowledge', [
+            '--max-similarity' => '1.5',
+        ]);
+
+        $outOfRangeSimilarityOutput = Artisan::output();
+
+        $assertEquals(
+            'audit_command',
+            'out of range max similarity exit code',
+            self::FAILURE,
+            $outOfRangeSimilarityExitCode
+        );
+
+        $assertTrue(
+            'audit_command',
+            'out of range max similarity output',
+            str_contains($outOfRangeSimilarityOutput, 'compreso tra 0 e 1')
+        );
+
+        /*
+        |--------------------------------------------------------------------------
         | Scenario 3: pattern coerenti con line type reali
         |--------------------------------------------------------------------------
         */

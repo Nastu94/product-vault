@@ -223,6 +223,7 @@ class ProductCandidateGenerator
                     'quantity' => $line->quantity,
                     'unit_price' => $line->unit_price,
                     'total_price' => $line->total_price,
+                    'document_line_amount_consistency' => $line->metadata['amount_consistency'] ?? null,
                     'product_understanding' => $analysis->toMetadata(),
                     'product_understanding_brand' => $brandKnowledge,
                     'product_understanding_category' => $initialKnowledgeCategory,

@@ -808,6 +808,19 @@ return [
                         'python_contains_signals' => [
                             'high_similarity_to_global_canonical_name',
                         ],
+                        'document_line_amount_consistency' => [
+                            'version' => 'document_line_amount_consistency_v1',
+                            'checked' => true,
+                            'is_consistent' => true,
+                            'expected_total' => 1499.00,
+                            'actual_total' => 1499.00,
+                            'delta' => 0.00,
+                            'tolerance' => 0.02,
+                            'reason' => 'amounts_consistent',
+                            'contains_signals' => [
+                                'quantity_x_unit_price_matches_total_price',
+                            ],
+                        ],
                     ],
                     [
                         'name_contains' => 'Docking Station USB-C Dual HDMI 4K',

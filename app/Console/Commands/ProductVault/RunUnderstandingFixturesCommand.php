@@ -568,6 +568,73 @@ class RunUnderstandingFixturesCommand extends Command
                     );
                 }
 
+                if (! empty($expectedCandidate['document_line_amount_consistency'])) {
+                    $actualAmountConsistency = (array) data_get(
+                        $actualCandidate->metadata,
+                        'document_line_amount_consistency',
+                        []
+                    );
+
+                    foreach (['version', 'reason'] as $key) {
+                        if (! array_key_exists($key, $expectedCandidate['document_line_amount_consistency'])) {
+                            continue;
+                        }
+
+                        $assertEquals(
+                            'pipeline',
+                            $name,
+                            $needle.' document_line_amount_consistency '.$key,
+                            $expectedCandidate['document_line_amount_consistency'][$key],
+                            data_get($actualAmountConsistency, $key),
+                        );
+                    }
+
+                    foreach (['checked', 'is_consistent'] as $key) {
+                        if (! array_key_exists($key, $expectedCandidate['document_line_amount_consistency'])) {
+                            continue;
+                        }
+
+                        $assertEquals(
+                            'pipeline',
+                            $name,
+                            $needle.' document_line_amount_consistency '.$key,
+                            $expectedCandidate['document_line_amount_consistency'][$key],
+                            data_get($actualAmountConsistency, $key),
+                        );
+                    }
+
+                    foreach (['expected_total', 'actual_total', 'delta', 'tolerance'] as $key) {
+                        if (! array_key_exists($key, $expectedCandidate['document_line_amount_consistency'])) {
+                            continue;
+                        }
+
+                        $expectedValue = $expectedCandidate['document_line_amount_consistency'][$key] === null
+                            ? null
+                            : (float) $expectedCandidate['document_line_amount_consistency'][$key];
+
+                        $actualValue = data_get($actualAmountConsistency, $key);
+                        $actualValue = $actualValue === null ? null : (float) $actualValue;
+
+                        $assertEquals(
+                            'pipeline',
+                            $name,
+                            $needle.' document_line_amount_consistency '.$key,
+                            $expectedValue,
+                            $actualValue,
+                        );
+                    }
+
+                    if (! empty($expectedCandidate['document_line_amount_consistency']['contains_signals'])) {
+                        $assertContains(
+                            'pipeline',
+                            $name,
+                            $needle.' document_line_amount_consistency signals contains',
+                            $expectedCandidate['document_line_amount_consistency']['contains_signals'],
+                            data_get($actualAmountConsistency, 'signals', []),
+                        );
+                    }
+                }
+
                 if (array_key_exists('brand_name', $expectedCandidate)) {
                     $actualCandidate->loadMissing('brand');
 

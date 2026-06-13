@@ -82,14 +82,14 @@ return [
             'pattern' => 'cuffie',
             'document_line_type' => 'product',
             'suggested_category_slug' => 'tv-audio',
-            'product_kind' => 'accessory',
+            'product_kind' => 'durable_product',
             'weight' => 20,
         ],
         [
             'pattern' => 'headphones',
             'document_line_type' => 'product',
             'suggested_category_slug' => 'tv-audio',
-            'product_kind' => 'accessory',
+            'product_kind' => 'durable_product',
             'weight' => 20,
         ],
         [
@@ -166,14 +166,14 @@ return [
             'pattern' => 'gimbal',
             'document_line_type' => 'product',
             'suggested_category_slug' => 'electronics',
-            'product_kind' => 'accessory',
+            'product_kind' => 'durable_product',
             'weight' => 20,
         ],
         [
             'pattern' => 'stabilizzatore',
             'document_line_type' => 'product',
             'suggested_category_slug' => 'electronics',
-            'product_kind' => 'accessory',
+            'product_kind' => 'durable_product',
             'weight' => 20,
         ],
         [

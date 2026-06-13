@@ -8,6 +8,7 @@ use App\Models\DocumentLineType;
 use App\Services\Documents\InvoiceTableExtraction\InvoiceTableExtractionDocumentLineWriter;
 use App\Services\Documents\InvoiceTableExtraction\InvoiceTableExtractionManager;
 use App\Services\Documents\InvoiceTableExtraction\InvoiceTableExtractionQualityGate;
+use App\Services\Documents\DocumentLines\DocumentLineAmountConsistencyAnnotator;
 
 class DocumentLineParser
 {
@@ -29,6 +30,7 @@ class DocumentLineParser
         private readonly InvoiceTableExtractionManager $invoiceTableExtractionManager,
         private readonly InvoiceTableExtractionQualityGate $invoiceTableExtractionQualityGate,
         private readonly InvoiceTableExtractionDocumentLineWriter $invoiceTableExtractionDocumentLineWriter,
+        private readonly DocumentLineAmountConsistencyAnnotator $amountConsistencyAnnotator,
     ) {
     }
 
@@ -81,16 +83,18 @@ class DocumentLineParser
             $layoutAwareCreated = $this->layoutAwareInvoiceLineParser->parse($document, $lineTypeId);
 
             if ($layoutAwareCreated > 0) {
-                return $layoutAwareCreated;
+                return $this->finishParsing($document, $layoutAwareCreated);
             }
 
             $invoiceTextCreated = $this->parseInvoiceLines($document, $lineTypeId, $lines);
 
             if ($invoiceTextCreated > 0) {
-                return $invoiceTextCreated;
+                return $this->finishParsing($document, $invoiceTextCreated);
             }
 
-            return $this->parseInvoiceTableExtractionFallback($document, $lineTypeId);
+            $fallbackCreated = $this->parseInvoiceTableExtractionFallback($document, $lineTypeId);
+
+            return $this->finishParsing($document, $fallbackCreated);
         }
 
         /*
@@ -107,7 +111,7 @@ class DocumentLineParser
             $layoutAwareReceiptCreated = $this->layoutAwareReceiptLineParser->parse($document, $lineTypeId);
 
             if ($layoutAwareReceiptCreated > 0) {
-                return $layoutAwareReceiptCreated;
+                return $this->finishParsing($document, $layoutAwareReceiptCreated);
             }
         }
 
@@ -438,6 +442,18 @@ class DocumentLineParser
         if ($pendingCandidate && $this->pendingCandidateIsUsable($pendingCandidate)) {
             $this->createLineFromPendingCandidate($document, $lineTypeId, $pendingCandidate);
             $created++;
+        }
+
+        return $this->finishParsing($document, $created);
+    }
+
+    /**
+     * Completa il parsing aggiungendo metadata diagnostici alle righe create.
+     */
+    private function finishParsing(Document $document, int $created): int
+    {
+        if ($created > 0) {
+            $this->amountConsistencyAnnotator->annotateDocument($document);
         }
 
         return $created;

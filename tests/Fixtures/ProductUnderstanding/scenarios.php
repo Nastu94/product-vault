@@ -779,6 +779,19 @@ return [
                         'unit_price' => '749.50',
                         'total_price' => '1499.00',
                         'mode' => 'text_invoice_table_header_roles',
+                        'amount_consistency' => [
+                            'version' => 'document_line_amount_consistency_v1',
+                            'checked' => true,
+                            'is_consistent' => true,
+                            'expected_total' => 1499.00,
+                            'actual_total' => 1499.00,
+                            'delta' => 0.00,
+                            'tolerance' => 0.02,
+                            'reason' => 'amounts_consistent',
+                            'contains_signals' => [
+                                'quantity_x_unit_price_matches_total_price',
+                            ],
+                        ],
                     ],
                     [
                         'description' => 'Docking Station USB-C Dual HDMI 4K',

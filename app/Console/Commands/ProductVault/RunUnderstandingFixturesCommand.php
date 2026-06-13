@@ -458,7 +458,72 @@ class RunUnderstandingFixturesCommand extends Command
                         $actualLine->metadata['mode'] ?? null,
                     );
                 }
+
+                if (! empty($expectedLine['amount_consistency'])) {
+                    $actualAmountConsistency = (array) data_get($actualLine->metadata, 'amount_consistency', []);
+
+                    foreach (['version', 'reason'] as $key) {
+                        if (! array_key_exists($key, $expectedLine['amount_consistency'])) {
+                            continue;
+                        }
+
+                        $assertEquals(
+                            'pipeline',
+                            $name,
+                            'line '.($index + 1).' amount_consistency '.$key,
+                            $expectedLine['amount_consistency'][$key],
+                            data_get($actualAmountConsistency, $key),
+                        );
+                    }
+
+                    foreach (['checked', 'is_consistent'] as $key) {
+                        if (! array_key_exists($key, $expectedLine['amount_consistency'])) {
+                            continue;
+                        }
+
+                        $assertEquals(
+                            'pipeline',
+                            $name,
+                            'line '.($index + 1).' amount_consistency '.$key,
+                            $expectedLine['amount_consistency'][$key],
+                            data_get($actualAmountConsistency, $key),
+                        );
+                    }
+
+                    foreach (['expected_total', 'actual_total', 'delta', 'tolerance'] as $key) {
+                        if (! array_key_exists($key, $expectedLine['amount_consistency'])) {
+                            continue;
+                        }
+
+                        $expectedValue = $expectedLine['amount_consistency'][$key] === null
+                            ? null
+                            : (float) $expectedLine['amount_consistency'][$key];
+
+                        $actualValue = data_get($actualAmountConsistency, $key);
+                        $actualValue = $actualValue === null ? null : (float) $actualValue;
+
+                        $assertEquals(
+                            'pipeline',
+                            $name,
+                            'line '.($index + 1).' amount_consistency '.$key,
+                            $expectedValue,
+                            $actualValue,
+                        );
+                    }
+
+                    if (! empty($expectedLine['amount_consistency']['contains_signals'])) {
+                        $assertContains(
+                            'pipeline',
+                            $name,
+                            'line '.($index + 1).' amount_consistency signals contains',
+                            $expectedLine['amount_consistency']['contains_signals'],
+                            data_get($actualAmountConsistency, 'signals', []),
+                        );
+                    }
+                }
             }
+
+
 
             $actualCandidates = $pipelineDocument->productIdentificationCandidates()
                 ->orderBy('id')

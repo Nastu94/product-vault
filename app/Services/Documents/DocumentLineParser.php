@@ -188,27 +188,6 @@ class DocumentLineParser
 
                 /*
                 |--------------------------------------------------------------------------
-                | Scontrini: righe a importo zero o negativo
-                |--------------------------------------------------------------------------
-                |
-                | Su uno scontrino, una riga con importo finale zero o negativo non è una
-                | riga prodotto acquistato. È normalmente uno sconto, coupon, storno,
-                | omaggio, acconto, rettifica o riga informativa.
-                |
-                | È una regola strutturale, non keyword-based.
-                */
-                if (
-                    $document->documentType?->code === 'receipt'
-                    && $this->receiptAmountLineIsZeroOrNegative($rawLine)
-                ) {
-                    $pendingCandidate = null;
-                    $pendingCodeParts = [];
-
-                    continue;
-                }
-
-                /*
-                |--------------------------------------------------------------------------
                 | Conferme ordine / e-commerce con titolo prodotto su riga precedente
                 |--------------------------------------------------------------------------
                 |
@@ -247,6 +226,27 @@ class DocumentLineParser
                             continue;
                         }
                     }
+                }
+
+                /*
+                |--------------------------------------------------------------------------
+                | Scontrini: righe a importo zero o negativo
+                |--------------------------------------------------------------------------
+                |
+                | Su uno scontrino, una riga con importo finale zero o negativo non è una
+                | riga prodotto acquistato. È normalmente uno sconto, coupon, storno,
+                | omaggio, acconto, rettifica o riga informativa.
+                |
+                | È una regola strutturale, non keyword-based.
+                */
+                if (
+                    $document->documentType?->code === 'receipt'
+                    && $this->receiptAmountLineIsZeroOrNegative($rawLine)
+                ) {
+                    $pendingCandidate = null;
+                    $pendingCodeParts = [];
+
+                    continue;
                 }
 
                 /*
@@ -683,18 +683,50 @@ class DocumentLineParser
 
         $support = trim((string) ($item['support'] ?? ''));
 
+        /*
+        |--------------------------------------------------------------------------
+        | Riga solo quantità + prezzi
+        |--------------------------------------------------------------------------
+        |
+        | Esempio:
+        | 1.000 EUR 119,90 EUR 119,90
+        |
+        | In questo caso il titolo è per forza su una riga precedente.
+        */
         if ($support === '') {
             return true;
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Supporto debole / nota ordine
+        |--------------------------------------------------------------------------
+        |
+        | Esempio:
+        | Prodotto gia visto in documenti precedenti 1.000 EUR ...
+        | Nome senza trattini per test fuzzy/canonical 1.000 EUR ...
+        */
         if ($this->orderConfirmationAmountSupportLooksLikeWeakDetail($support)) {
             return true;
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Supporto logistico/tecnico
+        |--------------------------------------------------------------------------
+        */
         if ($this->orderConfirmationLineLooksLikeSupportOrDetail($support)) {
             return true;
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | La riga contiene già un nome prodotto leggibile
+        |--------------------------------------------------------------------------
+        |
+        | In questo caso non forziamo il titolo precedente, per evitare regressioni
+        | su righe e-commerce già buone.
+        */
         if ($this->orderConfirmationLineLooksLikePlausibleProductTitle($support)) {
             return false;
         }
@@ -705,35 +737,83 @@ class DocumentLineParser
     /**
      * Estrae quantità, unitario e totale da una riga e-commerce.
      *
-     * Esempi:
-     * - Disponibile - consegna 2 giorni 1.000 EUR 429,90 EUR 429,90
-     * - Articoli: 2 pezzi 2.000 EUR 299,90 EUR 599,80
-     * - 1.000 EUR 119,90 EUR 119,90
+     * La logica lavora da destra verso sinistra:
+     * - ultimo importo = totale riga;
+     * - penultimo importo = prezzo unitario;
+     * - token numerico immediatamente prima del prezzo unitario = quantità;
+     * - tutto ciò che precede la quantità = supporto/descrizione debole.
+     *
+     * Questo è più robusto dei pattern full-line perché gestisce:
+     * - tab;
+     * - spazi multipli;
+     * - EUR / EURO / €;
+     * - supporti testuali prima della quantità;
+     * - importi con migliaia: 1.849,00.
      */
     private function extractOrderConfirmationAmountColumns(string $line): ?array
     {
-        $amountPattern = '\d{1,3}(?:[.\s]\d{3})*,\d{2}|\d+,\d{2}';
-        $currencyPattern = '(?:(?:EUR|EURO|€)\s*)?';
+        $normalizedLine = $this->normalizeLine($line);
 
-        $pattern = '/^(?<support>.*?)\s*' .
-            '(?<quantity>\d{1,3}(?:[,.]\d{3})?)\s+' .
-            $currencyPattern . '(?<unit_price>' . $amountPattern . ')\s+' .
-            $currencyPattern . '(?<total_price>' . $amountPattern . ')\s*$/iu';
-
-        if (! preg_match($pattern, $line, $matches)) {
+        if ($normalizedLine === '') {
             return null;
         }
 
-        $quantity = $this->parseQuantity((string) ($matches['quantity'] ?? ''));
-        $unitPrice = $this->parseMoney((string) ($matches['unit_price'] ?? ''));
-        $totalPrice = $this->parseMoney((string) ($matches['total_price'] ?? ''));
+        $amountWithCurrencyPattern = '(?:(?:EUR|EURO|€)\s*)?(?:\d{1,3}(?:[.\s]\d{3})*,\d{2}|\d+,\d{2})';
+
+        /*
+        |--------------------------------------------------------------------------
+        | Estrazione da destra
+        |--------------------------------------------------------------------------
+        |
+        | Esempio:
+        | Prodotto gia visto ... 1.000 EUR 1.849,00 EUR 1.849,00
+        |
+        | before_unit_price = "Prodotto gia visto ... 1.000"
+        | unit_price        = "1.849,00"
+        | total_price       = "1.849,00"
+        |
+        */
+        $pattern = '/^(?<before_unit_price>.*?)\s+' .
+            '(?<unit_price>' . $amountWithCurrencyPattern . ')\s+' .
+            '(?<total_price>' . $amountWithCurrencyPattern . ')\s*$/iu';
+
+        if (! preg_match($pattern, $normalizedLine, $matches)) {
+            return null;
+        }
+
+        $beforeUnitPrice = trim((string) ($matches['before_unit_price'] ?? ''));
+
+        if ($beforeUnitPrice === '') {
+            return null;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Quantità immediatamente prima del prezzo unitario
+        |--------------------------------------------------------------------------
+        |
+        | Accettiamo:
+        | - 1
+        | - 1.000
+        | - 2.000
+        | - 2
+        |
+        | La quantità deve stare alla fine della parte precedente il prezzo unitario.
+        */
+        if (! preg_match('/^(?<support>.*?)\s*(?<quantity>\d{1,3}(?:[,.]\d{3})?|\d+)\s*$/u', $beforeUnitPrice, $quantityMatches)) {
+            return null;
+        }
+
+        $quantity = $this->parseQuantity((string) ($quantityMatches['quantity'] ?? ''));
+        $unitPrice = $this->parseMoney($this->stripCurrencyFromAmount((string) ($matches['unit_price'] ?? '')));
+        $totalPrice = $this->parseMoney($this->stripCurrencyFromAmount((string) ($matches['total_price'] ?? '')));
 
         if ($quantity === null || $unitPrice === null || $totalPrice === null) {
             return null;
         }
 
         return [
-            'support' => trim((string) ($matches['support'] ?? '')),
+            'support' => trim((string) ($quantityMatches['support'] ?? '')),
             'quantity' => $quantity,
             'unit_price' => $unitPrice,
             'total_price' => $totalPrice,
@@ -741,11 +821,23 @@ class DocumentLineParser
     }
 
     /**
+     * Rimuove valuta testuale/simbolo da un importo prima di passarlo a parseMoney().
+     */
+    private function stripCurrencyFromAmount(string $amount): string
+    {
+        $amount = preg_replace('/\b(?:EUR|EURO)\b|€/iu', '', $amount) ?: $amount;
+
+        return trim($amount);
+    }
+
+    /**
      * Cerca il titolo prodotto precedente alla riga importi.
      *
      * Non usa nomi prodotto specifici:
-     * scarta righe con importi, barcode/EAN, note tecniche, prezzi listino,
-     * righe di stato/logistica e header tabellari.
+     * - scarta EAN/barcode;
+     * - scarta note tecniche;
+     * - scarta dettagli ordine;
+     * - si ferma quando incontra il boundary tabellare.
      */
     private function findPreviousOrderConfirmationProductTitle(array $lines, int $currentIndex): ?string
     {
@@ -859,6 +951,19 @@ class DocumentLineParser
 
         $normalized = mb_strtolower($line);
 
+        /*
+        |--------------------------------------------------------------------------
+        | Note come parola autonoma
+        |--------------------------------------------------------------------------
+        |
+        | Evitiamo falsi positivi come "Notebook", che contiene la sottostringa
+        | "note" ma rappresenta chiaramente un titolo prodotto.
+        |
+        */
+        if (preg_match('/\bnota\b|\bnote\b/u', $normalized)) {
+            return true;
+        }
+
         $supportSignals = [
             'ean',
             'gtin',
@@ -867,8 +972,6 @@ class DocumentLineParser
             'listino',
             'barrato',
             'unit_price',
-            'nota',
-            'note',
             'non quantita',
             'non quantità',
             'capacita',
@@ -1080,6 +1183,10 @@ class DocumentLineParser
      *
      * Serve per documenti e-commerce / conferme ordine dove il nome prodotto,
      * le caratteristiche, l'EAN e gli importi possono stare su righe separate.
+     *
+     * Questa funzione è anche una rete di sicurezza per il fallback amount_based:
+     * se la descrizione estratta dalla riga importi è una nota debole/logistica,
+     * usa il titolo prodotto precedente invece di creare candidati sporchi.
      */
     private function findNearbyOrderProductContext(
         Document $document,
@@ -1096,22 +1203,34 @@ class DocumentLineParser
         $productCode = $this->extractProductCodeFromLine($rawLine)
             ?: $fallbackProductCode;
 
+        $fallbackDescription = $this->normalizeLine($fallbackDescription);
+
         /*
         |--------------------------------------------------------------------------
-        | Titolo prodotto
+        | Quando sostituire la descrizione estratta
         |--------------------------------------------------------------------------
         |
-        | Sostituiamo la descrizione estratta dalla riga importo solo se sembra
-        | una descrizione tecnica/accessoria, per esempio:
-        | "colore bianco - Wi-Fi - funzione lavapavimenti".
+        | Il fallback amount_based estrae descrizioni direttamente dalla riga importi.
+        | In molte conferme ordine però quella riga contiene solo una nota:
         |
-        | Se invece la descrizione è già un prodotto leggibile, come:
-        | "Kit 6 sacchetti ricambio SmartClean X200",
-        | non dobbiamo prendere il titolo della riga precedente.
+        | - "Prodotto già visto in documenti precedenti"
+        | - "Nome senza trattini per test fuzzy/canonical"
+        | - "Disponibile - consegna"
+        | - "Magazzino Europa"
         |
+        | In questi casi la descrizione non è un prodotto, quindi cerchiamo il titolo
+        | prodotto nelle righe precedenti.
         */
-        $title = $this->orderLineLooksLikeTechnicalDetail($fallbackDescription)
-            ? $this->findPreviousOrderProductTitle($lines, $currentIndex, $fallbackDescription)
+        $shouldUsePreviousTitle =
+            $this->orderLineLooksLikeTechnicalDetail($fallbackDescription)
+            || $this->orderConfirmationAmountSupportLooksLikeWeakDetail($fallbackDescription)
+            || $this->orderConfirmationLineLooksLikeSupportOrDetail($fallbackDescription);
+
+        $title = $shouldUsePreviousTitle
+            ? $this->findPreviousOrderConfirmationProductTitle(
+                lines: $lines,
+                currentIndex: $currentIndex
+            )
             : null;
 
         $ean = $title !== null
@@ -1128,6 +1247,14 @@ class DocumentLineParser
             includeTechnicalDetails: $title !== null
         );
 
+        /*
+        |--------------------------------------------------------------------------
+        | Raw text normalizzato
+        |--------------------------------------------------------------------------
+        |
+        | Manteniamo la riga importi originale per tracciabilità, ma mettiamo prima
+        | il titolo corretto. La descrizione finale resta comunque separata.
+        */
         $rawTextParts = array_filter([
             $title,
             $rawLine,
@@ -1266,50 +1393,75 @@ class DocumentLineParser
 
     /**
      * Cerca EAN vicino alla riga importo di una conferma ordine.
+     *
+     * Preferiamo le righe precedenti, perché nei documenti e-commerce l'EAN
+     * di solito sta tra titolo prodotto e riga prezzo. Guardare prima in avanti
+     * può agganciare l'EAN del prodotto successivo.
      */
     private function findNearbyOrderProductEan(array $lines, int $currentIndex): ?string
     {
-        for ($offset = -3; $offset <= 3; $offset++) {
-            if ($offset === 0) {
-                continue;
-            }
-
+        /*
+        |--------------------------------------------------------------------------
+        | Prima cerca nelle righe precedenti
+        |--------------------------------------------------------------------------
+        |
+        | Esempio:
+        | Titolo prodotto
+        | EAN 0196388123456
+        | dettaglio ordine 1.000 EUR ...
+        |
+        */
+        for ($offset = -1; $offset >= -6; $offset--) {
             $index = $currentIndex + $offset;
 
             if (! isset($lines[$index])) {
                 continue;
             }
 
-            $candidate = $this->normalizeLine($lines[$index]);
+            $candidate = $this->normalizeLine((string) $lines[$index]);
 
             if ($candidate === '') {
                 continue;
             }
 
-            /*
-            |--------------------------------------------------------------------------
-            | EAN esplicito
-            |--------------------------------------------------------------------------
-            |
-            | Questo è il caso più affidabile:
-            | EAN: 8057777001234
-            |
-            */
+            if ($this->orderConfirmationLineLooksLikeTableBoundary($candidate)) {
+                break;
+            }
+
             if (preg_match('/\bEAN\s*[:\-]?\s*(?<ean>\d{8}|\d{12}|\d{13}|\d{14})\b/iu', $candidate, $matches)) {
                 return $matches['ean'];
             }
 
-            /*
-            |--------------------------------------------------------------------------
-            | Barcode isolato
-            |--------------------------------------------------------------------------
-            |
-            | Accettiamo una riga numerica pura, ma NON una riga descrittiva con
-            | prezzi dentro. Altrimenti una stringa tipo:
-            | "RVA-X200 ... 249,90 249,90"
-            | può diventare falsamente "2002499024990".
-            |
-            */
+            if ($this->lineLooksLikeStandaloneBarcode($candidate)) {
+                return preg_replace('/\D+/', '', $candidate) ?: null;
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Fallback prudente in avanti
+        |--------------------------------------------------------------------------
+        |
+        | Lo usiamo solo se l'EAN è proprio nella riga immediatamente successiva.
+        | Questo riduce il rischio di prendere l'EAN del prodotto seguente.
+        */
+        for ($offset = 1; $offset <= 1; $offset++) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                continue;
+            }
+
+            $candidate = $this->normalizeLine((string) $lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if (preg_match('/\bEAN\s*[:\-]?\s*(?<ean>\d{8}|\d{12}|\d{13}|\d{14})\b/iu', $candidate, $matches)) {
+                return $matches['ean'];
+            }
+
             if ($this->lineLooksLikeStandaloneBarcode($candidate)) {
                 return preg_replace('/\D+/', '', $candidate) ?: null;
             }
@@ -1345,6 +1497,11 @@ class DocumentLineParser
 
     /**
      * Raccoglie righe tecniche vicine utili per revisione/debug.
+     *
+     * Per order_confirmation preferiamo il contesto precedente alla riga importi:
+     * titolo prodotto -> EAN -> riga prezzo.
+     *
+     * Questo evita di agganciare EAN o note del prodotto successivo.
      */
     private function collectNearbyOrderSupportingLines(
         array $lines,
@@ -1353,36 +1510,32 @@ class DocumentLineParser
     ): array {
         $supportingLines = [];
 
-        for ($offset = -2; $offset <= 2; $offset++) {
-            if ($offset === 0) {
-                continue;
-            }
-
+        /*
+        |--------------------------------------------------------------------------
+        | Contesto precedente
+        |--------------------------------------------------------------------------
+        */
+        for ($offset = -1; $offset >= -6; $offset--) {
             $index = $currentIndex + $offset;
 
             if (! isset($lines[$index])) {
                 continue;
             }
 
-            $candidate = $this->normalizeLine($lines[$index]);
+            $candidate = $this->normalizeLine((string) $lines[$index]);
 
             if ($candidate === '') {
                 continue;
+            }
+
+            if ($this->orderConfirmationLineLooksLikeTableBoundary($candidate)) {
+                break;
             }
 
             if ($this->lineShouldBeIgnored($candidate)) {
                 continue;
             }
 
-            /*
-            |--------------------------------------------------------------------------
-            | Non agganciare altre righe articolo.
-            |--------------------------------------------------------------------------
-            |
-            | Se una riga contiene importi, è quasi certamente un'altra riga tabella
-            | e-commerce. Non deve diventare supporting line del prodotto corrente.
-            |
-            */
             if (! empty($this->extractAmountsFromText($candidate))) {
                 continue;
             }
@@ -1407,6 +1560,33 @@ class DocumentLineParser
             if (
                 $includeTechnicalDetails
                 && $this->orderLineLooksLikeTechnicalDetail($candidate)
+            ) {
+                $supportingLines[] = $candidate;
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Contesto successivo molto prudente
+        |--------------------------------------------------------------------------
+        |
+        | Guardiamo solo la riga immediatamente successiva, e solo se è chiaramente
+        | metadata tecnico. Non vogliamo prendere il titolo/EAN dell'articolo dopo.
+        */
+        $nextIndex = $currentIndex + 1;
+
+        if (isset($lines[$nextIndex])) {
+            $candidate = $this->normalizeLine((string) $lines[$nextIndex]);
+            $normalized = mb_strtolower($candidate);
+
+            if (
+                $candidate !== ''
+                && empty($this->extractAmountsFromText($candidate))
+                && (
+                    str_contains($normalized, 'serial')
+                    || str_contains($normalized, 's/n')
+                    || $this->lineLooksLikeStandaloneBarcode($candidate)
+                )
             ) {
                 $supportingLines[] = $candidate;
             }
@@ -2877,7 +3057,6 @@ class DocumentLineParser
             'causale del trasporto',
             'firma',
             'operatore',
-            'note',
             'nr. colli',
             'privacy',
             'contributo conai',
@@ -2887,6 +3066,19 @@ class DocumentLineParser
             if (str_contains($normalized, $signal)) {
                 return true;
             }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Note come parola autonoma
+        |--------------------------------------------------------------------------
+        |
+        | Non usiamo str_contains($line, 'note'), perché parole prodotto come
+        | "Notebook" contengono "note" ma non sono righe di nota.
+        |
+        */
+        if (preg_match('/\bnote?\b/u', $normalized)) {
+            return true;
         }
 
         return false;

@@ -6,6 +6,7 @@ use App\Models\Document;
 use App\Models\ProductIdentificationCandidate;
 use App\Models\ProductUnderstandingGlobalFact;
 use App\Services\Documents\ProductFromCandidateCreator;
+use App\Services\Documents\DocumentLines\DocumentLineAmountConsistencyChecker;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
@@ -225,6 +226,89 @@ class ReviewIndex extends Component
         }
 
         return ucfirst(str_replace('_', ' ', $signal));
+    }
+
+    /**
+     * Recupera la diagnostica importi del candidato.
+     *
+     * Se il metadata non esiste, ricalcola in memoria dai valori già salvati
+     * nel candidato. Il fallback è read-only e non aggiorna il database.
+     *
+     * @return array<string, mixed>
+     */
+    public function candidateAmountConsistency(ProductIdentificationCandidate $candidate): array
+    {
+        $stored = data_get($candidate->metadata, 'document_line_amount_consistency', []);
+
+        if (is_array($stored) && $stored !== []) {
+            return [
+                'source' => 'metadata',
+                ...$stored,
+            ];
+        }
+
+        $quantity = data_get($candidate->metadata, 'quantity');
+        $unitPrice = data_get($candidate->metadata, 'unit_price');
+        $totalPrice = data_get($candidate->metadata, 'total_price');
+
+        if (
+            ($quantity === null || $quantity === '')
+            && ($unitPrice === null || $unitPrice === '')
+            && ($totalPrice === null || $totalPrice === '')
+        ) {
+            return [];
+        }
+
+        return [
+            'version' => 'candidate_amount_review_live_check_v1',
+            'source' => 'live_check_not_persisted',
+            ...app(DocumentLineAmountConsistencyChecker::class)->check(
+                quantity: $quantity,
+                unitPrice: $unitPrice,
+                totalPrice: $totalPrice,
+            ),
+        ];
+    }
+
+    /**
+     * Indica se il candidato deriva da una riga con importi incoerenti.
+     */
+    public function candidateHasAmountConsistencyMismatch(ProductIdentificationCandidate $candidate): bool
+    {
+        $amountConsistency = $this->candidateAmountConsistency($candidate);
+
+        return (bool) data_get($amountConsistency, 'checked', false)
+            && data_get($amountConsistency, 'is_consistent') === false;
+    }
+
+    /**
+     * Etichetta sorgente diagnostica importi.
+     *
+     * @param  array<string, mixed>  $amountConsistency
+     */
+    public function candidateAmountConsistencySourceLabel(array $amountConsistency): string
+    {
+        return match ($amountConsistency['source'] ?? null) {
+            'metadata' => 'Metadata salvato',
+            'live_check_not_persisted' => 'Controllo live non salvato',
+            default => '—',
+        };
+    }
+
+    /**
+     * Format uniforme per quantità e importi mostrati in revisione.
+     */
+    public function formatReviewDecimal(mixed $value, int $decimals = 2): string
+    {
+        if ($value === null || $value === '') {
+            return '—';
+        }
+
+        if (! is_numeric($value)) {
+            return '—';
+        }
+
+        return number_format((float) $value, $decimals, ',', '.');
     }
 
     /**

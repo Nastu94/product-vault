@@ -180,7 +180,9 @@
                             $globalFact = $candidate->metadata['product_understanding_global_fact'] ?? [];
                             $python = $candidate->metadata['product_understanding_python'] ?? [];
                             $understanding = $candidate->metadata['product_understanding'] ?? [];
-
+                            $amountConsistency = $this->candidateAmountConsistency($candidate);
+                            $amountConsistencySignals = $this->metadataList($amountConsistency['signals'] ?? []);
+                            $hasAmountConsistencyMismatch = $this->candidateHasAmountConsistencyMismatch($candidate);
                             $pythonWarnings = $python['warnings'] ?? [];
                             $pythonSignals = $python['signals'] ?? [];
                             $globalSignals = $globalFact['signals'] ?? [];
@@ -220,6 +222,12 @@
                                         <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->candidateKnowledgeBadgeClasses($candidate) }}">
                                             {{ $this->candidateKnowledgeLabel($candidate) }}
                                         </span>
+
+                                        @if ($hasAmountConsistencyMismatch)
+                                            <span class="inline-flex items-center rounded-full bg-yellow-50 px-2.5 py-1 text-xs font-medium text-yellow-800 ring-1 ring-inset ring-yellow-600/20">
+                                                Importi non coerenti
+                                            </span>
+                                        @endif
                                     </div>
 
                                     <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
@@ -251,6 +259,27 @@
                                             <p class="mt-1 text-sm text-gray-700">
                                                 {{ $candidate->documentLine->description }}
                                             </p>
+                                        </div>
+                                    @endif
+
+                                    @if ($hasAmountConsistencyMismatch)
+                                        <div class="mt-3 rounded-md bg-yellow-50 p-3 ring-1 ring-inset ring-yellow-600/20">
+                                            <div class="text-sm font-medium text-yellow-900">
+                                                Importi riga non coerenti
+                                            </div>
+
+                                            <p class="mt-1 text-sm text-yellow-800">
+                                                Quantità × prezzo unitario non corrisponde al totale riga. Verifica gli importi prima di confermare il candidato.
+                                            </p>
+
+                                            <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-yellow-800">
+                                                <span>Quantità: {{ $this->formatReviewDecimal(data_get($candidate->metadata, 'quantity'), 3) }}</span>
+                                                <span>Unitario: {{ $this->formatReviewDecimal(data_get($candidate->metadata, 'unit_price')) }}</span>
+                                                <span>Totale: {{ $this->formatReviewDecimal(data_get($candidate->metadata, 'total_price')) }}</span>
+                                                <span>Atteso: {{ $this->formatReviewDecimal(data_get($amountConsistency, 'expected_total')) }}</span>
+                                                <span>Scarto: {{ $this->formatReviewDecimal(data_get($amountConsistency, 'delta')) }}</span>
+                                                <span>Sorgente: {{ $this->candidateAmountConsistencySourceLabel($amountConsistency) }}</span>
+                                            </div>
                                         </div>
                                     @endif
 
@@ -373,6 +402,7 @@
                                                     $allSignals = collect($pythonSignals)
                                                         ->merge($globalSignals)
                                                         ->merge($feedbackSignals)
+                                                        ->merge($amountConsistencySignals)
                                                         ->unique()
                                                         ->take(6);
                                                 @endphp
@@ -486,6 +516,9 @@
             $selectedGlobalFactSnapshot = $selectedCandidate->metadata['product_understanding_global_fact'] ?? [];
             $selectedPython = $selectedCandidate->metadata['product_understanding_python'] ?? [];
             $selectedUnderstanding = $selectedCandidate->metadata['product_understanding'] ?? [];
+            $selectedAmountConsistency = $this->candidateAmountConsistency($selectedCandidate);
+            $selectedAmountConsistencySignals = $this->metadataList($selectedAmountConsistency['signals'] ?? []);
+            $selectedHasAmountConsistencyMismatch = $this->candidateHasAmountConsistencyMismatch($selectedCandidate);
 
             $selectedCurrentGlobalFact = $this->candidateCurrentGlobalFact($selectedCandidate);
 
@@ -554,6 +587,12 @@
                                     <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->candidateKnowledgeBadgeClasses($selectedCandidate) }}">
                                         {{ $this->candidateKnowledgeLabel($selectedCandidate) }}
                                     </span>
+
+                                    @if ($selectedHasAmountConsistencyMismatch)
+                                        <span class="inline-flex items-center rounded-full bg-yellow-50 px-2.5 py-1 text-xs font-medium text-yellow-800 ring-1 ring-inset ring-yellow-600/20">
+                                            Importi non coerenti
+                                        </span>
+                                    @endif
                                 </div>
 
                                 <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -688,6 +727,63 @@
                                             · Totale:
                                             {{ $selectedCandidate->documentLine->total_price ?? '—' }}
                                         </div>
+                                    </div>
+                                @endif
+
+                                @if ($selectedHasAmountConsistencyMismatch)
+                                    <div class="mt-4 rounded-md bg-yellow-50 p-4 ring-1 ring-inset ring-yellow-600/20">
+                                        <h4 class="text-sm font-semibold text-yellow-900">
+                                            Importi riga non coerenti
+                                        </h4>
+
+                                        <p class="mt-1 text-sm text-yellow-800">
+                                            La riga che ha generato questo candidato ha una differenza tra quantità × prezzo unitario e totale riga.
+                                            Il candidato non viene bloccato automaticamente, ma va verificato prima della conferma.
+                                        </p>
+
+                                        <dl class="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-yellow-700">Quantità</dt>
+                                                <dd class="mt-1 text-yellow-900">
+                                                    {{ $this->formatReviewDecimal(data_get($selectedCandidate->metadata, 'quantity'), 3) }}
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-yellow-700">Prezzo unitario</dt>
+                                                <dd class="mt-1 text-yellow-900">
+                                                    {{ $this->formatReviewDecimal(data_get($selectedCandidate->metadata, 'unit_price')) }}
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-yellow-700">Totale riga</dt>
+                                                <dd class="mt-1 text-yellow-900">
+                                                    {{ $this->formatReviewDecimal(data_get($selectedCandidate->metadata, 'total_price')) }}
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-yellow-700">Totale atteso</dt>
+                                                <dd class="mt-1 text-yellow-900">
+                                                    {{ $this->formatReviewDecimal(data_get($selectedAmountConsistency, 'expected_total')) }}
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-yellow-700">Scarto</dt>
+                                                <dd class="mt-1 text-yellow-900">
+                                                    {{ $this->formatReviewDecimal(data_get($selectedAmountConsistency, 'delta')) }}
+                                                </dd>
+                                            </div>
+
+                                            <div>
+                                                <dt class="text-xs font-medium uppercase tracking-wider text-yellow-700">Sorgente</dt>
+                                                <dd class="mt-1 text-yellow-900">
+                                                    {{ $this->candidateAmountConsistencySourceLabel($selectedAmountConsistency) }}
+                                                </dd>
+                                            </div>
+                                        </dl>
                                     </div>
                                 @endif
                             </section>
@@ -958,6 +1054,7 @@
                                     $selectedAllSignals = collect($selectedPythonSignals)
                                         ->merge($selectedGlobalSignals)
                                         ->merge($selectedFeedbackSignals)
+                                        ->merge($selectedAmountConsistencySignals)
                                         ->unique()
                                         ->values();
                                 @endphp

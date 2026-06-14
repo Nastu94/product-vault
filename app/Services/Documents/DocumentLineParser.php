@@ -960,7 +960,7 @@ class DocumentLineParser
         | "note" ma rappresenta chiaramente un titolo prodotto.
         |
         */
-        if (preg_match('/\bnota\b|\bnote\b/u', $normalized)) {
+        if ($this->containsAnyStandaloneWord($normalized, ['nota', 'note'])) {
             return true;
         }
 
@@ -3032,6 +3032,44 @@ class DocumentLineParser
     }
 
     /**
+     * Verifica se una parola è presente come parola autonoma.
+     *
+     * Evita falsi positivi da sottostringa:
+     * - "note" NON matcha "Notebook"
+     * - "iva" NON matcha "Divano"
+     * - "pag" NON matcha "pagina" se cercato come parola autonoma
+     */
+    private function containsStandaloneWord(string $text, string $word): bool
+    {
+        $text = mb_strtolower($this->normalizeLine($text));
+        $word = mb_strtolower(trim($word));
+
+        if ($text === '' || $word === '') {
+            return false;
+        }
+
+        $pattern = '/(?<![\p{L}\p{N}_])' . preg_quote($word, '/') . '(?![\p{L}\p{N}_])/u';
+
+        return (bool) preg_match($pattern, $text);
+    }
+
+    /**
+     * Verifica se almeno una parola è presente come parola autonoma.
+     *
+     * Utile per segnali brevi che non devono essere cercati con str_contains().
+     */
+    private function containsAnyStandaloneWord(string $text, array $words): bool
+    {
+        foreach ($words as $word) {
+            if ($this->containsStandaloneWord($text, (string) $word)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Capisce se una riga interrompe il contesto prodotto.
      */
     private function lineBreaksProductContext(string $line): bool
@@ -3070,14 +3108,14 @@ class DocumentLineParser
 
         /*
         |--------------------------------------------------------------------------
-        | Note come parola autonoma
+        | Parole brevi solo come parole autonome
         |--------------------------------------------------------------------------
         |
-        | Non usiamo str_contains($line, 'note'), perché parole prodotto come
-        | "Notebook" contengono "note" ma non sono righe di nota.
+        | Non devono essere cercate con str_contains(), perché possono comparire
+        | dentro nomi prodotto: "Notebook" contiene "note".
         |
         */
-        if (preg_match('/\bnote?\b/u', $normalized)) {
+        if ($this->containsAnyStandaloneWord($normalized, ['nota', 'note'])) {
             return true;
         }
 
@@ -3144,7 +3182,7 @@ class DocumentLineParser
         | contengono la sequenza "iva" ma non sono righe IVA.
         |
         */
-        if (preg_match('/\biva\b/u', $normalized)) {
+        if ($this->containsStandaloneWord($normalized, 'iva')) {
             return true;
         }
 

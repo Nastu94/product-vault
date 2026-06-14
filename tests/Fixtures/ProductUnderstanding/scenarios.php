@@ -958,5 +958,124 @@ return [
                 ],
             ],
         ],
+        [
+            'name' => 'order_confirmation_technical_numbers_should_not_be_quantities',
+            'document_type' => 'order_confirmation',
+            'raw_text_lines' => [
+                'CONFERMA ORDINE E-COMMERCE',
+                'Numero ordine: PV-SYN-ORDER-TECH-QTY',
+                'Venditore',
+                'TechHub Italia S.r.l.',
+                '',
+                'Articoli ordinati',
+                'CasaBot Mappa Pro robot aspirapolvere 900 1.349,50 349,50',
+                'TerraVault Home Duo NAS 8 TB 1.529,00 529,00',
+                'Monitor View Max Creator XR 27 UHD 1.389,90 389,90',
+                '',
+                'Totale ordine EUR 1.268,40',
+            ],
+            'expect' => [
+                'line_count' => 3,
+                'candidate_count' => 3,
+                'document_status' => 'needs_review',
+                'lines' => [
+                    [
+                        'description' => 'CasaBot Mappa Pro robot aspirapolvere 900',
+                        'quantity' => '1.000',
+                        'unit_price' => '349.50',
+                        'total_price' => '349.50',
+                        'amount_consistency' => [
+                            'version' => 'document_line_amount_consistency_v1',
+                            'checked' => true,
+                            'is_consistent' => true,
+                            'expected_total' => 349.50,
+                            'actual_total' => 349.50,
+                            'delta' => 0.00,
+                            'tolerance' => 0.02,
+                            'reason' => 'amounts_consistent',
+                            'contains_signals' => [
+                                'quantity_x_unit_price_matches_total_price',
+                            ],
+                        ],
+                    ],
+                    [
+                        'description' => 'TerraVault Home Duo NAS 8 TB',
+                        'quantity' => '1.000',
+                        'unit_price' => '529.00',
+                        'total_price' => '529.00',
+                        'amount_consistency' => [
+                            'version' => 'document_line_amount_consistency_v1',
+                            'checked' => true,
+                            'is_consistent' => true,
+                            'expected_total' => 529.00,
+                            'actual_total' => 529.00,
+                            'delta' => 0.00,
+                            'tolerance' => 0.02,
+                            'reason' => 'amounts_consistent',
+                            'contains_signals' => [
+                                'quantity_x_unit_price_matches_total_price',
+                            ],
+                        ],
+                    ],
+                    [
+                        'description' => 'Monitor View Max Creator XR 27 UHD',
+                        'quantity' => '1.000',
+                        'unit_price' => '389.90',
+                        'total_price' => '389.90',
+                        'amount_consistency' => [
+                            'version' => 'document_line_amount_consistency_v1',
+                            'checked' => true,
+                            'is_consistent' => true,
+                            'expected_total' => 389.90,
+                            'actual_total' => 389.90,
+                            'delta' => 0.00,
+                            'tolerance' => 0.02,
+                            'reason' => 'amounts_consistent',
+                            'contains_signals' => [
+                                'quantity_x_unit_price_matches_total_price',
+                            ],
+                        ],
+                    ],
+                ],
+                'candidates' => [
+                    [
+                        'name_contains' => 'CasaBot Mappa Pro robot aspirapolvere 900',
+                        'document_line_amount_consistency' => [
+                            'version' => 'document_line_amount_consistency_v1',
+                            'checked' => true,
+                            'is_consistent' => true,
+                            'reason' => 'amounts_consistent',
+                            'contains_signals' => [
+                                'quantity_x_unit_price_matches_total_price',
+                            ],
+                        ],
+                    ],
+                    [
+                        'name_contains' => 'TerraVault Home Duo NAS 8 TB',
+                        'document_line_amount_consistency' => [
+                            'version' => 'document_line_amount_consistency_v1',
+                            'checked' => true,
+                            'is_consistent' => true,
+                            'reason' => 'amounts_consistent',
+                            'contains_signals' => [
+                                'quantity_x_unit_price_matches_total_price',
+                            ],
+                        ],
+                    ],
+                    [
+                        'name_contains' => 'Monitor View Max Creator XR 27 UHD',
+                        'document_line_amount_consistency' => [
+                            'version' => 'document_line_amount_consistency_v1',
+                            'checked' => true,
+                            'is_consistent' => true,
+                            'reason' => 'amounts_consistent',
+                            'contains_signals' => [
+                                'quantity_x_unit_price_matches_total_price',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ],
     ],
 ];

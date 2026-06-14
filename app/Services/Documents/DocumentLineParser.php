@@ -9,6 +9,7 @@ use App\Services\Documents\InvoiceTableExtraction\InvoiceTableExtractionDocument
 use App\Services\Documents\InvoiceTableExtraction\InvoiceTableExtractionManager;
 use App\Services\Documents\InvoiceTableExtraction\InvoiceTableExtractionQualityGate;
 use App\Services\Documents\DocumentLines\DocumentLineAmountConsistencyAnnotator;
+use App\Services\Documents\DocumentLines\DocumentLineAmountConsistencyChecker;
 
 class DocumentLineParser
 {
@@ -31,6 +32,7 @@ class DocumentLineParser
         private readonly InvoiceTableExtractionQualityGate $invoiceTableExtractionQualityGate,
         private readonly InvoiceTableExtractionDocumentLineWriter $invoiceTableExtractionDocumentLineWriter,
         private readonly DocumentLineAmountConsistencyAnnotator $amountConsistencyAnnotator,
+        private readonly DocumentLineAmountConsistencyChecker $amountConsistencyChecker,
     ) {
     }
 
@@ -305,16 +307,60 @@ class DocumentLineParser
                 $productCode = $this->extractProductCodeFromLine($rawLine)
                     ?: $this->buildProductCode($pendingCodeParts);
 
-                $quantity = $this->extractQuantityBeforeFirstAmount($rawLine);
+                $quantityContext = $this->extractQuantityBeforeFirstAmountContext($rawLine);
+                $quantity = $quantityContext['quantity'] ?? null;
                 $unitPrice = count($amounts) >= 2 ? $amounts[0] : null;
                 $totalPrice = end($amounts);
+                $amountConsistencyRecovery = null;
 
                 if ($document->documentType?->code === 'order_confirmation') {
+                    $originalQuantity = $quantity;
+
                     $quantity = $this->inferOrderConfirmationQuantity(
                         extractedQuantity: $quantity,
                         unitPrice: $unitPrice,
                         totalPrice: $totalPrice
                     );
+
+                    if (
+                        $originalQuantity !== null
+                        && $quantity !== null
+                        && abs($originalQuantity - $quantity) > 0.001
+                        && $this->orderConfirmationQuantityLooksLikeDescriptionNumber($quantityContext, $originalQuantity)
+                    ) {
+                        $description = $this->extractDescription($rawLine, removeStandaloneNumbers: false) ?: $description;
+
+                        $amountConsistencyRecovery = [
+                            'version' => 'order_confirmation_amount_consistency_recovery_v1',
+                            'applied' => true,
+                            'strategy' => 'quantity_inferred_from_unit_total_ratio',
+                            'original_quantity' => $originalQuantity,
+                            'recovered_quantity' => $quantity,
+                            'unit_price' => $unitPrice,
+                            'total_price' => $totalPrice,
+                            'quantity_context' => $quantityContext,
+                            'signals' => [
+                                'suspicious_quantity_from_description',
+                                'quantity_recovered_from_amount_ratio',
+                            ],
+                        ];
+                    }
+
+                    $recovery = $this->recoverOrderConfirmationAmountLineFromSuspiciousQuantity(
+                        extractedQuantity: $quantity,
+                        unitPrice: $unitPrice,
+                        totalPrice: $totalPrice,
+                        amounts: $amounts,
+                        quantityContext: $quantityContext
+                    );
+
+                    if ($recovery !== null) {
+                        $quantity = $recovery['quantity'];
+                        $unitPrice = $recovery['unit_price'];
+                        $totalPrice = $recovery['total_price'];
+                        $description = $this->extractDescription($rawLine, removeStandaloneNumbers: false) ?: $description;
+                        $amountConsistencyRecovery = $recovery['metadata'];
+                    }
                 }
 
                 $nearbyOrderProductContext = $this->findNearbyOrderProductContext(
@@ -329,6 +375,22 @@ class DocumentLineParser
                 if ($nearbyOrderProductContext !== null) {
                     $description = $nearbyOrderProductContext['description'];
                     $productCode = $nearbyOrderProductContext['product_code'] ?? $productCode;
+                }
+
+                $metadata = [
+                    'parser' => 'document_line_parser_v3',
+                    'mode' => 'amount_based',
+                    'amounts_found' => $amounts,
+                    'pending_code_parts' => $pendingCodeParts,
+                    'product_code_candidate' => $productCode,
+                    'ean_code_candidate' => $nearbyOrderProductContext['ean_code'] ?? null,
+                    'supporting_lines' => $nearbyOrderProductContext['supporting_lines'] ?? [],
+                ];
+
+                if ($amountConsistencyRecovery !== null) {
+                    $metadata['amount_consistency_recovery'] = $amountConsistencyRecovery;
+                    $metadata['quantity_recovered_from_amount_mismatch'] = true;
+                    $metadata['suspicious_quantity_from_description'] = true;
                 }
 
                 DocumentLine::query()->create([
@@ -346,15 +408,7 @@ class DocumentLineParser
                         quantity: $quantity,
                         productCode: $productCode,
                     ),
-                    'metadata' => [
-                        'parser' => 'document_line_parser_v3',
-                        'mode' => 'amount_based',
-                        'amounts_found' => $amounts,
-                        'pending_code_parts' => $pendingCodeParts,
-                        'product_code_candidate' => $productCode,
-                        'ean_code_candidate' => $nearbyOrderProductContext['ean_code'] ?? null,
-                        'supporting_lines' => $nearbyOrderProductContext['supporting_lines'] ?? [],
-                    ],
+                    'metadata' => $metadata,
                 ]);
 
                 $created++;
@@ -2482,7 +2536,7 @@ class DocumentLineParser
     /**
      * Estrae una descrizione candidata rimuovendo importi, simboli, quantità e codice prodotto iniziale.
      */
-    private function extractDescription(string $line): ?string
+    private function extractDescription(string $line, bool $removeStandaloneNumbers = true): ?string
     {
         $description = $line;
 
@@ -2494,7 +2548,9 @@ class DocumentLineParser
 
         $description = preg_replace('/€\s*/u', '', $description) ?: $description;
         $description = preg_replace('/\d{1,3}(?:[.\s]\d{3})*,\d{2}|\d+,\d{2}/u', '', $description) ?: $description;
-        $description = preg_replace('/\b\d{1,3}\b/u', '', $description) ?: $description;
+        if ($removeStandaloneNumbers) {
+            $description = preg_replace('/\b\d{1,3}\b/u', '', $description) ?: $description;
+        }
 
         $description = trim(preg_replace('/\s+/', ' ', $description) ?: '');
 
@@ -2533,7 +2589,24 @@ class DocumentLineParser
      */
     private function extractQuantityBeforeFirstAmount(string $line): ?float
     {
-        $parts = preg_split('/(?:€\s*)?\d{1,3}(?:[.\s]\d{3})*,\d{2}|(?:€\s*)?\d+,\d{2}/u', $line);
+        return $this->extractQuantityBeforeFirstAmountContext($line)['quantity'] ?? null;
+    }
+
+    /**
+     * Estrae la quantità candidata prima del primo importo, conservando il contesto.
+     *
+     * Il contesto serve per distinguere una quantità reale da un numero tecnico
+     * nella descrizione, per esempio "8 TB", "27 UHD" o "modello 900".
+     *
+     * @return array<string, mixed>|null
+     */
+    private function extractQuantityBeforeFirstAmountContext(string $line): ?array
+    {
+        $parts = preg_split(
+            '/(?:€\s*)?\d{1,3}(?:[.\s]\d{3})*,\d{2}|(?:€\s*)?\d+,\d{2}/u',
+            $line,
+            2
+        );
 
         $beforeFirstAmount = trim($parts[0] ?? '');
 
@@ -2541,13 +2614,31 @@ class DocumentLineParser
             return null;
         }
 
-        if (preg_match_all('/\b\d{1,3}(?:[,.]\d{1,3})?\b/u', $beforeFirstAmount, $matches)) {
-            $rawQuantity = end($matches[0]);
-
-            return $this->parseQuantity($rawQuantity);
+        if (! preg_match_all('/\b\d{1,3}(?:[,.]\d{1,3})?\b/u', $beforeFirstAmount, $matches, PREG_OFFSET_CAPTURE)) {
+            return null;
         }
 
-        return null;
+        $lastMatch = end($matches[0]);
+
+        if (! is_array($lastMatch)) {
+            return null;
+        }
+
+        $rawQuantity = (string) ($lastMatch[0] ?? '');
+        $offset = (int) ($lastMatch[1] ?? 0);
+        $quantity = $this->parseQuantity($rawQuantity);
+
+        if ($quantity === null) {
+            return null;
+        }
+
+        return [
+            'quantity' => $quantity,
+            'raw_quantity' => $rawQuantity,
+            'before_first_amount' => $beforeFirstAmount,
+            'text_before_quantity' => trim(substr($beforeFirstAmount, 0, $offset)),
+            'text_after_quantity_before_first_amount' => trim(substr($beforeFirstAmount, $offset + strlen($rawQuantity))),
+        ];
     }
 
     /**
@@ -2579,6 +2670,146 @@ class DocumentLineParser
         }
 
         return $extractedQuantity;
+    }
+
+    /**
+     * Recupera righe e-commerce dove un numero tecnico della descrizione è stato
+     * interpretato come quantità e il primo importo sembra un prezzo di riferimento
+     * o listino, non il prezzo unitario effettivo della riga.
+     *
+     * Esempi:
+     * - robot modello 900 1.349,50 349,50
+     * - NAS 8 TB 1.529,00 529,00
+     * - Monitor 27 UHD 1.389,90 389,90
+     *
+     * La regola resta prudente:
+     * - solo order_confirmation;
+     * - solo con almeno due importi;
+     * - solo se la diagnostica quantity × unit_price produce mismatch;
+     * - solo se la quantità candidata sembra provenire dalla descrizione;
+     * - solo se il primo importo è maggiore del totale finale, tipico di prezzo
+     *   barrato/listino seguito da prezzo finale.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function recoverOrderConfirmationAmountLineFromSuspiciousQuantity(
+        ?float $extractedQuantity,
+        ?float $unitPrice,
+        ?float $totalPrice,
+        array $amounts,
+        ?array $quantityContext
+    ): ?array {
+        if (count($amounts) < 2) {
+            return null;
+        }
+
+        if ($extractedQuantity === null || $unitPrice === null || $totalPrice === null) {
+            return null;
+        }
+
+        if ($extractedQuantity <= 1 || $unitPrice <= 0 || $totalPrice <= 0) {
+            return null;
+        }
+
+        if ($unitPrice <= $totalPrice) {
+            return null;
+        }
+
+        if (! $this->orderConfirmationQuantityLooksLikeDescriptionNumber($quantityContext, $extractedQuantity)) {
+            return null;
+        }
+
+        $currentDiagnostic = $this->amountConsistencyChecker->check(
+            quantity: $extractedQuantity,
+            unitPrice: $unitPrice,
+            totalPrice: $totalPrice,
+        );
+
+        if (
+            ($currentDiagnostic['checked'] ?? false) !== true
+            || ($currentDiagnostic['is_consistent'] ?? null) !== false
+        ) {
+            return null;
+        }
+
+        $recoveredDiagnostic = $this->amountConsistencyChecker->check(
+            quantity: 1,
+            unitPrice: $totalPrice,
+            totalPrice: $totalPrice,
+        );
+
+        if (($recoveredDiagnostic['is_consistent'] ?? null) !== true) {
+            return null;
+        }
+
+        return [
+            'quantity' => 1.0,
+            'unit_price' => $totalPrice,
+            'total_price' => $totalPrice,
+            'metadata' => [
+                'version' => 'order_confirmation_amount_consistency_recovery_v1',
+                'applied' => true,
+                'strategy' => 'single_item_final_price_from_suspicious_quantity_mismatch',
+                'original_quantity' => $extractedQuantity,
+                'original_unit_price' => $unitPrice,
+                'original_total_price' => $totalPrice,
+                'original_amount_consistency' => $currentDiagnostic,
+                'recovered_quantity' => 1.0,
+                'recovered_unit_price' => $totalPrice,
+                'recovered_total_price' => $totalPrice,
+                'recovered_amount_consistency' => $recoveredDiagnostic,
+                'quantity_context' => $quantityContext,
+                'signals' => [
+                    'suspicious_quantity_from_description',
+                    'quantity_recovered_from_amount_mismatch',
+                    'first_amount_treated_as_reference_price',
+                    'last_amount_treated_as_final_unit_price',
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * Decide se la quantità candidata sembra in realtà un numero tecnico della descrizione.
+     */
+    private function orderConfirmationQuantityLooksLikeDescriptionNumber(?array $quantityContext, ?float $quantity): bool
+    {
+        if ($quantityContext === null || $quantity === null || $quantity <= 1) {
+            return false;
+        }
+
+        $textAfterQuantity = trim((string) ($quantityContext['text_after_quantity_before_first_amount'] ?? ''));
+
+        /*
+        |--------------------------------------------------------------------------
+        | Numero seguito da testo tecnico prima dell'importo
+        |--------------------------------------------------------------------------
+        |
+        | Esempi:
+        | - 8 TB
+        | - 27 UHD
+        | - 16 GB
+        |
+        | Non guardiamo keyword specifiche: ci basta il fatto strutturale che il
+        | numero non è l'ultima colonna prima degli importi, ma fa parte di una
+        | porzione descrittiva alfanumerica.
+        |
+        */
+        if ($textAfterQuantity !== '' && preg_match('/[a-zA-ZÀ-ÿ]/u', $textAfterQuantity)) {
+            return true;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Quantità molto alta in una conferma ordine prodotto
+        |--------------------------------------------------------------------------
+        |
+        | In un documento e-commerce consumer, una quantità >= 20 prima di prezzi
+        | con mismatch enorme è più probabilmente un numero tecnico/modello/formato
+        | che una quantità reale. La coerenza importi resta comunque il gate forte.
+        |
+        */
+        return $quantity >= 20;
     }
 
     /**

@@ -99,6 +99,47 @@ class ReviewIndex extends Component
                 ->whereNull('product_id')
                 ->whereRaw("JSON_LENGTH(JSON_EXTRACT(metadata, '$.product_understanding_python.warnings')) > 0"),
 
+            'amount_mismatch' => $query
+                ->where('review_status', 'pending')
+                ->whereNull('product_id')
+                ->where(function (Builder $query): void {
+                    $query
+                        /*
+                        |--------------------------------------------------------------------------
+                        | Metadata persistito sui nuovi candidati
+                        |--------------------------------------------------------------------------
+                        */
+                        ->whereRaw("
+                            JSON_EXTRACT(metadata, '$.document_line_amount_consistency.checked') = true
+                            AND JSON_EXTRACT(metadata, '$.document_line_amount_consistency.is_consistent') = false
+                        ")
+                        /*
+                        |--------------------------------------------------------------------------
+                        | Fallback diagnostico per candidati storici senza metadata
+                        |--------------------------------------------------------------------------
+                        |
+                        | Replica il live-check della UI direttamente nella query, così anche i
+                        | candidati generati prima della persistenza del metadata vengono trovati.
+                        |
+                        */
+                        ->orWhereRaw("
+                            JSON_EXTRACT(metadata, '$.document_line_amount_consistency') IS NULL
+                            AND JSON_EXTRACT(metadata, '$.quantity') IS NOT NULL
+                            AND JSON_EXTRACT(metadata, '$.unit_price') IS NOT NULL
+                            AND JSON_EXTRACT(metadata, '$.total_price') IS NOT NULL
+                            AND CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.quantity')) AS DECIMAL(12, 3)) > 0
+                            AND CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.unit_price')) AS DECIMAL(12, 2)) > 0
+                            AND CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.total_price')) AS DECIMAL(12, 2)) > 0
+                            AND ABS(
+                                (
+                                    CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.quantity')) AS DECIMAL(12, 3))
+                                    * CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.unit_price')) AS DECIMAL(12, 2))
+                                )
+                                - CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.total_price')) AS DECIMAL(12, 2))
+                            ) > 0.02
+                        ");
+                }),
+
             'global_fact' => $query
                 ->where('review_status', 'pending')
                 ->whereNull('product_id')

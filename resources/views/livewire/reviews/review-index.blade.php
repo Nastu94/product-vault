@@ -165,6 +165,7 @@
                             <option value="pending">Da revisionare</option>
                             <option value="low_confidence">Bassa affidabilità</option>
                             <option value="python_warnings">Warning Python</option>
+                            <option value="amount_mismatch">Importi incoerenti</option>
                             <option value="global_fact">Conoscenza globale</option>
                             <option value="reviewed">Revisionati</option>
                         </select>

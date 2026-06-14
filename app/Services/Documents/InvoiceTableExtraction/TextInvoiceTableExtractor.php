@@ -279,15 +279,17 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
      */
     private function extractInlineRowWithDiscount(string $line): ?array
     {
-        $amountPattern = $this->amountPattern();
+        $unitPricePattern = $this->namedAmountPattern('unit_price');
+        $discountPattern = $this->namedAmountPattern('discount');
+        $totalPricePattern = $this->namedAmountPattern('total_price');
 
         $pattern = '/^(?<code>' . $this->invoiceCodePattern() . ')\s+' .
             '(?<description>.+?)\s+' .
             '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
-            '(?<unit_price>' . $amountPattern . ')\s+' .
-            '(?<discount>' . $amountPattern . ')\s+' .
+            $unitPricePattern . '\s+' .
+            $discountPattern . '\s+' .
             '(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+' .
-            '(?<total_price>' . $amountPattern . ')\s*$/u';
+            $totalPricePattern . '\s*$/u';
 
         if (! preg_match($pattern, $line, $matches)) {
             return null;
@@ -302,14 +304,15 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
      */
     private function extractInlineRowWithoutDiscount(string $line): ?array
     {
-        $amountPattern = $this->amountPattern();
+        $unitPricePattern = $this->namedAmountPattern('unit_price');
+        $totalPricePattern = $this->namedAmountPattern('total_price');
 
         $pattern = '/^(?<code>' . $this->invoiceCodePattern() . ')\s+' .
             '(?<description>.+?)\s+' .
             '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
-            '(?<unit_price>' . $amountPattern . ')\s+' .
+            $unitPricePattern . '\s+' .
             '(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+' .
-            '(?<total_price>' . $amountPattern . ')\s*$/u';
+            $totalPricePattern . '\s*$/u';
 
         if (! preg_match($pattern, $line, $matches)) {
             return null;
@@ -324,14 +327,15 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
      */
     private function extractInlineRowVatBeforeAmounts(string $line): ?array
     {
-        $amountPattern = $this->amountPattern();
+        $unitPricePattern = $this->namedAmountPattern('unit_price');
+        $totalPricePattern = $this->namedAmountPattern('total_price');
 
         $pattern = '/^(?<code>' . $this->invoiceCodePattern() . ')\s+' .
             '(?<description>.+?)\s+' .
             '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
             '(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+' .
-            '(?<unit_price>' . $amountPattern . ')\s+' .
-            '(?<total_price>' . $amountPattern . ')\s*$/u';
+            $unitPricePattern . '\s+' .
+            $totalPricePattern . '\s*$/u';
 
         if (! preg_match($pattern, $line, $matches)) {
             return null;
@@ -413,15 +417,54 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
 
     /**
      * Riga finale che completa un prodotto multi-riga.
+     *
+     * Supporta righe prodotto distribuite così:
+     *
+     * CODICE DESCRIZIONE
+     * dettaglio tecnico
+     * EAN/SN/- QTA EUR UNITARIO EUR TOTALE
+     *
+     * È una regola strutturale: non usa nomi prodotto, ma posizione di quantità,
+     * importi e righe tecniche di supporto.
      */
     private function extractContinuationAmountRow(string $line, array $pendingRow): ?array
     {
-        $amountPattern = $this->amountPattern();
+        $unitPricePattern = $this->namedAmountPattern('unit_price');
+        $totalPricePattern = $this->namedAmountPattern('total_price');
 
         $patterns = [
-            '/^(?<support>.+?)\s+(?<quantity>\d+(?:[,.]\d+)?)\s+(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+(?<unit_price>' . $amountPattern . ')\s+(?<total_price>' . $amountPattern . ')\s*$/u',
-            '/^(?<support>.+?)\s+(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+(?<unit_price>' . $amountPattern . ')\s+(?<total_price>' . $amountPattern . ')\s*$/u',
-            '/^(?<support>.+?)\s+(?<unit_price>' . $amountPattern . ')\s+(?<total_price>' . $amountPattern . ')\s*$/u',
+            /*
+            * Supporto + quantità + IVA + unitario + totale
+            */
+            '/^(?<support>.+?)\s+(?<quantity>\d+(?:[,.]\d+)?)\s+(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+' .
+                $unitPricePattern . '\s+' .
+                $totalPricePattern . '\s*$/u',
+
+            /*
+            * Supporto + IVA + unitario + totale
+            */
+            '/^(?<support>.+?)\s+(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+' .
+                $unitPricePattern . '\s+' .
+                $totalPricePattern . '\s*$/u',
+
+            /*
+            * Supporto + quantità + unitario + totale
+            *
+            * Caso comune nelle fatture digitali senza IVA per riga:
+            * EAN 0196388123456 1.000 EUR 1.899,00 EUR 1.899,00
+            * SN LZ5-26A9K0041 1.000 EUR 749,00 EUR 749,00
+            * - 2.000 EUR 12,90 EUR 25,80
+            */
+            '/^(?<support>.+?)\s+(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+                $unitPricePattern . '\s+' .
+                $totalPricePattern . '\s*$/u',
+
+            /*
+            * Supporto + unitario + totale
+            */
+            '/^(?<support>.+?)\s+' .
+                $unitPricePattern . '\s+' .
+                $totalPricePattern . '\s*$/u',
         ];
 
         foreach ($patterns as $pattern) {
@@ -771,7 +814,8 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
             return null;
         }
 
-        $amountPattern = $this->headerDrivenAmountPattern();
+        $unitPricePattern = $this->namedAmountPattern('unit_price', headerDriven: true);
+        $totalPricePattern = $this->namedAmountPattern('total_price', headerDriven: true);
         $eanPattern = '\d{8}|\d{12}|\d{13}|\d{14}';
         $serialPattern = '[A-Z0-9][A-Z0-9\-\/]{5,}';
 
@@ -786,8 +830,8 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
             $patterns[] = '/^(?<description>.+?)\s+' .
                 '(?<ean>' . $eanPattern . ')\s+' .
                 '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
-                '(?<unit_price>' . $amountPattern . ')\s+' .
-                '(?<total_price>' . $amountPattern . ')\s*$/u';
+                $unitPricePattern . '\s+' .
+                $totalPricePattern . '\s*$/u';
         }
 
         if (
@@ -799,8 +843,8 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
             $patterns[] = '/^(?<description>.+?)\s+' .
                 '(?<serial>' . $serialPattern . ')\s+' .
                 '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
-                '(?<unit_price>' . $amountPattern . ')\s+' .
-                '(?<total_price>' . $amountPattern . ')\s*$/u';
+                $unitPricePattern . '\s+' .
+                $totalPricePattern . '\s*$/u';
         }
 
         if (
@@ -810,8 +854,8 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
         ) {
             $patterns[] = '/^(?<description>.+?)\s+' .
                 '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
-                '(?<unit_price>' . $amountPattern . ')\s+' .
-                '(?<total_price>' . $amountPattern . ')\s*$/u';
+                $unitPricePattern . '\s+' .
+                $totalPricePattern . '\s*$/u';
         }
 
         if (
@@ -821,7 +865,7 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
         ) {
             $patterns[] = '/^(?<description>.+?)\s+' .
                 '(?<quantity>\d+(?:[,.]\d+)?)\s+' .
-                '(?<total_price>' . $amountPattern . ')\s*$/u';
+                $totalPricePattern . '\s*$/u';
         }
 
         foreach ($patterns as $pattern) {
@@ -1099,12 +1143,14 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
 
     /**
      * Normalizza e converte una stringa di importo in un float.
-     * 
-     * @param string $amount La stringa di importo da convertire.
-     * @return float|null Il valore numerico dell'importo, o null se la conversione fallisce.
+     *
+     * Accetta anche importi con valuta già inclusa, per maggiore tolleranza
+     * verso estrattori PDF/OCR che non separano bene le colonne.
      */
     private function parseMoney(string $amount): ?float
     {
+        $amount = preg_replace('/\b(?:EURO|[A-Z]{3})\b|[€$£]/iu', '', $amount) ?: $amount;
+
         $normalized = str_replace(['.', ' '], '', trim($amount));
         $normalized = str_replace(',', '.', $normalized);
 
@@ -1187,5 +1233,26 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
     private function headerDrivenAmountPattern(): string
     {
         return '\-?\d{1,3}(?:\.\d{3})*,\d{2}|\-?\d+,\d{2}';
+    }
+
+    /**
+     * Restituisce un gruppo regex nominato per importi con valuta opzionale.
+     *
+     * Esempi accettati:
+     * - 129,90
+     * - 1.899,00
+     * - EUR 1.899,00
+     * - € 1.899,00
+     *
+     * La valuta resta fuori dal gruppo catturato, così parseMoney riceve solo
+     * la parte numerica.
+     */
+    private function namedAmountPattern(string $name, bool $headerDriven = false): string
+    {
+        $amountPattern = $headerDriven
+            ? $this->headerDrivenAmountPattern()
+            : $this->amountPattern();
+
+        return '(?:(?:EURO|[A-Z]{3}|€|\$|£)\s*)?(?<' . $name . '>' . $amountPattern . ')';
     }
 }

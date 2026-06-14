@@ -831,6 +831,17 @@ class ProductCandidateGenerator
             'mouse wireless',
             'tastiera',
             'keyboard',
+            'lampada',
+            'lampade',
+            'lampadina',
+            'lampadine',
+            'bilancia',
+            'bilance',
+            'smart home',
+            'e27',
+            'wifi',
+            'wi-fi',
+            'bluetooth',
         ];
 
         foreach ($signals as $signal) {
@@ -936,6 +947,17 @@ class ProductCandidateGenerator
             'mouse wireless',
             'tastiera',
             'keyboard',
+            'lampada',
+            'lampade',
+            'lampadina',
+            'lampadine',
+            'bilancia',
+            'bilance',
+            'smart home',
+            'e27',
+            'wifi',
+            'wi-fi',
+            'bluetooth',
         ];
 
         foreach ($durableSignals as $signal) {

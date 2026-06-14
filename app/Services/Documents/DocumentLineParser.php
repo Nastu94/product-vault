@@ -209,6 +209,42 @@ class DocumentLineParser
                         continue;
                     }
 
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Conferme ordine OCR: importo standalone
+                    |--------------------------------------------------------------------------
+                    |
+                    | Esempio:
+                    | Tabiet TabNova 11 Pro 128GB
+                    | cod. TN-11P-128 -colore grigio
+                    | 1
+                    | EUR 329,90
+                    |
+                    | La riga con importo non contiene il titolo prodotto.
+                    | Prima del fallback amount_based ricostruiamo la riga usando il contesto
+                    | precedente. Se invece l'importo è il totale ordine, viene ignorato.
+                    |
+                    */
+                    if ($this->orderConfirmationLineLooksLikeStandaloneAmount($rawLine)) {
+                        $standaloneOrderAmountLineCreated = $this->tryCreateOrderConfirmationLineFromStandaloneAmountContext(
+                            document: $document,
+                            lineTypeId: $lineTypeId,
+                            lines: $lines,
+                            currentIndex: $index,
+                            rawLine: $rawLine,
+                            amounts: $amounts
+                        );
+
+                        if ($standaloneOrderAmountLineCreated) {
+                            $created++;
+                        }
+
+                        $pendingCandidate = null;
+                        $pendingCodeParts = [];
+
+                        continue;
+                    }
+
                     if ($this->orderConfirmationAmountLineShouldUsePreviousTitle($rawLine)) {
                         $orderConfirmationTextTableLineCreated = $this->tryCreateOrderConfirmationTextTableLine(
                             document: $document,
@@ -355,6 +391,7 @@ class DocumentLineParser
                 $totalPrice = end($amounts);
                 $amountConsistencyRecovery = null;
                 $receiptSingleAmountNormalization = null;
+                $receiptSupportingLines = [];
 
                 /*
                 |--------------------------------------------------------------------------
@@ -371,6 +408,54 @@ class DocumentLineParser
                 |
                 */
                 if ($document->documentType?->code === 'receipt') {
+                    $description = $this->extractDescription($rawLine, removeStandaloneNumbers: false) ?: $description;
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Scontrini misti: righe di supporto vicine
+                    |--------------------------------------------------------------------------
+                    |
+                    | Esempio BATCH01_scontrino_misto_01:
+                    |
+                    | Lampada Smart LuxHome E27    19,90
+                    | WiFi
+                    | smart home - 1 pz
+                    |
+                    | La riga "WiFi" non ha importo, ma qualifica il prodotto precedente.
+                    | La riga "smart home - 1 pz" serve soprattutto per quantità/supporto.
+                    |
+                    */
+                    $receiptSupportingLines = $this->collectNearbyReceiptSupportingLines(
+                        lines: $lines,
+                        currentIndex: $index
+                    );
+
+                    $description = $this->appendReceiptConnectivityQualifiersToDescription(
+                        description: $description,
+                        supportingLines: $receiptSupportingLines
+                    );
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Scontrini misti: escludi consumabili e servizi prima di salvare product line
+                    |--------------------------------------------------------------------------
+                    |
+                    | Qui non stiamo dicendo che la riga non esista nello scontrino.
+                    | Stiamo dicendo che non deve diventare una DocumentLine di tipo product,
+                    | perché Product Vault deve creare candidati per beni durevoli/garantibili.
+                    |
+                    */
+                    $receiptSkipReason = $this->receiptAmountLineShouldBeSkippedAsProduct(
+                        description: $description,
+                        supportingLines: $receiptSupportingLines
+                    );
+
+                    if ($receiptSkipReason !== null) {
+                        $pendingCandidate = null;
+                        $pendingCodeParts = [];
+
+                        continue;
+                    }
+
                     $receiptSingleAmountNormalization = $this->normalizeReceiptSingleAmountLine(
                         lines: $lines,
                         currentIndex: $index,
@@ -456,11 +541,21 @@ class DocumentLineParser
                     'pending_code_parts' => $pendingCodeParts,
                     'product_code_candidate' => $productCode,
                     'ean_code_candidate' => $nearbyOrderProductContext['ean_code'] ?? null,
-                    'supporting_lines' => $nearbyOrderProductContext['supporting_lines'] ?? [],
+                    'supporting_lines' => array_values(array_unique(array_merge(
+                        $receiptSupportingLines,
+                        $nearbyOrderProductContext['supporting_lines'] ?? []
+                    ))),
                 ];
 
                 if ($receiptSingleAmountNormalization !== null) {
                     $metadata['receipt_single_amount_normalization'] = $receiptSingleAmountNormalization['metadata'];
+                }
+
+                if (! empty($receiptSupportingLines)) {
+                    $metadata['receipt_supporting_lines'] = [
+                        'version' => 'receipt_supporting_lines_v1',
+                        'lines' => $receiptSupportingLines,
+                    ];
                 }
 
                 if ($amountConsistencyRecovery !== null) {
@@ -985,6 +1080,14 @@ class DocumentLineParser
 
         $normalized = mb_strtolower($line);
 
+        if (preg_match('/^(cod\.?|codice|sku|art\.?)\b/u', $normalized)) {
+            return true;
+        }
+
+        if (preg_match('/^(accessorio|dettaglio|caratteristica)\b/u', $normalized)) {
+            return true;
+        }
+
         /*
         |--------------------------------------------------------------------------
         | Note come parola autonoma
@@ -1111,6 +1214,301 @@ class DocumentLineParser
         }
 
         return true;
+    }
+
+    /**
+     * Ricostruisce una riga prodotto da conferme ordine OCR dove l'importo è
+     * su una riga separata rispetto al titolo.
+     */
+    private function tryCreateOrderConfirmationLineFromStandaloneAmountContext(
+        Document $document,
+        ?int $lineTypeId,
+        array $lines,
+        int $currentIndex,
+        string $rawLine,
+        array $amounts
+    ): bool {
+        if ($document->documentType?->code !== 'order_confirmation') {
+            return false;
+        }
+
+        if (! $this->orderConfirmationLineLooksLikeStandaloneAmount($rawLine)) {
+            return false;
+        }
+
+        if (count($amounts) !== 1) {
+            return false;
+        }
+
+        $totalPrice = (float) end($amounts);
+
+        if ($totalPrice <= 0) {
+            return false;
+        }
+
+        if ($this->orderConfirmationStandaloneAmountBelongsToOrderTotal($lines, $currentIndex)) {
+            return false;
+        }
+
+        $quantityContext = $this->findPreviousOrderConfirmationStandaloneQuantity(
+            lines: $lines,
+            currentIndex: $currentIndex
+        );
+
+        if ($quantityContext === null) {
+            return false;
+        }
+
+        $titleContext = $this->findPreviousOrderConfirmationStandaloneAmountTitle(
+            lines: $lines,
+            beforeIndex: $quantityContext['line_index']
+        );
+
+        if ($titleContext === null) {
+            return false;
+        }
+
+        $quantity = (float) $quantityContext['quantity'];
+
+        if ($quantity <= 0) {
+            return false;
+        }
+
+        $unitPrice = round($totalPrice / $quantity, 2);
+
+        $supportingLines = $this->collectOrderConfirmationStandaloneAmountSupportingLines(
+            lines: $lines,
+            titleIndex: $titleContext['line_index'],
+            amountIndex: $currentIndex
+        );
+
+        $productCode = $this->extractProductCodeFromOrderConfirmationSupportingLines($supportingLines);
+
+        $rawTextParts = array_filter([
+            $titleContext['title'],
+            sprintf(
+                'QTA %s UNIT %s TOTAL %s',
+                number_format($quantity, 3, '.', ''),
+                number_format($unitPrice, 2, '.', ''),
+                number_format($totalPrice, 2, '.', '')
+            ),
+            ...$supportingLines,
+        ], fn ($part): bool => trim((string) $part) !== '');
+
+        DocumentLine::query()->create([
+            'document_id' => $document->id,
+            'document_line_type_id' => $lineTypeId,
+            'line_number' => $currentIndex + 1,
+            'raw_text' => trim(preg_replace('/\s+/', ' ', implode(' ', $rawTextParts)) ?: implode(' ', $rawTextParts)),
+            'description' => $titleContext['title'],
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'total_price' => $totalPrice,
+            'confidence_score' => $this->estimateConfidenceScore(
+                description: $titleContext['title'],
+                amounts: [$unitPrice, $totalPrice],
+                quantity: $quantity,
+                productCode: $productCode,
+            ),
+            'metadata' => [
+                'parser' => 'document_line_parser_v9',
+                'mode' => 'order_confirmation_standalone_amount_context',
+                'amounts_found' => [$totalPrice],
+                'product_code_candidate' => $productCode,
+                'ean_code_candidate' => null,
+                'supporting_lines' => $supportingLines,
+                'order_confirmation_amount_row' => $rawLine,
+                'order_confirmation_title_source' => 'previous_non_amount_line',
+                'order_confirmation_quantity_source' => 'previous_standalone_quantity_line',
+            ],
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Evita che il totale ordine venga interpretato come prodotto.
+     */
+    private function orderConfirmationStandaloneAmountBelongsToOrderTotal(array $lines, int $currentIndex): bool
+    {
+        for ($offset = -1; $offset >= -2; $offset--) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                continue;
+            }
+
+            $candidate = mb_strtolower($this->normalizeLine((string) $lines[$index]));
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if (
+                str_contains($candidate, 'totale')
+                || str_contains($candidate, 'subtotale')
+                || str_contains($candidate, 'riepilogo')
+                || str_contains($candidate, 'totale ordine')
+            ) {
+                return true;
+            }
+
+            if (! empty($this->extractAmountsFromText($candidate))) {
+                break;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Cerca la quantità standalone immediatamente precedente a una riga importo.
+     */
+    private function findPreviousOrderConfirmationStandaloneQuantity(array $lines, int $currentIndex): ?array
+    {
+        for ($offset = -1; $offset >= -4; $offset--) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                return null;
+            }
+
+            $candidate = $this->normalizeLine((string) $lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if ($this->lineShouldBeIgnored($candidate)) {
+                return null;
+            }
+
+            if (! empty($this->extractAmountsFromText($candidate))) {
+                return null;
+            }
+
+            if ($this->lineIsStandaloneQuantity($candidate)) {
+                $quantity = $this->parseQuantity($candidate);
+
+                if ($quantity !== null && $quantity > 0) {
+                    return [
+                        'line_index' => $index,
+                        'quantity' => $quantity,
+                        'raw_line' => $candidate,
+                    ];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Cerca il titolo prodotto prima della quantità standalone.
+     */
+    private function findPreviousOrderConfirmationStandaloneAmountTitle(array $lines, int $beforeIndex): ?array
+    {
+        for ($offset = -1; $offset >= -8; $offset--) {
+            $index = $beforeIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                continue;
+            }
+
+            $candidate = $this->normalizeLine((string) $lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if ($this->orderConfirmationLineLooksLikeTableBoundary($candidate)) {
+                return null;
+            }
+
+            if ($this->lineShouldBeIgnored($candidate)) {
+                return null;
+            }
+
+            if (! empty($this->extractAmountsFromText($candidate))) {
+                continue;
+            }
+
+            if ($this->lineIsStandaloneQuantity($candidate)) {
+                continue;
+            }
+
+            if ($this->orderConfirmationLineLooksLikeSupportOrDetail($candidate)) {
+                continue;
+            }
+
+            if (! $this->orderConfirmationLineLooksLikePlausibleProductTitle($candidate)) {
+                continue;
+            }
+
+            return [
+                'line_index' => $index,
+                'title' => $candidate,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * Raccoglie le righe tecniche tra titolo prodotto e importo.
+     */
+    private function collectOrderConfirmationStandaloneAmountSupportingLines(
+        array $lines,
+        int $titleIndex,
+        int $amountIndex
+    ): array {
+        $supportingLines = [];
+
+        for ($index = $titleIndex + 1; $index < $amountIndex; $index++) {
+            if (! isset($lines[$index])) {
+                continue;
+            }
+
+            $candidate = $this->normalizeLine((string) $lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if ($this->lineShouldBeIgnored($candidate)) {
+                break;
+            }
+
+            if (! empty($this->extractAmountsFromText($candidate))) {
+                break;
+            }
+
+            if ($this->lineIsStandaloneQuantity($candidate)) {
+                continue;
+            }
+
+            $supportingLines[] = $candidate;
+        }
+
+        return array_values(array_unique($supportingLines));
+    }
+
+    /**
+     * Estrae un codice prodotto da righe di supporto e-commerce/OCR.
+     */
+    private function extractProductCodeFromOrderConfirmationSupportingLines(array $supportingLines): ?string
+    {
+        foreach ($supportingLines as $line) {
+            if (preg_match('/\bcod\.?\s*[:\-]?\s*(?<code>[A-Z0-9][A-Z0-9\-\/\.]{2,})\b/iu', $line, $matches)) {
+                return trim((string) $matches['code']);
+            }
+
+            if (preg_match('/\bSKU\s*[:\-]?\s*(?<code>[A-Z0-9][A-Z0-9\-\/\.]{2,})\b/iu', $line, $matches)) {
+                return trim((string) $matches['code']);
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -1627,6 +2025,223 @@ class DocumentLineParser
         }
 
         return array_values(array_unique($supportingLines));
+    }
+
+    /**
+     * Raccoglie righe di supporto vicine a una riga receipt con prezzo.
+     *
+     * Non prende righe con importi, perché quelle sono potenziali nuove righe prodotto.
+     * Non prende righe di riepilogo/pagamento/totale, perché interrompono il contesto.
+     */
+    private function collectNearbyReceiptSupportingLines(array $lines, int $currentIndex): array
+    {
+        $supportingLines = [];
+
+        for ($offset = 1; $offset <= 2; $offset++) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                break;
+            }
+
+            $candidate = $this->normalizeLine((string) $lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if ($this->lineBreaksProductContext($candidate)) {
+                break;
+            }
+
+            if (! empty($this->extractAmountsFromText($candidate))) {
+                break;
+            }
+
+            if (! $this->receiptSupportLineLooksUseful($candidate)) {
+                continue;
+            }
+
+            $supportingLines[] = $candidate;
+        }
+
+        return array_values(array_unique($supportingLines));
+    }
+
+    /**
+     * Decide se una riga vicina senza importo è utile come supporto prodotto.
+     */
+    private function receiptSupportLineLooksUseful(string $line): bool
+    {
+        $normalized = mb_strtolower($this->normalizeLine($line));
+
+        if ($normalized === '') {
+            return false;
+        }
+
+        if ($this->containsAnyStandaloneWord($normalized, [
+            'wifi',
+            'wi-fi',
+            'bluetooth',
+            'serial',
+            'sn',
+            's/n',
+            'ean',
+            'cod',
+            'codice',
+            'pz',
+            'pezzo',
+            'pezzi',
+            'pcs',
+        ])) {
+            return true;
+        }
+
+        if (str_contains($normalized, 'smart home')) {
+            return true;
+        }
+
+        return $this->extractExplicitReceiptQuantityFromLine($normalized) !== null;
+    }
+
+    /**
+     * Aggiunge al nome solo qualificatori tecnici davvero utili.
+     *
+     * Per ora appendiamo WiFi perché nel batch expected la lampada è:
+     * "Lampada Smart LuxHome E27 WiFi".
+     *
+     * Non appendiamo automaticamente "smart home - 1 pz" perché è una riga di supporto
+     * con quantità, non un nome prodotto pulito.
+     */
+    private function appendReceiptConnectivityQualifiersToDescription(string $description, array $supportingLines): string
+    {
+        $description = $this->normalizeLine($description);
+
+        foreach ($supportingLines as $supportingLine) {
+            $normalizedSupport = mb_strtolower($this->normalizeLine((string) $supportingLine));
+
+            if (
+                preg_match('/^wi[\-\s]?fi$/iu', $normalizedSupport)
+                && ! preg_match('/\bwi[\-\s]?fi\b/iu', $description)
+            ) {
+                $description .= ' WiFi';
+            }
+        }
+
+        return $this->normalizeLine($description);
+    }
+
+    /**
+     * Decide se una riga receipt con importo deve essere esclusa dalle product line.
+     *
+     * Regola importante:
+     * prima controlliamo i segnali durevoli, poi i consumabili.
+     * Così "Lampada Smart..." non viene esclusa anche se vicino ha "smart home - 1 pz".
+     */
+    private function receiptAmountLineShouldBeSkippedAsProduct(string $description, array $supportingLines = []): ?string
+    {
+        $text = mb_strtolower($this->normalizeLine($description.' '.implode(' ', $supportingLines)));
+
+        if ($text === '') {
+            return 'receipt_empty_description';
+        }
+
+        if ($this->receiptTextHasDurableProductSignal($text)) {
+            return null;
+        }
+
+        if ($this->containsAnyStandaloneWord($text, [
+            'pane',
+            'latte',
+            'yogurt',
+            'pasta',
+            'riso',
+            'acqua',
+            'biscotti',
+            'caffe',
+            'caffè',
+            'detersivo',
+            'detergente',
+            'shampoo',
+            'sapone',
+            'sacchetti',
+            'carta',
+            'spugne',
+            'dentifricio',
+        ])) {
+            return 'receipt_consumable_or_disposable';
+        }
+
+        if ($this->containsAnyStandaloneWord($text, [
+            'consegna',
+            'domicilio',
+            'spedizione',
+            'trasporto',
+            'servizio',
+            'coupon',
+            'promo',
+            'sconto',
+            'fedelta',
+            'fedeltà',
+            'pagamento',
+            'bancomat',
+            'pos',
+            'resto',
+        ])) {
+            return 'receipt_service_discount_or_payment';
+        }
+
+        return 'receipt_without_durable_product_signal';
+    }
+
+    /**
+     * Segnali generali di prodotto durevole su scontrino misto.
+     *
+     * Non mettere qui brand specifici come LuxHome o FitScale.
+     */
+    private function receiptTextHasDurableProductSignal(string $text): bool
+    {
+        if ($this->containsAnyStandaloneWord($text, [
+            'router',
+            'modem',
+            'notebook',
+            'laptop',
+            'computer',
+            'monitor',
+            'docking',
+            'dock',
+            'ssd',
+            'nvme',
+            'hdd',
+            'mouse',
+            'tastiera',
+            'keyboard',
+            'stampante',
+            'cuffie',
+            'auricolari',
+            'speaker',
+            'lampada',
+            'lampade',
+            'lampadina',
+            'lampadine',
+            'bilancia',
+            'bilance',
+            'smartphone',
+            'telefono',
+            'tablet',
+            'console',
+            'wifi',
+            'wi-fi',
+            'bluetooth',
+            'e27',
+        ])) {
+            return true;
+        }
+
+        return str_contains($text, 'smart home')
+            || str_contains($text, 'hard disk')
+            || str_contains($text, 'solid state drive')
+            || str_contains($text, 'power bank');
     }
 
     /**

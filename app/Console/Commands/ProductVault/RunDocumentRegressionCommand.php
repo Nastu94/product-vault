@@ -2,268 +2,136 @@
 
 namespace App\Console\Commands\ProductVault;
 
+use App\Jobs\ProcessDocumentJob;
+use App\Models\Document;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
-use App\Jobs\ProcessDocumentJob;
-use App\Models\Document;
+use Throwable;
 
-#[Signature('product-vault:regression-documents {--ids= : Lista ID separati da virgola}')]
+#[Signature('product-vault:regression-documents {--keys= : Lista chiavi baseline separate da virgola} {--filenames= : Lista original_filename separati da virgola} {--strict-missing : Fallisce se una baseline non è presente nel DB locale}')]
 #[Description('Run Product Vault document parsing regression on local test documents')]
 class RunDocumentRegressionCommand extends Command
 {
     /**
      * Execute the console command.
      */
-    public function handle()
+    public function handle(): int
     {
-        $expected = [
-            12 => [
-                'filename' => 'test_001_scontrino_elettronica_digitale.pdf',
+        /*
+        |--------------------------------------------------------------------------
+        | Baseline locale per documenti reali caricati nel DB
+        |--------------------------------------------------------------------------
+        |
+        | Non usiamo più gli ID come verità, perché nel DB locale gli ID possono
+        | cambiare o puntare a documenti diversi dopo reset, import o cancellazioni.
+        |
+        | La chiave stabile è il filename originale. L'ID viene usato solo per
+        | debug/output dopo aver trovato il documento.
+        |
+        */
+        $baselines = [
+            'pv_smoke_01_invoice_ean_new_products' => [
+                'filename' => 'PV_smoke_01_fattura_ean_nuovi_prodotti.pdf',
                 'status' => 'needs_review',
                 'text_extraction_status' => 'completed',
-                'type' => 'receipt',
-                'merchant' => 'TECHMARKET ROMA SRL',
-                'purchase_date' => '2026-05-29',
-                'total_amount' => '752.70',
+                'type' => 'invoice',
                 'lines_count' => 3,
                 'candidates_count' => 3,
-            ],
-            15 => [
-                'filename' => 'test_001_scontrino_elettronica_scan_ocr.pdf',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'receipt',
-                'merchant' => 'TECHMARKET ROMA SRL',
-                'purchase_date' => '2026-05-29',
-                'total_amount' => '752.70',
-                'lines_count' => 3,
-                'candidates_count' => 3,
-            ],
-            16 => [
-                'filename' => 'test_001_scontrino_elettronica_ocr.png',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'receipt',
-                'merchant' => 'TECHMARKET ROMA SRL',
-                'purchase_date' => '2026-05-29',
-                'total_amount' => '752.70',
-                'lines_count' => 3,
-                'candidates_count' => 3,
-            ],
-            17 => [
-                'filename' => 'lo-scontrino-fiscale.jpg',
-                'status' => 'parsed',
-                'text_extraction_status' => 'completed',
-                'type' => 'receipt',
-                'merchant' => 'Trattoria I Gabbiano',
-                'purchase_date' => '2016-02-06',
-                'total_amount' => '69.00',
-                'lines_count' => 9,
-                'candidates_count' => 0,
-            ],
-            18 => [
-                'filename' => 'test_002A_fattura_mista_multicategoria_digitale.pdf',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'invoice',
-                'merchant' => 'ALFA MULTISTORE SRL',
-                'purchase_date' => '2026-05-30',
-                'total_amount' => '597.99',
-                'lines_count' => 7,
-                'candidates_count' => 3,
-            ],
-            19 => [
-                'filename' => 'test_002A_fattura_mista_multicategoria_ocr_foto.jpg',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'invoice',
-                'merchant' => 'ALFA MULTISTORE SRL',
-                'purchase_date' => '2026-05-30',
-                'total_amount' => '597.99',
-                'lines_count' => 7,
-                'candidates_count' => 3,
-            ],
-            20 => [
-                'filename' => 'test_002A_fattura_mista_multicategoria_scan_ocr.pdf',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'invoice',
-                'merchant' => 'ALFA MULTISTORE SRL',
-                'purchase_date' => '2026-05-30',
-                'total_amount' => '597.99',
-                'lines_count' => 7,
-                'candidates_count' => 3,
-            ],
-            21 => [
-                'filename' => 'test_002B_fattura_compatta_layout_alternativo_digitale.pdf',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'invoice',
-                'merchant' => 'RITOCLEAN & TECH TEST SNC',
-                'purchase_date' => '2026-05-31',
-                'total_amount' => '439.98',
-                'lines_count' => 4,
-                'candidates_count' => 1,
-            ],
-            22 => [
-                'filename' => 'test_002B_fattura_compatta_layout_alternativo_ocr_foto.jpg',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'invoice',
-                'merchant' => 'RITOCLEAN & TECH TEST SNC',
-                'purchase_date' => '2026-05-31',
-                'total_amount' => '439.98',
-                'lines_count' => 3,
-                'candidates_count' => 1,
-            ],
-            23 => [
-                'filename' => 'test_002B_fattura_compatta_layout_alternativo_scan_ocr.pdf',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'invoice',
-                'merchant' => 'RITOCLEAN & TECH TEST SNC',
-                'purchase_date' => '2026-05-31',
-                'total_amount' => '439.98',
-                'lines_count' => 4,
-                'candidates_count' => 1,
-            ],
-            24 => [
-                'filename' => 'test_003A_scontrino_lungo_multicategoria_digitale.pdf',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'receipt',
-                'merchant' => 'MARKET CASA & TECH S.R.L.',
-                'purchase_date' => '2026-05-30',
-                'total_amount' => '266.75',
-                'lines_count' => 21,
-                'candidates_count' => 6,
-            ],
-            25 => [
-                'filename' => 'test_003A_scontrino_lungo_multicategoria_ocr.png',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'receipt',
-                'merchant' => 'MARKET CASA & TECH S.R.L.',
-                'purchase_date' => '2026-05-30',
-                'total_amount' => '266.75',
-                'lines_count' => 21,
-                'candidates_count' => 6,
-            ],
-            26 => [
-                'filename' => 'test_003A_scontrino_lungo_multicategoria_scan_ocr.pdf',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'receipt',
-                'merchant' => 'MARKET CASA & TECH S.R.L.',
-                'purchase_date' => '2026-05-30',
-                'total_amount' => '266.75',
-                'lines_count' => 21,
-                'candidates_count' => 6,
-            ],
-            27 => [
-                'filename' => 'test_003B_fattura_prodotto_spezzato_digitale.pdf',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'invoice',
-                'merchant' => 'OFFICINA DIGITALE SHOP S.R.L.',
-                'purchase_date' => '2026-05-31',
-                'total_amount' => '2130.00',
-                'lines_count' => 5,
-                'candidates_count' => 2,
                 'expected_candidates' => [
                     [
-                        'name_contains' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
-                        'ean_code' => '0196388123456',
-                        'serial_number' => 'PF4TEST0091',
-                        'price' => '1499.00',
+                        'name_contains' => 'Monitor ViewMax Creator XR27 4K',
                     ],
                     [
-                        'ean_code' => '8055555012222',
-                        'price' => '119.00',
+                        'name_contains' => 'NAS TerraVault Home Duo 8TB',
+                    ],
+                    [
+                        'name_contains' => 'Robot Aspirapolvere CasaBot MappaPro 900',
                     ],
                 ],
             ],
-            28 => [
-                'filename' => 'test_003B_fattura_prodotto_spezzato_ocr.png',
+
+            'pv_smoke_02_invoice_serials_new_products' => [
+                'filename' => 'PV_smoke_02_fattura_seriali_nuovi_prodotti.pdf',
                 'status' => 'needs_review',
                 'text_extraction_status' => 'completed',
                 'type' => 'invoice',
-                'merchant' => 'OFFICINA DIGITALE SHOP S.R.L.',
-                'purchase_date' => '2026-05-31',
-                'total_amount' => '2130.00',
-                'lines_count' => 5,
-                'candidates_count' => 2,
+                'lines_count' => 3,
+                'candidates_count' => 3,
                 'expected_candidates' => [
                     [
-                        'name_contains' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
-                        'ean_code' => '0196388123456',
-                        'serial_number' => 'PF4TEST0091',
-                        'price' => '1499.00',
+                        'name_contains' => 'Fotocamera LumioShot Z5 Mirrorless',
                     ],
                     [
-                        'ean_code' => '8055555012222',
-                        'price' => '119.00',
+                        'name_contains' => 'Obiettivo LumioPrime 35mm F1.8',
+                    ],
+                    [
+                        'name_contains' => 'Stabilizzatore Gimbal SteadyCam Mini 3',
                     ],
                 ],
             ],
-            29 => [
-                'filename' => 'test_003B_fattura_prodotto_spezzato_scan_ocr.pdf',
-                'status' => 'needs_review',
-                'text_extraction_status' => 'completed',
-                'type' => 'invoice',
-                'merchant' => 'OFFICINA DIGITALE SHOP S.R.L.',
-                'purchase_date' => '2026-05-31',
-                'total_amount' => '2130.00',
-                'lines_count' => 5,
-                'candidates_count' => 2,
-                'expected_candidates' => [
-                    [
-                        'name_contains' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
-                        'ean_code' => '0196388123456',
-                        'serial_number' => 'PF4TEST0091',
-                        'price' => '1499.00',
-                    ],
-                    [
-                        'ean_code' => '8055555012222',
-                        'price' => '119.00',
-                    ],
-                ],
-            ],
-            30 => [
-                'filename' => 'ChatGPT Image 1 giu 2026, 19_19_37.png',
+
+            'pv_smoke_03_order_confirmation_variants' => [
+                'filename' => 'PV_smoke_03_conferma_ordine_varianti.pdf',
                 'status' => 'needs_review',
                 'text_extraction_status' => 'completed',
                 'type' => 'order_confirmation',
-                'merchant' => 'SHOPCASA24',
-                'purchase_date' => '2026-05-31',
-                'total_amount' => '277.79',
-                'lines_count' => 3,
-                'candidates_count' => 1,
+                'lines_count' => 5,
+                'candidates_count' => 4,
                 'expected_candidates' => [
                     [
-                        'name' => 'Robot Aspirapolvere SmartClean X200',
-                        'model' => 'RVA-X200',
-                        'ean_code' => '8057777001234',
-                        'price' => '249.90',
-                        'quantity' => '1.000',
+                        'name_contains' => 'Monitor View Max Creator XR 27 UHD',
+                    ],
+                    [
+                        'name_contains' => 'TerraVault Home Duo NAS 8 TB',
+                    ],
+                    [
+                        'name_contains' => 'CasaBot Mappa Pro 900 robot aspirapolvere',
+                    ],
+                    [
+                        'name_contains' => 'Gimbal Steady Cam Mini III',
                     ],
                 ],
             ],
+
+            'pv_smoke_04_non_relevant_document' => [
+                'filename' => 'PV_smoke_04_documento_non_pertinente.pdf',
+                'text_extraction_status' => 'completed',
+                'lines_count' => 0,
+                'candidates_count' => 0,
+            ],
         ];
 
-        $idsOption = $this->option('ids');
+        $keysOption = $this->option('keys');
+        $filenamesOption = $this->option('filenames');
 
-        $ids = $idsOption
-            ? collect(explode(',', $idsOption))
-                ->map(fn (string $id): int => (int) trim($id))
+        $selectedBaselines = collect($baselines);
+
+        if ($keysOption) {
+            $keys = collect(explode(',', (string) $keysOption))
+                ->map(fn (string $key): string => trim($key))
+                ->filter()
+                ->values();
+
+            $selectedBaselines = $selectedBaselines->only($keys->all());
+        }
+
+        if ($filenamesOption) {
+            $filenames = collect(explode(',', (string) $filenamesOption))
+                ->map(fn (string $filename): string => trim($filename))
                 ->filter()
                 ->values()
-                ->all()
-            : array_keys($expected);
+                ->all();
+
+            $selectedBaselines = $selectedBaselines->filter(
+                fn (array $baseline): bool => in_array((string) ($baseline['filename'] ?? ''), $filenames, true)
+            );
+        }
 
         $rows = [];
         $failed = false;
+        $executed = 0;
+        $strictMissing = (bool) $this->option('strict-missing');
 
         $formatMoney = function ($value): ?string {
             if ($value === null || $value === '') {
@@ -351,42 +219,49 @@ class RunDocumentRegressionCommand extends Command
             return true;
         };
 
-        foreach ($ids as $id) {
-            if (! isset($expected[$id])) {
-                $failed = true;
+        foreach ($selectedBaselines as $key => $expected) {
+            $filename = (string) ($expected['filename'] ?? '');
 
-                $rows[] = [
-                    'id' => $id,
-                    'file' => 'n/a',
-                    'status' => 'FAIL',
-                    'errors' => 'ID non presente nella baseline regressione.',
-                ];
-
-                continue;
-            }
-
-            $document = Document::query()->find($id);
+            $document = Document::query()
+                ->where('original_filename', $filename)
+                ->latest('id')
+                ->first();
 
             if (! $document) {
-                $failed = true;
+                if ($strictMissing) {
+                    $failed = true;
+                }
 
                 $rows[] = [
-                    'id' => $id,
-                    'file' => $expected[$id]['filename'],
-                    'status' => 'FAIL',
-                    'errors' => 'Documento non trovato nel DB locale.',
+                    'key' => $key,
+                    'id' => '-',
+                    'file' => $filename,
+                    'status' => $strictMissing ? 'FAIL' : 'SKIP',
+                    'errors' => 'Documento non presente nel DB locale.',
                 ];
 
                 continue;
             }
 
+            $executed++;
+
             try {
-                ProcessDocumentJob::dispatchSync($id);
+                ProcessDocumentJob::dispatchSync($document->id);
 
                 $document = Document::query()
                     ->with(['documentType', 'merchant'])
-                    ->findOrFail($id);
+                    ->findOrFail($document->id);
 
+                /*
+                |--------------------------------------------------------------------------
+                | Candidati generati dalla pipeline
+                |--------------------------------------------------------------------------
+                |
+                | Manteniamo il comportamento precedente: la regression verifica i
+                | candidati pending non ancora collegati a un Product. Questo comando
+                | serve soprattutto per controllare l'output appena generato dal parser.
+                |
+                */
                 $actualCandidates = $document->productIdentificationCandidates()
                     ->where('review_status', 'pending')
                     ->whereNull('product_id')
@@ -409,19 +284,19 @@ class RunDocumentRegressionCommand extends Command
 
                 $errors = [];
 
-                foreach ($expected[$id] as $key => $expectedValue) {
-                    if ($key === 'expected_candidates') {
+                foreach ($expected as $expectedKey => $expectedValue) {
+                    if ($expectedKey === 'expected_candidates') {
                         continue;
                     }
 
-                    $actualValue = $actual[$key] ?? null;
+                    $actualValue = $actual[$expectedKey] ?? null;
 
                     if ((string) $actualValue !== (string) $expectedValue) {
-                        $errors[] = "{$key}: expected [{$expectedValue}], got [{$actualValue}]";
+                        $errors[] = "{$expectedKey}: expected [{$expectedValue}], got [{$actualValue}]";
                     }
                 }
 
-                $expectedCandidates = $expected[$id]['expected_candidates'] ?? [];
+                $expectedCandidates = $expected['expected_candidates'] ?? [];
 
                 if ($expectedCandidates !== []) {
                     $unmatchedCandidates = $actualCandidates->values();
@@ -453,7 +328,8 @@ class RunDocumentRegressionCommand extends Command
                 }
 
                 $rows[] = [
-                    'id' => $id,
+                    'key' => $key,
+                    'id' => $document->id,
                     'file' => $document->original_filename,
                     'status' => $errors === [] ? 'OK' : 'FAIL',
                     'errors' => $errors === [] ? '-' : implode(' | ', $errors),
@@ -462,8 +338,9 @@ class RunDocumentRegressionCommand extends Command
                 $failed = true;
 
                 $rows[] = [
-                    'id' => $id,
-                    'file' => $expected[$id]['filename'],
+                    'key' => $key,
+                    'id' => $document->id ?? '-',
+                    'file' => $filename,
                     'status' => 'ERROR',
                     'errors' => $exception->getMessage(),
                 ];
@@ -471,9 +348,15 @@ class RunDocumentRegressionCommand extends Command
         }
 
         $this->table(
-            ['ID', 'File', 'Status', 'Errors'],
+            ['Key', 'ID', 'File', 'Status', 'Errors'],
             $rows
         );
+
+        if ($executed === 0) {
+            $this->error('Nessuna baseline eseguita: i documenti attesi non sono presenti nel DB locale.');
+
+            return self::FAILURE;
+        }
 
         if ($failed) {
             $this->error('Document regression failed.');

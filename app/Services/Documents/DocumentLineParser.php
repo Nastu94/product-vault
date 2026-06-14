@@ -209,6 +209,48 @@ class DocumentLineParser
 
                 /*
                 |--------------------------------------------------------------------------
+                | Conferme ordine / e-commerce con titolo prodotto su riga precedente
+                |--------------------------------------------------------------------------
+                |
+                | Molte conferme ordine hanno questa struttura:
+                |
+                | Titolo prodotto
+                | EAN / nota tecnica / prezzo listino
+                | dettaglio ordine + quantità + prezzo finale + totale
+                |
+                | In questi casi la riga con gli importi può contenere solo dettagli logistici
+                | o descrizioni deboli. Prima delle euristiche generiche proviamo quindi a
+                | ricostruire la riga prodotto usando il titolo vicino precedente.
+                */
+                if ($document->documentType?->code === 'order_confirmation') {
+                    if ($this->orderConfirmationAmountLineLooksLikeNonProductCharge($rawLine)) {
+                        $pendingCandidate = null;
+                        $pendingCodeParts = [];
+
+                        continue;
+                    }
+
+                    if ($this->orderConfirmationAmountLineShouldUsePreviousTitle($rawLine)) {
+                        $orderConfirmationTextTableLineCreated = $this->tryCreateOrderConfirmationTextTableLine(
+                            document: $document,
+                            lineTypeId: $lineTypeId,
+                            lines: $lines,
+                            currentIndex: $index,
+                            rawLine: $rawLine
+                        );
+
+                        if ($orderConfirmationTextTableLineCreated) {
+                            $created++;
+                            $pendingCandidate = null;
+                            $pendingCodeParts = [];
+
+                            continue;
+                        }
+                    }
+                }
+
+                /*
+                |--------------------------------------------------------------------------
                 | Scontrini testuali con colonne DESCRIZIONE / IVA / IMPORTO
                 |--------------------------------------------------------------------------
                 |
@@ -511,6 +553,526 @@ class DocumentLineParser
         }
 
         return $created;
+    }
+
+    /**
+     * Prova a creare una riga prodotto da una conferma ordine tabellare.
+     *
+     * La regola è strutturale:
+     * - la riga corrente contiene quantità, prezzo unitario e totale;
+     * - il vero titolo prodotto è cercato nelle righe precedenti;
+     * - righe EAN, prezzo listino, note tecniche e dettagli logistici vengono saltati.
+     */
+    private function tryCreateOrderConfirmationTextTableLine(
+        Document $document,
+        ?int $lineTypeId,
+        array $lines,
+        int $currentIndex,
+        string $rawLine
+    ): bool {
+        if ($document->documentType?->code !== 'order_confirmation') {
+            return false;
+        }
+
+        $item = $this->extractOrderConfirmationAmountColumns($rawLine);
+
+        if ($item === null) {
+            return false;
+        }
+
+        if (! $this->orderConfirmationAmountLineShouldUsePreviousTitle($rawLine, $item)) {
+            return false;
+        }
+
+        if (($item['unit_price'] ?? 0) <= 0 || ($item['total_price'] ?? 0) <= 0) {
+            return false;
+        }
+
+        $title = $this->findPreviousOrderConfirmationProductTitle(
+            lines: $lines,
+            currentIndex: $currentIndex
+        );
+
+        if ($title === null) {
+            return false;
+        }
+
+        $ean = $this->findNearbyOrderProductEan($lines, $currentIndex);
+
+        $supportingLines = $this->collectNearbyOrderSupportingLines(
+            lines: $lines,
+            currentIndex: $currentIndex,
+            includeTechnicalDetails: true
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Raw text normalizzato
+        |--------------------------------------------------------------------------
+        |
+        | Non salviamo direttamente la riga importi originale nel raw_text della
+        | DocumentLine, perché spesso contiene dettagli logistici come "consegna".
+        | Quei dettagli sono utili per debug, ma non devono far scattare i filtri
+        | hard-non-product del ProductCandidateGenerator.
+        |
+        */
+        $normalizedAmountRow = sprintf(
+            'QTA %s UNIT %s TOTAL %s',
+            number_format((float) $item['quantity'], 3, '.', ''),
+            number_format((float) $item['unit_price'], 2, '.', ''),
+            number_format((float) $item['total_price'], 2, '.', '')
+        );
+
+        $rawTextParts = array_filter([
+            $title,
+            $normalizedAmountRow,
+            ...$supportingLines,
+        ], fn ($part): bool => trim((string) $part) !== '');
+
+        DocumentLine::query()->create([
+            'document_id' => $document->id,
+            'document_line_type_id' => $lineTypeId,
+            'line_number' => $currentIndex + 1,
+            'raw_text' => trim(preg_replace('/\s+/', ' ', implode(' ', $rawTextParts)) ?: implode(' ', $rawTextParts)),
+            'description' => $title,
+            'quantity' => $item['quantity'],
+            'unit_price' => $item['unit_price'],
+            'total_price' => $item['total_price'],
+            'confidence_score' => $this->estimateConfidenceScore(
+                description: $title,
+                amounts: [
+                    $item['unit_price'],
+                    $item['total_price'],
+                ],
+                quantity: $item['quantity'],
+                productCode: $ean
+            ),
+            'metadata' => [
+                'parser' => 'document_line_parser_v8',
+                'mode' => 'order_confirmation_text_table',
+                'amounts_found' => [
+                    $item['unit_price'],
+                    $item['total_price'],
+                ],
+                'product_code_candidate' => $ean,
+                'ean_code_candidate' => $ean,
+                'supporting_lines' => $supportingLines,
+                'order_confirmation_amount_row' => $rawLine,
+                'order_confirmation_amount_row_support' => $item['support'] ?? null,
+                'order_confirmation_title_source' => 'previous_non_amount_line',
+            ],
+        ]);
+
+        return true;
+    }
+
+    /**
+     * Decide se una riga importi e-commerce deve cercare il titolo prodotto
+     * nelle righe precedenti.
+     *
+     * Se la riga importi contiene già un titolo prodotto plausibile, lasciamo
+     * lavorare il parser generico esistente, inclusa la recovery dei numeri tecnici.
+     */
+    private function orderConfirmationAmountLineShouldUsePreviousTitle(string $line, ?array $item = null): bool
+    {
+        $item ??= $this->extractOrderConfirmationAmountColumns($line);
+
+        if ($item === null) {
+            return false;
+        }
+
+        $support = trim((string) ($item['support'] ?? ''));
+
+        if ($support === '') {
+            return true;
+        }
+
+        if ($this->orderConfirmationAmountSupportLooksLikeWeakDetail($support)) {
+            return true;
+        }
+
+        if ($this->orderConfirmationLineLooksLikeSupportOrDetail($support)) {
+            return true;
+        }
+
+        if ($this->orderConfirmationLineLooksLikePlausibleProductTitle($support)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Estrae quantità, unitario e totale da una riga e-commerce.
+     *
+     * Esempi:
+     * - Disponibile - consegna 2 giorni 1.000 EUR 429,90 EUR 429,90
+     * - Articoli: 2 pezzi 2.000 EUR 299,90 EUR 599,80
+     * - 1.000 EUR 119,90 EUR 119,90
+     */
+    private function extractOrderConfirmationAmountColumns(string $line): ?array
+    {
+        $amountPattern = '\d{1,3}(?:[.\s]\d{3})*,\d{2}|\d+,\d{2}';
+        $currencyPattern = '(?:(?:EUR|EURO|€)\s*)?';
+
+        $pattern = '/^(?<support>.*?)\s*' .
+            '(?<quantity>\d{1,3}(?:[,.]\d{3})?)\s+' .
+            $currencyPattern . '(?<unit_price>' . $amountPattern . ')\s+' .
+            $currencyPattern . '(?<total_price>' . $amountPattern . ')\s*$/iu';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        $quantity = $this->parseQuantity((string) ($matches['quantity'] ?? ''));
+        $unitPrice = $this->parseMoney((string) ($matches['unit_price'] ?? ''));
+        $totalPrice = $this->parseMoney((string) ($matches['total_price'] ?? ''));
+
+        if ($quantity === null || $unitPrice === null || $totalPrice === null) {
+            return null;
+        }
+
+        return [
+            'support' => trim((string) ($matches['support'] ?? '')),
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'total_price' => $totalPrice,
+        ];
+    }
+
+    /**
+     * Cerca il titolo prodotto precedente alla riga importi.
+     *
+     * Non usa nomi prodotto specifici:
+     * scarta righe con importi, barcode/EAN, note tecniche, prezzi listino,
+     * righe di stato/logistica e header tabellari.
+     */
+    private function findPreviousOrderConfirmationProductTitle(array $lines, int $currentIndex): ?string
+    {
+        for ($offset = -1; $offset >= -8; $offset--) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                continue;
+            }
+
+            $candidate = $this->normalizeLine((string) $lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if ($this->orderConfirmationLineLooksLikeTableBoundary($candidate)) {
+                return null;
+            }
+
+            if ($this->orderConfirmationLineLooksLikeSupportOrDetail($candidate)) {
+                continue;
+            }
+
+            if (! $this->orderConfirmationLineLooksLikePlausibleProductTitle($candidate)) {
+                continue;
+            }
+
+            return $candidate;
+        }
+
+        return null;
+    }
+
+    /**
+     * Capisce se una riga è un confine tabellare oltre cui non cercare titoli.
+     */
+    private function orderConfirmationLineLooksLikeTableBoundary(string $line): bool
+    {
+        $normalized = mb_strtolower($this->normalizeLine($line));
+
+        if ($normalized === '') {
+            return false;
+        }
+
+        if (str_contains($normalized, 'riepilogo articoli')) {
+            return true;
+        }
+
+        if (preg_match('/^(righe|lista|elenco)\s+(ordine|articoli|prodotti)\b/u', $normalized)) {
+            return true;
+        }
+
+        if (
+            str_contains($normalized, 'articolo')
+            && (
+                str_contains($normalized, 'prezzo')
+                || str_contains($normalized, 'q.ta')
+                || str_contains($normalized, 'qta')
+                || str_contains($normalized, 'totale')
+            )
+        ) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Scarta righe che sono supporto, nota o dettaglio ordine, non titolo prodotto.
+     */
+    private function orderConfirmationLineLooksLikeSupportOrDetail(string $line): bool
+    {
+        $line = $this->normalizeLine($line);
+
+        if ($line === '') {
+            return true;
+        }
+
+        if ($this->orderConfirmationAmountSupportLooksLikeWeakDetail($line)) {
+            return true;
+        }
+
+        if ($this->lineShouldBeIgnored($line)) {
+            return true;
+        }
+
+        if ($this->orderConfirmationLineLooksLikeTableBoundary($line)) {
+            return true;
+        }
+
+        if (! empty($this->extractAmountsFromText($line))) {
+            return true;
+        }
+
+        if ($this->lineIsStandaloneQuantity($line)) {
+            return true;
+        }
+
+        if ($this->lineLooksLikeBarcode($line) || $this->lineLooksLikeStandaloneBarcode($line)) {
+            return true;
+        }
+
+        if ($this->orderConfirmationLineLooksLikeStandaloneAmount($line)) {
+            return true;
+        }
+
+        if (! preg_match('/[a-zA-ZÀ-ÿ]/u', $line)) {
+            return true;
+        }
+
+        $normalized = mb_strtolower($line);
+
+        $supportSignals = [
+            'ean',
+            'gtin',
+            'barcode',
+            'prezzo',
+            'listino',
+            'barrato',
+            'unit_price',
+            'nota',
+            'note',
+            'non quantita',
+            'non quantità',
+            'capacita',
+            'capacità',
+            'disponibile',
+            'magazzino',
+            'articoli:',
+            'articoli ordinati',
+            'pezzi nello stesso ordine',
+            'righe ordine',
+            'righe articoli',
+            'prodotto gia visto',
+            'prodotto già visto',
+            'nome senza trattini',
+            'test fuzzy',
+            'canonical',
+            'canonico',
+            'variante prezzo',
+            'stesso nome canonico',
+            'atteso',
+            'consegna',
+            'spedizione',
+            'servizio',
+        ];
+
+        foreach ($supportSignals as $signal) {
+            if (str_contains($normalized, $signal)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Verifica se una riga sembra un titolo prodotto e non una label/sezione.
+     *
+     * È più severa di orderLineLooksLikeProductTitle(), perché qui stiamo cercando
+     * all'indietro e dobbiamo evitare header come "Righe ordine" o note isolate.
+     */
+    private function orderConfirmationLineLooksLikePlausibleProductTitle(string $line): bool
+    {
+        $line = $this->normalizeLine($line);
+
+        if ($line === '') {
+            return false;
+        }
+
+        if (mb_strlen($line) < 6 || mb_strlen($line) > 140) {
+            return false;
+        }
+
+        if ($this->orderConfirmationLineLooksLikeSupportOrDetail($line)) {
+            return false;
+        }
+
+        if (! preg_match('/[a-zA-ZÀ-ÿ]/u', $line)) {
+            return false;
+        }
+
+        if (! empty($this->extractAmountsFromText($line))) {
+            return false;
+        }
+
+        $normalized = mb_strtolower($line);
+
+        if (preg_match('/^(righe|lista|elenco|riepilogo|dettagli)\b/u', $normalized)) {
+            return false;
+        }
+
+        $tokens = preg_split('/\s+/u', $normalized) ?: [];
+
+        $informativeTokens = array_values(array_filter($tokens, function (string $token): bool {
+            $token = trim($token, " \t\n\r\0\x0B.,;:()[]{}");
+
+            if (mb_strlen($token) < 2) {
+                return false;
+            }
+
+            return ! in_array($token, [
+                'di',
+                'da',
+                'del',
+                'della',
+                'dello',
+                'dei',
+                'degli',
+                'con',
+                'per',
+                'nel',
+                'nello',
+                'nella',
+                'ordine',
+                'articolo',
+                'articoli',
+                'prodotto',
+                'prodotti',
+            ], true);
+        }));
+
+        if (count($informativeTokens) < 2) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Riconosce righe composte solo da un importo, eventualmente con valuta.
+     */
+    private function orderConfirmationLineLooksLikeStandaloneAmount(string $line): bool
+    {
+        return (bool) preg_match(
+            '/^(?:EUR|EURO|€)?\s*(?:\d{1,3}(?:[.\s]\d{3})*,\d{2}|\d+,\d{2})$/iu',
+            trim($line)
+        );
+    }
+
+    /**
+     * Scarta righe importo che rappresentano costi logistici, servizi, sconti o fee.
+     *
+     * La guardia è volutamente limitata:
+     * non scarta una riga solo perché contiene "consegna", perché in molte
+     * conferme ordine la riga prezzo del prodotto può contenere dettagli logistici.
+     */
+    private function orderConfirmationAmountLineLooksLikeNonProductCharge(string $line): bool
+    {
+        $normalized = mb_strtolower($this->normalizeLine($line));
+
+        if ($normalized === '') {
+            return false;
+        }
+
+        $amounts = $this->extractAmountsFromText($line);
+
+        if ($amounts !== [] && max($amounts) <= 0) {
+            return true;
+        }
+
+        if (preg_match('/^\s*(spedizione|spese|trasporto|sconto|coupon|commissione|servizio)\b/u', $normalized)) {
+            return true;
+        }
+
+        if (
+            str_contains($normalized, 'servizio')
+            && (
+                str_contains($normalized, 'spedizione')
+                || str_contains($normalized, 'consegna')
+                || str_contains($normalized, 'trasporto')
+            )
+        ) {
+            return true;
+        }
+
+        if (str_contains($normalized, 'non generare candidato')) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Riconosce dettagli deboli di riga ordine che non sono titoli prodotto.
+     *
+     * Non sono nomi prodotto, ma label/annotazioni e-commerce usate per spiegare
+     * il contesto della riga prezzo. In questi casi il parser deve cercare il
+     * titolo prodotto nelle righe precedenti.
+     */
+    private function orderConfirmationAmountSupportLooksLikeWeakDetail(string $line): bool
+    {
+        $normalized = mb_strtolower($this->normalizeLine($line));
+
+        if ($normalized === '') {
+            return true;
+        }
+
+        $weakSignals = [
+            'prodotto gia visto',
+            'prodotto già visto',
+            'gia visto',
+            'già visto',
+            'in documenti precedenti',
+            'documenti precedenti',
+            'gia acquistato',
+            'già acquistato',
+            'acquistato in precedenza',
+            'visto in precedenza',
+            'nome senza trattini',
+            'senza trattini',
+            'test fuzzy',
+            'canonical',
+            'canonico',
+            'variante prezzo',
+            'stesso nome canonico',
+            'atteso',
+        ];
+
+        foreach ($weakSignals as $signal) {
+            if (str_contains($normalized, $signal)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

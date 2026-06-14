@@ -76,7 +76,7 @@ class RunDocumentRegressionCommand extends Command
                 'status' => 'needs_review',
                 'text_extraction_status' => 'completed',
                 'type' => 'order_confirmation',
-                'lines_count' => 5,
+                'lines_count' => 4,
                 'candidates_count' => 4,
                 'expected_candidates' => [
                     [

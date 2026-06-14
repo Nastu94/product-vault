@@ -354,6 +354,36 @@ class DocumentLineParser
                 $unitPrice = count($amounts) >= 2 ? $amounts[0] : null;
                 $totalPrice = end($amounts);
                 $amountConsistencyRecovery = null;
+                $receiptSingleAmountNormalization = null;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Scontrini con singolo importo riga
+                |--------------------------------------------------------------------------
+                |
+                | Nei receipt testuali una riga prodotto spesso è:
+                |
+                | Router NetWave AX3000 WiFi 6    89,90
+                |
+                | Il numero "6" fa parte del nome prodotto, non è quantità.
+                | Se c'è un solo importo, lo trattiamo come totale riga e impostiamo
+                | quantità 1, salvo quantità esplicite vicine tipo "1 pz".
+                |
+                */
+                if ($document->documentType?->code === 'receipt') {
+                    $receiptSingleAmountNormalization = $this->normalizeReceiptSingleAmountLine(
+                        lines: $lines,
+                        currentIndex: $index,
+                        rawLine: $rawLine,
+                        amounts: $amounts
+                    );
+
+                    if ($receiptSingleAmountNormalization !== null) {
+                        $quantity = $receiptSingleAmountNormalization['quantity'];
+                        $unitPrice = $receiptSingleAmountNormalization['unit_price'];
+                        $totalPrice = $receiptSingleAmountNormalization['total_price'];
+                    }
+                }
 
                 if ($document->documentType?->code === 'order_confirmation') {
                     $originalQuantity = $quantity;
@@ -428,6 +458,10 @@ class DocumentLineParser
                     'ean_code_candidate' => $nearbyOrderProductContext['ean_code'] ?? null,
                     'supporting_lines' => $nearbyOrderProductContext['supporting_lines'] ?? [],
                 ];
+
+                if ($receiptSingleAmountNormalization !== null) {
+                    $metadata['receipt_single_amount_normalization'] = $receiptSingleAmountNormalization['metadata'];
+                }
 
                 if ($amountConsistencyRecovery !== null) {
                     $metadata['amount_consistency_recovery'] = $amountConsistencyRecovery;
@@ -1593,6 +1627,143 @@ class DocumentLineParser
         }
 
         return array_values(array_unique($supportingLines));
+    }
+
+    /**
+     * Normalizza righe receipt con un solo importo.
+     *
+     * In molti scontrini digitali la riga contiene solo descrizione + totale:
+     *
+     * Router NetWave AX3000 WiFi 6 89,90
+     *
+     * In questo caso:
+     * - l'unico importo è il totale riga;
+     * - la quantità va letta solo se esplicita, es. "1 pz";
+     * - numeri tecnici nella descrizione non devono diventare quantità.
+     */
+    private function normalizeReceiptSingleAmountLine(
+        array $lines,
+        int $currentIndex,
+        string $rawLine,
+        array $amounts
+    ): ?array {
+        if (count($amounts) !== 1) {
+            return null;
+        }
+
+        $totalPrice = (float) end($amounts);
+
+        if ($totalPrice <= 0) {
+            return null;
+        }
+
+        $explicitQuantity = $this->findNearbyReceiptExplicitQuantity(
+            lines: $lines,
+            currentIndex: $currentIndex,
+            rawLine: $rawLine
+        );
+
+        $quantity = $explicitQuantity ?? 1.0;
+
+        if ($quantity <= 0) {
+            return null;
+        }
+
+        $unitPrice = round($totalPrice / $quantity, 2);
+
+        return [
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'total_price' => $totalPrice,
+            'metadata' => [
+                'version' => 'receipt_single_amount_normalization_v1',
+                'strategy' => $explicitQuantity !== null
+                    ? 'single_amount_with_explicit_nearby_quantity'
+                    : 'single_amount_default_quantity_one',
+                'explicit_quantity_found' => $explicitQuantity !== null,
+                'original_amounts' => $amounts,
+                'normalized_quantity' => $quantity,
+                'normalized_unit_price' => $unitPrice,
+                'normalized_total_price' => $totalPrice,
+            ],
+        ];
+    }
+
+    /**
+     * Cerca quantità esplicite vicino alla riga receipt.
+     *
+     * Accetta solo quantità con unità testuale chiara:
+     * - 1 pz
+     * - 2 pezzi
+     * - 3 pcs
+     *
+     * Non usa numeri nudi, così "WiFi 6", "1TB", "3S" non diventano quantità.
+     */
+    private function findNearbyReceiptExplicitQuantity(array $lines, int $currentIndex, string $rawLine): ?float
+    {
+        $currentQuantity = $this->extractExplicitReceiptQuantityFromLine($rawLine);
+
+        if ($currentQuantity !== null) {
+            return $currentQuantity;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Righe successive di supporto
+        |--------------------------------------------------------------------------
+        |
+        | Esempio:
+        | Router NetWave AX3000 WiFi 6 89,90
+        | cod. NW-AX3000 - 1 pz
+        |
+        */
+        for ($offset = 1; $offset <= 2; $offset++) {
+            $index = $currentIndex + $offset;
+
+            if (! isset($lines[$index])) {
+                break;
+            }
+
+            $candidate = $this->normalizeLine((string) $lines[$index]);
+
+            if ($candidate === '') {
+                continue;
+            }
+
+            if ($this->lineBreaksProductContext($candidate)) {
+                break;
+            }
+
+            if (! empty($this->extractAmountsFromText($candidate))) {
+                break;
+            }
+
+            $quantity = $this->extractExplicitReceiptQuantityFromLine($candidate);
+
+            if ($quantity !== null) {
+                return $quantity;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Estrae quantità solo quando è accompagnata da unità esplicita.
+     */
+    private function extractExplicitReceiptQuantityFromLine(string $line): ?float
+    {
+        $line = $this->normalizeLine($line);
+
+        if ($line === '') {
+            return null;
+        }
+
+        if (preg_match('/(?:^|[\s\-])(?<quantity>\d{1,3}(?:[,.]\d{1,3})?)\s*(?:pz|pezzi|pcs)\b/iu', $line, $matches)) {
+            return $this->parseQuantity((string) ($matches['quantity'] ?? ''));
+        }
+
+        return null;
     }
 
     /**

@@ -821,6 +821,16 @@ class ProductCandidateGenerator
             'soundbar',
             'microonde',
             'frigorifero',
+            'ssd',
+            'solid state drive',
+            'nvme',
+            'hard disk',
+            'hdd',
+            'disco esterno',
+            'mouse',
+            'mouse wireless',
+            'tastiera',
+            'keyboard',
         ];
 
         foreach ($signals as $signal) {
@@ -916,6 +926,16 @@ class ProductCandidateGenerator
             'lavastoviglie',
             'frigorifero',
             'asciugatrice',
+            'ssd',
+            'solid state drive',
+            'nvme',
+            'hard disk',
+            'hdd',
+            'disco esterno',
+            'mouse',
+            'mouse wireless',
+            'tastiera',
+            'keyboard',
         ];
 
         foreach ($durableSignals as $signal) {

@@ -523,7 +523,64 @@ class RunUnderstandingFixturesCommand extends Command
                 }
             }
 
+            if (! empty($expectedLine['amount_consistency_recovery'])) {
+                $actualRecovery = (array) data_get($actualLine->metadata, 'amount_consistency_recovery', []);
 
+                foreach (['version', 'strategy'] as $key) {
+                    if (! array_key_exists($key, $expectedLine['amount_consistency_recovery'])) {
+                        continue;
+                    }
+
+                    $assertEquals(
+                        'pipeline',
+                        $name,
+                        'line '.($index + 1).' amount_consistency_recovery '.$key,
+                        $expectedLine['amount_consistency_recovery'][$key],
+                        data_get($actualRecovery, $key),
+                    );
+                }
+
+                if (array_key_exists('applied', $expectedLine['amount_consistency_recovery'])) {
+                    $assertEquals(
+                        'pipeline',
+                        $name,
+                        'line '.($index + 1).' amount_consistency_recovery applied',
+                        (bool) $expectedLine['amount_consistency_recovery']['applied'],
+                        (bool) data_get($actualRecovery, 'applied'),
+                    );
+                }
+
+                foreach ([
+                    'original_quantity',
+                    'original_unit_price',
+                    'original_total_price',
+                    'recovered_quantity',
+                    'recovered_unit_price',
+                    'recovered_total_price',
+                ] as $key) {
+                    if (! array_key_exists($key, $expectedLine['amount_consistency_recovery'])) {
+                        continue;
+                    }
+
+                    $assertEquals(
+                        'pipeline',
+                        $name,
+                        'line '.($index + 1).' amount_consistency_recovery '.$key,
+                        (float) $expectedLine['amount_consistency_recovery'][$key],
+                        (float) data_get($actualRecovery, $key),
+                    );
+                }
+
+                if (! empty($expectedLine['amount_consistency_recovery']['contains_signals'])) {
+                    $assertContains(
+                        'pipeline',
+                        $name,
+                        'line '.($index + 1).' amount_consistency_recovery signals contains',
+                        $expectedLine['amount_consistency_recovery']['contains_signals'],
+                        data_get($actualRecovery, 'signals', []),
+                    );
+                }
+            }
 
             $actualCandidates = $pipelineDocument->productIdentificationCandidates()
                 ->orderBy('id')
@@ -633,6 +690,62 @@ class RunUnderstandingFixturesCommand extends Command
                             data_get($actualAmountConsistency, 'signals', []),
                         );
                     }
+                }
+
+                if (! empty($expectedCandidate['document_line_amount_consistency_recovery'])) {
+                    $actualRecovery = (array) data_get(
+                        $actualCandidate->metadata,
+                        'document_line_amount_consistency_recovery',
+                        []
+                    );
+
+                    foreach (['version', 'strategy'] as $key) {
+                        if (! array_key_exists($key, $expectedCandidate['document_line_amount_consistency_recovery'])) {
+                            continue;
+                        }
+
+                        $assertEquals(
+                            'pipeline',
+                            $name,
+                            $needle.' document_line_amount_consistency_recovery '.$key,
+                            $expectedCandidate['document_line_amount_consistency_recovery'][$key],
+                            data_get($actualRecovery, $key),
+                        );
+                    }
+
+                    if (array_key_exists('applied', $expectedCandidate['document_line_amount_consistency_recovery'])) {
+                        $assertEquals(
+                            'pipeline',
+                            $name,
+                            $needle.' document_line_amount_consistency_recovery applied',
+                            (bool) $expectedCandidate['document_line_amount_consistency_recovery']['applied'],
+                            (bool) data_get($actualRecovery, 'applied'),
+                        );
+                    }
+
+                    if (! empty($expectedCandidate['document_line_amount_consistency_recovery']['contains_signals'])) {
+                        $assertContains(
+                            'pipeline',
+                            $name,
+                            $needle.' document_line_amount_consistency_recovery signals contains',
+                            $expectedCandidate['document_line_amount_consistency_recovery']['contains_signals'],
+                            data_get($actualRecovery, 'signals', []),
+                        );
+                    }
+                }
+
+                foreach (['quantity_recovered_from_amount_mismatch', 'suspicious_quantity_from_description'] as $metadataFlag) {
+                    if (! array_key_exists($metadataFlag, $expectedCandidate)) {
+                        continue;
+                    }
+
+                    $assertEquals(
+                        'pipeline',
+                        $name,
+                        $needle.' '.$metadataFlag,
+                        (bool) $expectedCandidate[$metadataFlag],
+                        (bool) data_get($actualCandidate->metadata, $metadataFlag),
+                    );
                 }
 
                 if (array_key_exists('brand_name', $expectedCandidate)) {

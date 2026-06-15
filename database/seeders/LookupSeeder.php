@@ -107,6 +107,11 @@ class LookupSeeder extends Seeder
                 'description' => 'Documento non ancora classificato.',
             ],
             [
+                'code' => 'irrelevant',
+                'name' => 'Non pertinente',
+                'description' => 'Documento non pertinente rispetto al flusso prodotto, acquisto o garanzia.',
+            ],
+            [
                 'code' => 'unsupported',
                 'name' => 'Non supportato',
                 'description' => 'Documento non pertinente o non gestibile nel flusso prodotto/garanzia.',

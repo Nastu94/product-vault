@@ -33,6 +33,18 @@ class DocumentClassifier
         $candidates = [
             /*
             |--------------------------------------------------------------------------
+            | Documenti non pertinenti
+            |--------------------------------------------------------------------------
+            |
+            | Prima valutiamo segnali espliciti di esclusione.
+            | Frasi come "non è una fattura" contengono la parola "fattura",
+            | ma semanticamente dicono l'opposto: non devono diventare invoice.
+            |
+            */
+            'irrelevant' => $this->scoreIrrelevant($normalizedText),
+
+            /*
+            |--------------------------------------------------------------------------
             | Ordine logico dei candidati
             |--------------------------------------------------------------------------
             |
@@ -135,6 +147,55 @@ class DocumentClassifier
         $text = mb_strtolower($text);
 
         return preg_replace('/\s+/', ' ', $text) ?: $text;
+    }
+
+    /**
+     * Score per documenti esplicitamente non pertinenti.
+     *
+     * Queste regole gestiscono documenti informativi/amministrativi che possono
+     * contenere parole fiscali come P.IVA, fattura, ricevuta o garanzia, ma solo
+     * in forma negativa:
+     *
+     * - "non è una fattura"
+     * - "non contiene acquisti"
+     * - "non contiene prodotti associabili a garanzia"
+     */
+    private function scoreIrrelevant(string $text): int
+    {
+        $score = $this->scoreKeywords($text, [
+            'documento non pertinente' => 60,
+            'non pertinente' => 50,
+            'non supportato' => 45,
+            'unsupported' => 45,
+
+            'non e una fattura' => 45,
+            'non è una fattura' => 45,
+            'non e fattura' => 40,
+            'non è fattura' => 40,
+
+            'non e una ricevuta' => 45,
+            'non è una ricevuta' => 45,
+            'non e ricevuta' => 40,
+            'non è ricevuta' => 40,
+
+            'non contiene acquisti' => 45,
+            'non contiene prodotti' => 45,
+            'non contiene prodotti associabili a garanzia' => 55,
+            'non contiene prodotti associabili' => 45,
+
+            'nessun pagamento e richiesto' => 35,
+            'nessun pagamento è richiesto' => 35,
+            'solo scopo informativo' => 35,
+            'scopo informativo' => 25,
+            'promemoria informativo' => 35,
+            'comunicazione amministrativa' => 35,
+            'promemoria per i residenti' => 30,
+
+            'deve essere classificato come non pertinente' => 70,
+            'rispetto alla generazione di prodotti' => 45,
+        ]);
+
+        return max(0, min($score, 100));
     }
 
     /**
@@ -370,6 +431,25 @@ class DocumentClassifier
             'numero ordine',
             'riepilogo ordine',
             'grazie per il tuo ordine',
+
+            // Documenti non pertinenti
+            'documento non pertinente',
+            'non pertinente',
+            'non supportato',
+            'unsupported',
+            'non e una fattura',
+            'non è una fattura',
+            'non e una ricevuta',
+            'non è una ricevuta',
+            'non contiene acquisti',
+            'non contiene prodotti',
+            'nessun pagamento e richiesto',
+            'nessun pagamento è richiesto',
+            'solo scopo informativo',
+            'promemoria informativo',
+            'comunicazione amministrativa',
+            'deve essere classificato come non pertinente',
+            'rispetto alla generazione di prodotti',
         ];
 
         foreach ($keywords as $keyword) {

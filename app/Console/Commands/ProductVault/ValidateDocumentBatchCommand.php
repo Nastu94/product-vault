@@ -16,7 +16,8 @@ use Illuminate\Support\Str;
     {--filename= : Filtra per original_filename, anche parziale}
     {--document= : Limita validazione a un singolo document_id}
     {--strict : Valida anche merchant, data, totale documento, brand, categoria, EAN e seriali}
-    {--show-candidates : Mostra dettaglio candidati effettivi per documento}')]
+    {--show-candidates : Mostra dettaglio candidati effettivi per documento}
+    {--fail-on-warnings : Restituisce exit code failure se la validazione produce warning}')]
 #[Description('Valida un batch documentale confrontando il DB locale con un file expected JSON')]
 class ValidateDocumentBatchCommand extends Command
 {
@@ -52,6 +53,7 @@ class ValidateDocumentBatchCommand extends Command
         $documentId = $this->normalizedPositiveIntegerOption('document');
         $strict = (bool) $this->option('strict');
         $showCandidates = (bool) $this->option('show-candidates');
+        $failOnWarnings = (bool) $this->option('fail-on-warnings');
 
         $expectedBatch = collect($expectedBatch)
             ->filter(fn (array $row): bool => $filenameFilter === ''
@@ -179,7 +181,15 @@ class ValidateDocumentBatchCommand extends Command
         }
 
         if ($warnings) {
-            $this->warn('Batch validation completed with warnings. Nessun dato è stato modificato.');
+            $message = 'Batch validation completed with warnings. Nessun dato è stato modificato.';
+
+            if ($failOnWarnings) {
+                $this->error($message);
+
+                return self::FAILURE;
+            }
+
+            $this->warn($message);
 
             return self::SUCCESS;
         }

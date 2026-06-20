@@ -648,7 +648,15 @@ class ValidateDocumentBatchCommand extends Command
     }
 
     /**
-     * Verifica che le righe da non generare non abbiano prodotto candidati.
+     * Verifica che le righe escluse non siano diventate identità prodotto.
+     *
+     * Il controllo viene effettuato soltanto sui campi semantici generati:
+     * - nome del candidato;
+     * - descrizione della DocumentLine.
+     *
+     * Non controlliamo raw_text e raw_line_text perché possono contenere
+     * legittimamente righe di supporto, EAN, venditore o dati logistici
+     * conservati per tracciabilità.
      *
      * @param  Collection<int, ProductIdentificationCandidate>  $candidates
      * @param  array<int, array<string, mixed>>  $shouldNotGenerate
@@ -678,24 +686,20 @@ class ValidateDocumentBatchCommand extends Command
                 function (
                     ProductIdentificationCandidate $candidate
                 ) use ($normalizedText): bool {
-                    $haystacks = [
+                    /*
+                    * Valutiamo l'identità effettivamente generata, non il testo
+                    * sorgente conservato per audit e tracciabilità.
+                    */
+                    $semanticHaystacks = [
                         (string) $candidate->name,
-                        (string) data_get(
-                            $candidate->metadata,
-                            'raw_line_text',
-                            ''
-                        ),
                         (string) $candidate->documentLine?->description,
-                        (string) $candidate->documentLine?->raw_text,
                     ];
 
-                    foreach ($haystacks as $haystack) {
-                        if (
-                            str_contains(
-                                $this->normalizeComparableText($haystack),
-                                $normalizedText
-                            )
-                        ) {
+                    foreach ($semanticHaystacks as $haystack) {
+                        if (str_contains(
+                            $this->normalizeComparableText($haystack),
+                            $normalizedText
+                        )) {
                             return true;
                         }
                     }
@@ -707,7 +711,8 @@ class ValidateDocumentBatchCommand extends Command
             if ($matchedCandidate) {
                 $violations++;
 
-                $recognitionErrors[] = 'should_not_generate violation: ' . $text;
+                $recognitionErrors[] =
+                    'should_not_generate violation: ' . $text;
             }
         }
 

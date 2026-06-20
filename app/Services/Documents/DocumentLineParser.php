@@ -668,11 +668,13 @@ class DocumentLineParser
                     'line_number' => $index + 1,
                     'raw_text_parts' => [$rawLine],
                     'description_parts' => [$productStart['description']],
+                    'supporting_lines' => [],
                     'quantity' => null,
                     'unit_price' => null,
                     'total_price' => null,
                     'amounts' => [],
                     'product_code' => $productStart['code'],
+                    'ean_code_candidate' => null,
                     'mode' => 'code_description_quantity',
                 ];
 
@@ -693,9 +695,43 @@ class DocumentLineParser
             | "Canapa Verde" completa la descrizione del candidato precedente.
             |
             */
-            if ($pendingCandidate && $this->lineLooksLikeDescriptionContinuation($rawLine)) {
+            if (
+                $pendingCandidate
+                && $this->lineLooksLikeDescriptionContinuation($rawLine)
+            ) {
+                /*
+                * La riga originale viene sempre mantenuta nel raw text.
+                */
                 $pendingCandidate['raw_text_parts'][] = $rawLine;
-                $pendingCandidate['description_parts'][] = $rawLine;
+
+                if ($document->documentType?->code === 'order_confirmation') {
+                    /*
+                    * Nelle conferme marketplace le righe successive possono contenere:
+                    * - variante o colore;
+                    * - venditore marketplace;
+                    * - EAN;
+                    * - SKU secondari.
+                    *
+                    * Le conserviamo come supporto, ma soltanto la parte realmente
+                    * descrittiva deve entrare nel nome del prodotto.
+                    */
+                    $pendingCandidate['supporting_lines'][] = $rawLine;
+
+                    $eanCode = $this->extractOrderConfirmationSupportingEan($rawLine);
+
+                    if ($eanCode !== null) {
+                        $pendingCandidate['ean_code_candidate'] = $eanCode;
+                    }
+
+                    $descriptionPart =
+                        $this->cleanOrderConfirmationDescriptionContinuation($rawLine);
+
+                    if ($descriptionPart !== null) {
+                        $pendingCandidate['description_parts'][] = $descriptionPart;
+                    }
+                } else {
+                    $pendingCandidate['description_parts'][] = $rawLine;
+                }
 
                 continue;
             }
@@ -3979,15 +4015,30 @@ class DocumentLineParser
     }
 
     /**
-     * Crea una riga documento partendo da un candidato multi-riga.
+     * Crea una DocumentLine partendo da un candidato multi-riga.
      */
-    private function createLineFromPendingCandidate(Document $document, ?int $lineTypeId, array $candidate): void
-    {
-        $description = trim(implode(' ', $candidate['description_parts']));
-        $rawText = trim(implode(' ', $candidate['raw_text_parts']));
+    private function createLineFromPendingCandidate(
+        Document $document,
+        ?int $lineTypeId,
+        array $candidate
+    ): void {
+        $description = trim(
+            implode(' ', $candidate['description_parts'] ?? [])
+        );
+
+        $rawText = trim(
+            implode(' ', $candidate['raw_text_parts'] ?? [])
+        );
+
         $amounts = $candidate['amounts'] ?? [];
         $quantity = $candidate['quantity'] ?? null;
         $productCode = $candidate['product_code'] ?? null;
+        $eanCode = $candidate['ean_code_candidate'] ?? null;
+
+        $supportingLines = array_values(array_unique(array_filter(
+            (array) ($candidate['supporting_lines'] ?? []),
+            fn ($line): bool => trim((string) $line) !== ''
+        )));
 
         DocumentLine::query()->create([
             'document_id' => $document->id,
@@ -4009,6 +4060,8 @@ class DocumentLineParser
                 'mode' => $candidate['mode'] ?? 'pending_candidate',
                 'amounts_found' => $amounts,
                 'product_code_candidate' => $productCode,
+                'ean_code_candidate' => $eanCode,
+                'supporting_lines' => $supportingLines,
             ],
         ]);
     }
@@ -4208,23 +4261,32 @@ class DocumentLineParser
     }
 
     /**
-     * Estrae coppia codice prodotto + descrizione.
+     * Estrae una coppia codice prodotto + descrizione.
+     *
+     * Supporta:
+     * - codici contenenti numeri: TC11-128, FS-256, ABC123;
+     * - SKU alfabetici multi-segmento: GS-CONT-W.
+     *
+     * Gli SKU alfabetici vengono accettati solo quando hanno una struttura
+     * sufficientemente forte, così parole amministrative con un trattino
+     * non vengono interpretate automaticamente come codici prodotto.
      */
     private function extractProductStartFromLine(string $line): ?array
     {
-        /*
-        |--------------------------------------------------------------------------
-        | Esempi supportati:
-        | PRD-IMMK3163 Divano Fabiola Lounge
-        | ABC123 Lavatrice Modello X
-        |--------------------------------------------------------------------------
-        */
-        if (! preg_match('/^(?<code>[A-Z]{2,}[A-Z0-9\-\/\.]*\d[A-Z0-9\-\/\.]*)\s+(?<description>.+)$/iu', $line, $matches)) {
+        if (! preg_match(
+            '/^(?<code>[A-Z0-9][A-Z0-9\-\/\.]{2,})\s+(?<description>.+)$/iu',
+            $line,
+            $matches
+        )) {
             return null;
         }
 
-        $code = trim($matches['code']);
-        $description = trim($matches['description']);
+        $code = trim((string) ($matches['code'] ?? ''));
+        $description = trim((string) ($matches['description'] ?? ''));
+
+        if (! $this->productStartCodeLooksStructured($code)) {
+            return null;
+        }
 
         if ($description === '' || mb_strlen($description) < 3) {
             return null;
@@ -4238,6 +4300,66 @@ class DocumentLineParser
             'code' => $code,
             'description' => $description,
         ];
+    }
+
+    /**
+     * Verifica che il token iniziale abbia una struttura plausibile da SKU.
+     *
+     * Regole:
+     * - un codice contenente almeno una cifra resta valido;
+     * - un codice senza cifre deve avere almeno tre segmenti alfabetici
+     *   separati da trattino, come GS-CONT-W;
+     * - almeno un segmento deve essere breve, caratteristica comune degli SKU.
+     */
+    private function productStartCodeLooksStructured(string $code): bool
+    {
+        $normalized = mb_strtoupper(trim($code));
+
+        if (
+            mb_strlen($normalized) < 3
+            || mb_strlen($normalized) > 40
+        ) {
+            return false;
+        }
+
+        if (! preg_match('/^[A-Z0-9][A-Z0-9\-\/\.]*$/u', $normalized)) {
+            return false;
+        }
+
+        /*
+        * Il comportamento esistente per codici con numeri resta invariato.
+        */
+        if (preg_match('/\d/u', $normalized)) {
+            return true;
+        }
+
+        /*
+        * Per codici completamente alfabetici richiediamo almeno tre segmenti.
+        *
+        * Valido:
+        * GS-CONT-W
+        *
+        * Non sufficiente:
+        * ORDINE-WEB
+        */
+        if (! preg_match('/^[A-Z]{1,12}(?:-[A-Z]{1,12}){2,}$/u', $normalized)) {
+            return false;
+        }
+
+        $segments = explode('-', $normalized);
+        $hasShortSegment = false;
+
+        foreach ($segments as $segment) {
+            if ($segment === '') {
+                return false;
+            }
+
+            if (mb_strlen($segment) <= 4) {
+                $hasShortSegment = true;
+            }
+        }
+
+        return $hasShortSegment;
     }
 
     /**
@@ -4702,5 +4824,95 @@ class DocumentLineParser
         }
 
         return min($score, 100);
+    }
+
+    /**
+     * Estrae un EAN/GTIN da una riga di supporto della conferma ordine.
+     */
+    private function extractOrderConfirmationSupportingEan(
+        string $line
+    ): ?string {
+        if (preg_match(
+            '/\b(?:EAN|GTIN|Barcode)\s*[:\-]?\s*'
+            . '(?<ean>\d{8}|\d{12}|\d{13}|\d{14})\b/iu',
+            $line,
+            $matches
+        )) {
+            return trim((string) $matches['ean']);
+        }
+
+        return null;
+    }
+
+    /**
+     * Restituisce soltanto la parte descrittiva utile di una riga marketplace.
+     *
+     * Esempi:
+     * - "Variante: nero - Venduto da TechWorld"
+     *   diventa "Variante: nero"
+     *
+     * - "UHS-I U3 - Venduto da MediaLab"
+     *   diventa "UHS-I U3"
+     *
+     * - "EAN 8050000000001"
+     *   non produce una parte descrittiva
+     *
+     * - "Venduto da MediaLab - SKU bundle VC-C4-KIT"
+     *   non produce una parte descrittiva
+     */
+    private function cleanOrderConfirmationDescriptionContinuation(
+        string $line
+    ): ?string {
+        $cleaned = $this->normalizeLine($line);
+
+        if ($cleaned === '') {
+            return null;
+        }
+
+        /*
+        * L'EAN resta nel raw text e nei metadata, ma non nel nome prodotto.
+        */
+        $cleaned = preg_replace(
+            '/\b(?:EAN|GTIN|Barcode)\s*[:\-]?\s*'
+            . '(?:\d{8}|\d{12}|\d{13}|\d{14})\b/iu',
+            '',
+            $cleaned
+        ) ?? $cleaned;
+
+        /*
+        * Rimuove il venditore marketplace e tutto ciò che segue.
+        */
+        $cleaned = preg_replace(
+            '/(?:^|[\s\-–—|]+)\s*'
+            . '(?:venduto\s+da|sold\s+by|seller(?:\s*:)?)(?:\s+|$).*$/iu',
+            '',
+            $cleaned
+        ) ?? $cleaned;
+
+        /*
+        * Eventuali SKU ripetuti sono metadata e non parte del nome.
+        */
+        $cleaned = preg_replace(
+            '/(?:^|[\s\-–—|]+)\s*'
+            . 'SKU(?:\s+bundle)?\s*[:\-]?\s*'
+            . '[A-Z0-9][A-Z0-9\-\/\.]{2,}\b/iu',
+            '',
+            $cleaned
+        ) ?? $cleaned;
+
+        $cleaned = trim(
+            preg_replace('/\s+/u', ' ', $cleaned) ?? $cleaned,
+            " \t\n\r\0\x0B-–—|,;"
+        );
+
+        if ($cleaned === '') {
+            return null;
+        }
+
+        if (! preg_match('/[\p{L}\p{N}]/u', $cleaned)) {
+            return null;
+        }
+
+        return $cleaned;
     }
 }

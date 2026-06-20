@@ -968,6 +968,26 @@ class ProductCandidateGenerator
 
         /*
         |--------------------------------------------------------------------------
+        | Evidenza strutturale da scontrino OCR
+        |--------------------------------------------------------------------------
+        |
+        | Alcuni prodotti non sono ancora presenti nei segnali semantici, ma la
+        | riga è stata ricostruita da una sequenza OCR molto forte:
+        |
+        | DESCRIZIONE
+        | QUANTITÀ x PREZZO
+        | TOTALE
+        |
+        | Richiediamo inoltre importi coerenti e almeno un token tecnico
+        | alfanumerico, come AX1800, 1TB o 1080P.
+        |
+        */
+        if ($this->receiptLineHasStructuredTechnicalEvidence($line)) {
+            return true;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
         | Codici tecnici forti
         |--------------------------------------------------------------------------
         |
@@ -987,6 +1007,52 @@ class ProductCandidateGenerator
         }
 
         return false;
+    }
+
+    /**
+     * Verifica se una riga receipt possiede evidenza strutturale e tecnica
+     * sufficiente per diventare un candidato prodotto.
+     */
+    private function receiptLineHasStructuredTechnicalEvidence(
+        DocumentLine $line
+    ): bool {
+        $mode = (string) ($line->metadata['mode'] ?? '');
+
+        if ($mode !== 'ocr_visual_line_quantity_x_unit_total') {
+            return false;
+        }
+
+        $amountConsistency = (array) (
+            $line->metadata['amount_consistency'] ?? []
+        );
+
+        if (
+            ($amountConsistency['checked'] ?? false) !== true
+            || ($amountConsistency['is_consistent'] ?? null) !== true
+        ) {
+            return false;
+        }
+
+        $description = mb_strtoupper(
+            trim((string) $line->description)
+        );
+
+        if (
+            mb_strlen($description) < 6
+            || ! preg_match('/\p{L}/u', $description)
+        ) {
+            return false;
+        }
+
+        /*
+        * Token misto lettere/numeri:
+        * AX1800, 1TB, 1080P, X2, 256GB.
+        */
+        return preg_match(
+            '/\b(?=[A-Z0-9\-]*[A-Z])(?=[A-Z0-9\-]*\d)'
+            . '[A-Z0-9][A-Z0-9\-]{1,}\b/u',
+            $description
+        ) === 1;
     }
 
     /**

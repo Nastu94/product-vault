@@ -40,6 +40,25 @@ class ProductCandidateGenerator
     {
         $this->clearUnlinkedCandidates($document);
 
+        /*
+        |--------------------------------------------------------------------------
+        | Tipi documento esclusi dalla generazione prodotto
+        |--------------------------------------------------------------------------
+        |
+        | Questo controllo protegge anche eventuali rigenerazioni manuali dei
+        | candidati eseguite senza ripetere prima il parsing delle righe.
+        |
+        */
+        if (in_array(
+            $document->documentType?->code,
+            ['irrelevant', 'unknown'],
+            true
+        )) {
+            $this->updateDocumentProductReliabilityScore($document);
+
+            return 0;
+        }
+
         $lines = $document
             ->lines()
             ->with(['document.documentType', 'documentLineType'])

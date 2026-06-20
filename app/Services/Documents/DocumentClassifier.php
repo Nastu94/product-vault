@@ -193,6 +193,22 @@ class DocumentClassifier
 
             'deve essere classificato come non pertinente' => 70,
             'rispetto alla generazione di prodotti' => 45,
+            // Documenti logistici privi di valore economico.
+            'distinta di spedizione' => 15,
+            'packing list' => 15,
+            'documento senza prezzi' => 35,
+            'nessun importo economico presente' => 45,
+
+            // Documenti che negano esplicitamente il valore fiscale o di acquisto.
+            'non valida come fattura' => 60,
+            'non valido come fattura' => 60,
+            'non costituisce prova di acquisto' => 60,
+            'nessun acquisto effettuato' => 55,
+
+            // Preventivi non ancora trasformati in acquisto.
+            'preventivo non fiscale' => 45,
+            'prezzo indicativo' => 15,
+            'totale indicativo' => 15,
         ]);
 
         return max(0, min($score, 100));
@@ -234,7 +250,46 @@ class DocumentClassifier
             $score -= 20;
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Negazione esplicita del valore fiscale
+        |--------------------------------------------------------------------------
+        |
+        | La presenza della parola "fattura" non deve aumentare il punteggio quando
+        | il documento dichiara esplicitamente di non essere una fattura o una
+        | prova di acquisto.
+        |
+        */
+        if ($this->textExplicitlyNegatesInvoice($text)) {
+            $score -= 60;
+        }
+
         return max(0, min($score, 100));
+    }
+
+    /**
+     * Verifica se il testo nega esplicitamente la natura fiscale o di acquisto.
+     */
+    private function textExplicitlyNegatesInvoice(string $text): bool
+    {
+        foreach ([
+            'non valida come fattura',
+            'non valido come fattura',
+            'non e una fattura',
+            'non è una fattura',
+            'non e fattura',
+            'non è fattura',
+            'non costituisce prova di acquisto',
+            'preventivo non fiscale',
+            'documento senza prezzi',
+            'nessun acquisto effettuato',
+        ] as $signal) {
+            if (str_contains($text, $signal)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -450,6 +505,17 @@ class DocumentClassifier
             'comunicazione amministrativa',
             'deve essere classificato come non pertinente',
             'rispetto alla generazione di prodotti',
+            'distinta di spedizione',
+            'packing list',
+            'documento senza prezzi',
+            'nessun importo economico presente',
+            'non valida come fattura',
+            'non valido come fattura',
+            'non costituisce prova di acquisto',
+            'nessun acquisto effettuato',
+            'preventivo non fiscale',
+            'prezzo indicativo',
+            'totale indicativo',
         ];
 
         foreach ($keywords as $keyword) {

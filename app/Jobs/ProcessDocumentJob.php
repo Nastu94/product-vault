@@ -516,7 +516,9 @@ class ProcessDocumentJob implements ShouldQueue
         | Guard clause
         |--------------------------------------------------------------------------
         |
-        | La generazione candidati richiede testo estratto e almeno una riga prodotto.
+        | Lo step viene eseguito anche senza righe prodotto, perché il generator
+        | deve poter eliminare eventuali candidati automatici rimasti da una
+        | precedente classificazione o elaborazione.
         |
         */
         if ($document->text_extraction_status !== 'completed' || blank($document->raw_text)) {
@@ -524,10 +526,6 @@ class ProcessDocumentJob implements ShouldQueue
         }
 
         if (in_array($document->status, ['failed', 'unsupported'], true)) {
-            return;
-        }
-
-        if ($document->lines()->count() === 0) {
             return;
         }
 

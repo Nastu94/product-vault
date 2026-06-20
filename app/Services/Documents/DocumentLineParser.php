@@ -68,6 +68,23 @@ class DocumentLineParser
         */
         $document->lines()->delete();
 
+        /*
+        |--------------------------------------------------------------------------
+        | Documenti non parsabili come acquisti
+        |--------------------------------------------------------------------------
+        |
+        | I documenti classificati come non pertinenti o sconosciuti devono
+        | restare archiviati, ma non devono generare righe prodotto.
+        |
+        */
+        if (in_array(
+            $document->documentType?->code,
+            ['irrelevant', 'unknown'],
+            true
+        )) {
+            return 0;
+        }
+
         $lines = preg_split('/\R/u', $text) ?: [];
     
         /*

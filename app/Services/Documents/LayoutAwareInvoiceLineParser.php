@@ -162,12 +162,44 @@ class LayoutAwareInvoiceLineParser
             }
 
             $item = $this->extractCompactInvoiceVisualLineItem($text);
+            $standaloneCodeLine = null;
+
+            /*
+            |--------------------------------------------------------------------------
+            | Riga OCR senza codice e senza IVA
+            |--------------------------------------------------------------------------
+            |
+            | Alcune scansioni vengono ricostruite in questo ordine:
+            |
+            | ROBOT LAVAPAVIMENTI AQUABOT X2 1 549.00 549.00
+            | AB-X2
+            |
+            | La visual line contiene descrizione, quantità, unitario e totale,
+            | mentre il codice si trova nella riga immediatamente successiva.
+            |
+            */
+            if (! $item) {
+                $standaloneCodeLine = $this->findFollowingStandaloneInvoiceCodeLine(
+                    visualLines: $visualLines,
+                    currentIndex: $index
+                );
+
+                if ($standaloneCodeLine !== null) {
+                    $item = $this->extractCompactInvoiceVisualLineItemWithoutInlineCodeAndVat(
+                        line: $text,
+                        invoiceCode: $standaloneCodeLine['code']
+                    );
+                }
+            }
 
             if (! $item) {
                 continue;
             }
 
-            $supportingLines = $this->findSupportingVisualLines($visualLines, $index);
+            $supportingLines = $this->findSupportingVisualLines(
+                $visualLines,
+                $index
+            );
 
             if (! empty($supportingLines)) {
                 $item['supporting_lines'] = $supportingLines;
@@ -184,6 +216,7 @@ class LayoutAwareInvoiceLineParser
                 'document_line_type_id' => $lineTypeId,
                 'line_number' => $created + 1,
                 'raw_text' => trim(implode(' ', array_filter([
+                    $standaloneCodeLine['code'] ?? null,
                     $text,
                     ...($supportingLines ?? []),
                 ]))),
@@ -209,7 +242,11 @@ class LayoutAwareInvoiceLineParser
                     'vat_rate' => $item['vat_rate'],
                     'supporting_lines' => $supportingLines ?? [],
                     'source_visual_line_id' => $visualLine['id'] ?? null,
-                    'source_item_ids' => $visualLine['item_ids'] ?? [],
+                    'source_item_ids' => array_values(array_unique(array_filter([
+                        ...($visualLine['item_ids'] ?? []),
+                        ...($standaloneCodeLine['item_ids'] ?? []),
+                    ], fn ($itemId): bool => $itemId !== null))),
+                    'source_code_visual_line_id' => $standaloneCodeLine['id'] ?? null,
                     'inference' => $item['inference'] ?? null,
                 ],
             ]);
@@ -453,6 +490,145 @@ class LayoutAwareInvoiceLineParser
         return $this->buildCompactInvoiceItemFromMatches($matches, [
             'type' => 'quantity_inferred_from_total_divided_by_unit_price',
         ]);
+    }
+
+    /**
+     * Cerca un codice articolo nella visual line immediatamente successiva.
+     *
+     * La ricerca è volutamente limitata a una sola riga per evitare di
+     * associare al prodotto corrente il codice di un prodotto più distante.
+     *
+     * @return array{
+     *     code:string,
+     *     id:mixed,
+     *     item_ids:array<int, mixed>
+     * }|null
+     */
+    private function findFollowingStandaloneInvoiceCodeLine(
+        array $visualLines,
+        int $currentIndex
+    ): ?array {
+        $nextIndex = $currentIndex + 1;
+
+        if (! isset($visualLines[$nextIndex])) {
+            return null;
+        }
+
+        $visualLine = $visualLines[$nextIndex];
+
+        $text = $this->normalizeCompactOcrLine(
+            (string) ($visualLine['text'] ?? '')
+        );
+
+        if ($text === '') {
+            return null;
+        }
+
+        if (! preg_match(
+            '/^(?<code>' . $this->ocrInvoiceCodePattern() . ')$/u',
+            $text,
+            $matches
+        )) {
+            return null;
+        }
+
+        $code = $this->normalizeInvoiceCode(
+            (string) ($matches['code'] ?? '')
+        );
+
+        if (
+            $code === ''
+            || $this->invoiceCodeShouldBeSkippedAsDocumentLine($code)
+        ) {
+            return null;
+        }
+
+        return [
+            'code' => $code,
+            'id' => $visualLine['id'] ?? null,
+            'item_ids' => $visualLine['item_ids'] ?? [],
+        ];
+    }
+
+    /**
+     * Estrae una riga OCR compatta priva di codice inline e colonna IVA.
+     *
+     * Struttura:
+     * DESCRIZIONE QTA PREZZO_UNITARIO TOTALE
+     *
+     * Il codice viene recuperato dalla visual line immediatamente successiva.
+     */
+    private function extractCompactInvoiceVisualLineItemWithoutInlineCodeAndVat(
+        string $line,
+        string $invoiceCode
+    ): ?array {
+        $line = $this->normalizeCompactOcrLine($line);
+        $amountPattern = '(?:' . $this->ocrAmountPattern() . ')';
+
+        $pattern = '/^(?<description>.+?)\s+'
+            . '(?<quantity>\d+(?:[,.]\d+)?)\s+'
+            . '(?<unit_price>' . $amountPattern . ')\s+'
+            . '(?<total_price>' . $amountPattern . ')'
+            . '\s*$/u';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        $description = trim((string) ($matches['description'] ?? ''));
+        $quantity = $this->parseQuantity(
+            (string) ($matches['quantity'] ?? '')
+        );
+        $unitPrice = $this->parseMoney(
+            (string) ($matches['unit_price'] ?? '')
+        );
+        $totalPrice = $this->parseMoney(
+            (string) ($matches['total_price'] ?? '')
+        );
+
+        if (
+            $description === ''
+            || $this->descriptionShouldBeIgnored($description)
+            || $quantity === null
+            || $unitPrice === null
+            || $totalPrice === null
+            || $quantity <= 0
+            || $unitPrice <= 0
+            || $totalPrice <= 0
+        ) {
+            return null;
+        }
+
+        /*
+        * La coerenza economica è il gate che impedisce di interpretare
+        * come prodotto una generica sequenza descrizione + numeri.
+        */
+        $expectedTotal = round($quantity * $unitPrice, 2);
+
+        if (abs($expectedTotal - $totalPrice) > 0.02) {
+            return null;
+        }
+
+        $invoiceCode = $this->normalizeInvoiceCode($invoiceCode);
+
+        if ($this->invoiceCodeShouldBeSkippedAsDocumentLine($invoiceCode)) {
+            return null;
+        }
+
+        return [
+            'invoice_code' => $invoiceCode,
+            'product_code' => $invoiceCode,
+            'description' => $description,
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'discount_amount' => null,
+            'vat_rate' => null,
+            'total_price' => $totalPrice,
+            'inference' => [
+                'type' => 'invoice_code_from_following_visual_line',
+                'amount_layout' => 'description_quantity_unit_total',
+            ],
+        ];
     }
 
     /**

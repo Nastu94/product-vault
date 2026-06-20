@@ -732,6 +732,21 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
                 'qty',
                 'q ty',
             ],
+            'list_price' => [
+                'prezzo listino',
+                'listino',
+                'prezzo lordo',
+                'list price',
+                'gross price',
+            ],
+            'net_unit_price' => [
+                'netto unitario',
+                'netto unit',
+                'prezzo netto unitario',
+                'prezzo netto',
+                'net unit price',
+                'net price',
+            ],
             'unit_price' => [
                 'prezzo unitario',
                 'unitario',
@@ -827,12 +842,46 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
             return null;
         }
 
-        $unitPricePattern = $this->namedAmountPattern('unit_price', headerDriven: true);
-        $totalPricePattern = $this->namedAmountPattern('total_price', headerDriven: true);
+        $unitPricePattern = $this->namedAmountPattern(
+            'unit_price',
+            headerDriven: true
+        );
+
+        $totalPricePattern = $this->namedAmountPattern(
+            'total_price',
+            headerDriven: true
+        );
+        $listPricePattern = $this->namedAmountPattern(
+            'list_price',
+            headerDriven: true
+        );
         $eanPattern = '\d{8}|\d{12}|\d{13}|\d{14}';
         $serialPattern = '[A-Z0-9][A-Z0-9\-\/]{5,}';
 
         $patterns = [];
+
+        /*
+        * Layout:
+        * DESCRIZIONE QTA LISTINO SCONTO% NETTO UNITARIO TOTALE
+        *
+        * Il listino e la percentuale di sconto sono dati informativi.
+        * Il prezzo realmente acquistato è il netto unitario.
+        */
+        if (
+            isset($headerRoles['quantity'])
+            && isset($headerRoles['list_price'])
+            && isset($headerRoles['discount'])
+            && isset($headerRoles['net_unit_price'])
+            && isset($headerRoles['total_price'])
+        ) {
+            $patterns[] = '/^(?<description>.+?)\s+'
+                . '(?<quantity>\d+(?:[,.]\d+)?)\s+'
+                . $listPricePattern . '\s+'
+                . '(?<discount_percentage>\d{1,3}(?:[,.]\d{1,2})?%)\s+'
+                . $unitPricePattern . '\s+'
+                . $totalPricePattern
+                . '\s*$/u';
+        }
 
         if (
             isset($headerRoles['ean'])
@@ -917,6 +966,17 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
                     'source_line_number' => $sourceLineNumber,
                     'mode' => 'header_role_mapping',
                     'header_roles' => $headerRoles,
+
+                    /*
+                    * Il listino e lo sconto percentuale vengono conservati per
+                    * tracciabilità, ma non sostituiscono il prezzo netto unitario.
+                    */
+                    'list_price' => isset($rowMatches['list_price'])
+                        ? $this->parseMoney((string) $rowMatches['list_price'])
+                        : null,
+                    'discount_percentage' => isset($rowMatches['discount_percentage'])
+                        ? trim((string) $rowMatches['discount_percentage'])
+                        : null,
                 ],
             );
         }

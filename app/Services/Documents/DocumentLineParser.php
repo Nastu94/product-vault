@@ -139,6 +139,61 @@ class DocumentLineParser
 
                 continue;
             }
+            /*
+            |--------------------------------------------------------------------------
+            | Conferme ordine: quantità e importi su riga separata
+            |--------------------------------------------------------------------------
+            |
+            | Alcuni ordini digitali separano il prodotto in tre parti:
+            |
+            | TC11-128 Tablet TabCore 11 128GB WiFi 6
+            | Display 11 pollici - modello 2026 - colore blu
+            | 1 349.90 349.90
+            |
+            | La riga conclusiva è strutturale e contiene esclusivamente:
+            | quantità, prezzo unitario e totale.
+            |
+            | La intercettiamo prima delle euristiche generiche, così gli importi non
+            | finiscono nella descrizione e i numeri tecnici restano parte del prodotto.
+            |
+            */
+            if (
+                $document->documentType?->code === 'order_confirmation'
+                && $pendingCandidate !== null
+            ) {
+                $amountColumns = $this->extractOrderConfirmationPendingAmountColumns(
+                    $rawLine
+                );
+
+                if ($amountColumns !== null) {
+                    /*
+                    * La riga economica resta nel raw text per tracciabilità, ma non
+                    * viene aggiunta alle description_parts del prodotto.
+                    */
+                    $pendingCandidate['raw_text_parts'][] = $rawLine;
+                    $pendingCandidate['quantity'] = $amountColumns['quantity'];
+                    $pendingCandidate['unit_price'] = $amountColumns['unit_price'];
+                    $pendingCandidate['total_price'] = $amountColumns['total_price'];
+                    $pendingCandidate['amounts'] = [
+                        $amountColumns['unit_price'],
+                        $amountColumns['total_price'],
+                    ];
+                    $pendingCandidate['mode'] =
+                        'order_confirmation_multiline_amount_columns';
+
+                    $this->createLineFromPendingCandidate(
+                        $document,
+                        $lineTypeId,
+                        $pendingCandidate
+                    );
+
+                    $created++;
+                    $pendingCandidate = null;
+                    $pendingCodeParts = [];
+
+                    continue;
+                }
+            }
 
             /*
             |--------------------------------------------------------------------------
@@ -947,6 +1002,173 @@ class DocumentLineParser
             'unit_price' => $unitPrice,
             'total_price' => $totalPrice,
         ];
+    }
+
+    /**
+     * Estrae quantità, prezzo unitario e totale da una riga numerica separata.
+     *
+     * La strategia viene usata esclusivamente quando esiste già un candidato
+     * prodotto pendente in una conferma ordine.
+     *
+     * Formati supportati:
+     * - 1 349,90 349,90
+     * - 1 349.90 349.90
+     * - 2 1.099,00 2.198,00
+     * - 2 1,099.00 2,198.00
+     *
+     * @return array{
+     *     quantity: float,
+     *     unit_price: float,
+     *     total_price: float
+     * }|null
+     */
+    private function extractOrderConfirmationPendingAmountColumns(
+        string $line
+    ): ?array {
+        $line = $this->normalizeLine($line);
+
+        if ($line === '') {
+            return null;
+        }
+
+        /*
+        * Formato europeo:
+        * - 349,90
+        * - 1.099,00
+        *
+        * Formato internazionale:
+        * - 349.90
+        * - 1,099.00
+        */
+        $amountPattern = '(?:'
+            . '\d{1,3}(?:\.\d{3})+,\d{2}'
+            . '|\d+,\d{2}'
+            . '|\d{1,3}(?:,\d{3})+\.\d{2}'
+            . '|\d+\.\d{2}'
+            . ')';
+
+        $currencyBefore = '(?:(?:EUR|EURO|€)\s*)?';
+        $currencyAfter = '(?:\s*(?:EUR|EURO|€))?';
+
+        $pattern = '/^'
+            . '(?<quantity>\d+(?:[,.]\d{1,3})?)\s+'
+            . $currencyBefore
+            . '(?<unit_price>' . $amountPattern . ')'
+            . $currencyAfter
+            . '\s+'
+            . $currencyBefore
+            . '(?<total_price>' . $amountPattern . ')'
+            . $currencyAfter
+            . '\s*$/iu';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        $quantity = $this->parseQuantity(
+            (string) ($matches['quantity'] ?? '')
+        );
+
+        $unitPrice = $this->parseStructuredMoney(
+            (string) ($matches['unit_price'] ?? '')
+        );
+
+        $totalPrice = $this->parseStructuredMoney(
+            (string) ($matches['total_price'] ?? '')
+        );
+
+        /*
+        * Una riga economica valida deve avere valori positivi.
+        * Le righe a zero o negative restano escluse da questa strategia.
+        */
+        if (
+            $quantity === null
+            || $unitPrice === null
+            || $totalPrice === null
+            || $quantity <= 0
+            || $unitPrice <= 0
+            || $totalPrice <= 0
+        ) {
+            return null;
+        }
+
+        return [
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'total_price' => $totalPrice,
+        ];
+    }
+
+    /**
+     * Converte un importo strutturato europeo o internazionale in float.
+     *
+     * Questo metodo viene usato dalle righe economiche esplicite e non dalla
+     * ricerca generica nel testo descrittivo, così numeri tecnici con il punto
+     * non vengono automaticamente trattati come prezzi.
+     */
+    private function parseStructuredMoney(string $amount): ?float
+    {
+        $normalized = preg_replace(
+            '/\b(?:EUR|EURO)\b|[€$£]/iu',
+            '',
+            trim($amount)
+        ) ?? $amount;
+
+        $normalized = preg_replace(
+            '/\s+/u',
+            '',
+            $normalized
+        );
+
+        if ($normalized === null || $normalized === '') {
+            return null;
+        }
+
+        $lastCommaPosition = strrpos($normalized, ',');
+        $lastDotPosition = strrpos($normalized, '.');
+
+        /*
+        * Quando sono presenti entrambi i separatori, quello più a destra
+        * rappresenta i decimali e l'altro separa le migliaia.
+        */
+        if (
+            $lastCommaPosition !== false
+            && $lastDotPosition !== false
+        ) {
+            $decimalSeparator = $lastCommaPosition > $lastDotPosition
+                ? ','
+                : '.';
+
+            $thousandsSeparator = $decimalSeparator === ','
+                ? '.'
+                : ',';
+
+            $normalized = str_replace(
+                $thousandsSeparator,
+                '',
+                $normalized
+            );
+
+            if ($decimalSeparator === ',') {
+                $normalized = str_replace(',', '.', $normalized);
+            }
+        } elseif ($lastCommaPosition !== false) {
+            /*
+            * Con la sola virgola assumiamo il formato europeo.
+            */
+            $normalized = str_replace(',', '.', $normalized);
+        } elseif ($lastDotPosition !== false) {
+            /*
+            * Con il solo punto assumiamo il formato internazionale.
+            */
+            $normalized = str_replace(',', '', $normalized);
+        }
+
+        if (! is_numeric($normalized)) {
+            return null;
+        }
+
+        return round((float) $normalized, 2);
     }
 
     /**

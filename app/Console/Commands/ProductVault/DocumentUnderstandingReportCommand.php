@@ -20,7 +20,7 @@ use Illuminate\Support\Str;
     {--only-issues : Mostra solo documenti con problemi potenziali}
     {--show-candidates : Mostra anche il dettaglio candidati}
     {--include-synthetic : Include i documenti sintetici generati dai fixture test}')]
-#[Description('Report read-only sulla qualità di parsing, candidati, knowledge e amount consistency per documento')]
+#[Description('Report read-only sul Recognition Quality Contract e sulla completezza prodotto per documento')]
 class DocumentUnderstandingReportCommand extends Command
 {
     /**
@@ -110,45 +110,64 @@ class DocumentUnderstandingReportCommand extends Command
             ->when(
                 $onlyIssues,
                 fn (Collection $reports): Collection => $reports->filter(
-                    fn (array $report): bool => $report['issue_count'] > 0
+                    fn (array $report): bool => $report['recognition_status'] !== 'OK'
                 )
             )
             ->take($limit)
             ->values();
 
         if ($reports->isEmpty()) {
-            $this->warn('Nessun documento con problemi potenziali per i filtri indicati.');
+            $this->warn('Nessun documento con problemi strutturali per i filtri indicati.');
 
             return self::SUCCESS;
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | Recognition Quality Contract
+        |--------------------------------------------------------------------------
+        |
+        | La tabella principale separa la qualità del riconoscimento dalla
+        | completezza della scheda prodotto. Brand, categoria e knowledge non
+        | modificano lo stato strutturale del documento.
+        */
         $this->table([
             'Doc',
             'File',
             'Type',
             'Status',
+            'Recognition',
             'Lines',
             'Cand',
-            'Knowledge',
             'Amount',
             'Recovery',
-            'Gaps',
-            'Issues',
+            'Product Completion',
+            'Recognition Issues',
         ], $reports
             ->map(fn (array $report): array => [
                 $report['document_id'],
                 Str::limit($report['filename'], 42),
                 $report['type'],
                 $report['status'],
+                $report['recognition_status'],
                 $report['lines_label'],
                 $report['candidates_label'],
-                $report['knowledge_label'],
                 $report['amount_label'],
                 $report['recovery_label'],
-                $report['gaps_label'],
-                $report['issues_label'],
+                $report['completion_label'],
+                $report['recognition_messages_label'],
             ])
             ->all());
+
+        $this->newLine();
+
+        $this->line(
+            '<comment>Recognition</comment>: qualità strutturale del documento, delle righe, degli importi e dei candidati.'
+        );
+
+        $this->line(
+            '<comment>Product Completion</comment>: brand, categoria e knowledge da completare; non blocca il riconoscimento MVP.'
+        );
 
         if ($showCandidates) {
             $candidateRows = $reports
@@ -166,17 +185,13 @@ class DocumentUnderstandingReportCommand extends Command
                     'Brand',
                     'Category',
                     'Price',
-                    'IK',
-                    'Fuzzy',
-                    'GF',
                     'Amount',
                     'Recovery',
-                    'Warnings',
+                    'Recognition Warnings',
+                    'Completion',
                 ], $candidateRows->all());
             }
         }
-
-        $this->info('Document understanding report completato. Nessun dato è stato modificato.');
 
         return self::SUCCESS;
     }
@@ -243,19 +258,32 @@ class DocumentUnderstandingReportCommand extends Command
             )) > 0)
             ->count();
 
-        $pendingWithoutBrand = $pendingCandidates
+        $candidatesWithoutBrand = $candidates
             ->filter(fn (ProductIdentificationCandidate $candidate): bool => $candidate->brand_id === null)
             ->count();
 
-        $pendingWithoutCategory = $pendingCandidates
+        $candidatesWithoutCategory = $candidates
             ->filter(fn (ProductIdentificationCandidate $candidate): bool => $candidate->category_id === null)
             ->count();
 
-        $issues = $this->documentIssues(
+        $recognitionIssues = $this->documentRecognitionIssues(
             document: $document,
             productLines: $productLines,
             candidates: $candidates,
             amountMismatch: $amountMismatch
+        );
+
+        $recognitionWarnings = $this->documentRecognitionWarnings($candidates);
+
+        $recognitionStatus = $this->recognitionStatus(
+            issues: $recognitionIssues,
+            warnings: $recognitionWarnings
+        );
+
+        $completionStatus = $this->productCompletionStatus(
+            candidates: $candidates,
+            candidatesWithoutBrand: $candidatesWithoutBrand,
+            candidatesWithoutCategory: $candidatesWithoutCategory
         );
 
         return [
@@ -264,7 +292,9 @@ class DocumentUnderstandingReportCommand extends Command
             'filename' => (string) $document->original_filename,
             'type' => $document->documentType?->code ?? '-',
             'status' => (string) $document->status,
-            'issue_count' => count($issues),
+            'recognition_status' => $recognitionStatus,
+            'recognition_issue_count' => count($recognitionIssues),
+            'recognition_warning_count' => count($recognitionWarnings),
             'lines_label' => sprintf(
                 '%d/%d product',
                 $productLines->count(),
@@ -277,13 +307,6 @@ class DocumentUnderstandingReportCommand extends Command
                 $ignoredCandidates->count(),
                 $candidates->count()
             ),
-            'knowledge_label' => sprintf(
-                'IK:%d FZ:%d GF:%d PYw:%d',
-                $initialKnowledgeMatched,
-                $initialKnowledgeFuzzy,
-                $globalFactsMatched,
-                $pythonWarnings
-            ),
             'amount_label' => sprintf(
                 'OK:%d MIS:%d SKIP:%d',
                 $amountOk,
@@ -295,23 +318,34 @@ class DocumentUnderstandingReportCommand extends Command
                 $lineRecoveries,
                 $candidateRecoveries
             ),
-            'gaps_label' => sprintf(
-                'noBrand:%d noCat:%d',
-                $pendingWithoutBrand,
-                $pendingWithoutCategory
+            'completion_label' => sprintf(
+                '%s | noBrand:%d noCat:%d | IK:%d FZ:%d GF:%d PYw:%d',
+                $completionStatus,
+                $candidatesWithoutBrand,
+                $candidatesWithoutCategory,
+                $initialKnowledgeMatched,
+                $initialKnowledgeFuzzy,
+                $globalFactsMatched,
+                $pythonWarnings
             ),
-            'issues_label' => $issues === [] ? '-' : implode(', ', $issues),
+            'recognition_messages_label' => $this->recognitionMessagesLabel(
+                issues: $recognitionIssues,
+                warnings: $recognitionWarnings
+            ),
         ];
     }
 
     /**
-     * Rileva problemi potenziali senza modificare dati.
+     * Rileva problemi strutturali che rendono non valido il riconoscimento.
+     *
+     * Brand, categoria, global facts e knowledge non appartengono a questa
+     * lista perché sono informazioni di completamento prodotto.
      *
      * @param  Collection<int, DocumentLine>  $productLines
      * @param  Collection<int, ProductIdentificationCandidate>  $candidates
      * @return array<int, string>
      */
-    private function documentIssues(
+    private function documentRecognitionIssues(
         Document $document,
         Collection $productLines,
         Collection $candidates,
@@ -345,6 +379,14 @@ class DocumentUnderstandingReportCommand extends Command
             $issues[] = 'needs_review_without_candidates';
         }
 
+        if ($documentType === 'irrelevant' && $productLines->count() > 0) {
+            $issues[] = 'irrelevant_document_generated_product_lines';
+        }
+
+        if ($documentType === 'irrelevant' && $candidates->count() > 0) {
+            $issues[] = 'irrelevant_document_generated_candidates';
+        }
+
         if ($document->status === 'failed') {
             $issues[] = 'document_failed';
         }
@@ -353,7 +395,119 @@ class DocumentUnderstandingReportCommand extends Command
     }
 
     /**
-     * Costruisce righe dettaglio candidati.
+     * Raccoglie warning strutturali prodotti dall'analisi delle righe.
+     *
+     * I warning Python relativi a similarity e global facts vengono esclusi:
+     * appartengono al livello di completezza e arricchimento prodotto.
+     *
+     * @param  Collection<int, ProductIdentificationCandidate>  $candidates
+     * @return array<int, string>
+     */
+    private function documentRecognitionWarnings(Collection $candidates): array
+    {
+        return $candidates
+            ->flatMap(
+                fn (ProductIdentificationCandidate $candidate): array => (array) data_get(
+                    $candidate->metadata,
+                    'product_understanding.warnings',
+                    []
+                )
+            )
+            ->filter(
+                fn (mixed $warning): bool => is_string($warning) && trim($warning) !== ''
+            )
+            ->map(fn (string $warning): string => trim($warning))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Determina lo stato sintetico del riconoscimento strutturale.
+     *
+     * FAIL indica una violazione del contratto strutturale.
+     * WARN indica un candidato prodotto con segnali strutturali da verificare.
+     * OK indica assenza di problemi strutturali rilevati dal report.
+     *
+     * @param  array<int, string>  $issues
+     * @param  array<int, string>  $warnings
+     */
+    private function recognitionStatus(array $issues, array $warnings): string
+    {
+        if ($issues !== []) {
+            return 'FAIL';
+        }
+
+        if ($warnings !== []) {
+            return 'WARN';
+        }
+
+        return 'OK';
+    }
+
+    /**
+     * Determina lo stato dei campi prodotto opzionali.
+     *
+     * Lo stato dipende esclusivamente dai campi da completare e non dai match
+     * con initial knowledge, fuzzy matching o global facts.
+     *
+     * @param  Collection<int, ProductIdentificationCandidate>  $candidates
+     */
+    private function productCompletionStatus(
+        Collection $candidates,
+        int $candidatesWithoutBrand,
+        int $candidatesWithoutCategory
+    ): string {
+        if ($candidates->isEmpty()) {
+            return 'n/a';
+        }
+
+        if (
+            $candidatesWithoutBrand === 0
+            && $candidatesWithoutCategory === 0
+        ) {
+            return 'complete';
+        }
+
+        if (
+            $candidatesWithoutBrand === $candidates->count()
+            && $candidatesWithoutCategory === $candidates->count()
+        ) {
+            return 'missing';
+        }
+
+        return 'partial';
+    }
+
+    /**
+     * Costruisce l'etichetta leggibile degli esiti strutturali.
+     *
+     * @param  array<int, string>  $issues
+     * @param  array<int, string>  $warnings
+     */
+    private function recognitionMessagesLabel(array $issues, array $warnings): string
+    {
+        $messages = [
+            ...array_map(
+                static fn (string $issue): string => 'F:' . $issue,
+                $issues
+            ),
+            ...array_map(
+                static fn (string $warning): string => 'W:' . $warning,
+                $warnings
+            ),
+        ];
+
+        if ($messages === []) {
+            return '-';
+        }
+
+        return Str::limit(implode(', ', $messages), 160);
+    }
+
+    /**
+     * Costruisce righe dettaglio candidati separando warning strutturali e
+     * informazioni di completamento prodotto.
      *
      * @return array<int, array<int, string|int|null>>
      */
@@ -369,13 +523,18 @@ class DocumentUnderstandingReportCommand extends Command
                 Str::limit((string) $candidate->name, 42),
                 $candidate->brand?->name ?? '-',
                 $candidate->category?->slug ?? '-',
-                $candidate->price !== null ? number_format((float) $candidate->price, 2, '.', '') : '-',
-                $this->yesNo(data_get($candidate->metadata, 'product_understanding_initial_knowledge.summary.matched') === true),
-                $this->yesNo(data_get($candidate->metadata, 'product_understanding_initial_knowledge.summary.has_fuzzy_positive_match') === true),
-                $this->yesNo(data_get($candidate->metadata, 'product_understanding_global_fact.matched') === true),
+                $candidate->price !== null
+                    ? number_format((float) $candidate->price, 2, '.', '')
+                    : '-',
                 $this->candidateAmountLabel($candidate),
-                $this->yesNo(data_get($candidate->metadata, 'quantity_recovered_from_amount_mismatch') === true),
-                $this->candidateWarningsLabel($candidate),
+                $this->yesNo(
+                    data_get(
+                        $candidate->metadata,
+                        'quantity_recovered_from_amount_mismatch'
+                    ) === true
+                ),
+                $this->candidateRecognitionWarningsLabel($candidate),
+                $this->candidateCompletionLabel($candidate),
             ])
             ->values()
             ->all();
@@ -432,14 +591,18 @@ class DocumentUnderstandingReportCommand extends Command
     }
 
     /**
-     * Etichetta sintetica warning candidato.
+     * Etichetta i soli warning strutturali del candidato.
      */
-    private function candidateWarningsLabel(ProductIdentificationCandidate $candidate): string
-    {
-        $warnings = array_values(array_filter([
-            ...((array) data_get($candidate->metadata, 'product_understanding.warnings', [])),
-            ...((array) data_get($candidate->metadata, 'product_understanding_python.warnings', [])),
-        ]));
+    private function candidateRecognitionWarningsLabel(
+        ProductIdentificationCandidate $candidate
+    ): string {
+        $warnings = array_values(array_filter(
+            (array) data_get(
+                $candidate->metadata,
+                'product_understanding.warnings',
+                []
+            )
+        ));
 
         if ($warnings === []) {
             return '-';
@@ -448,6 +611,41 @@ class DocumentUnderstandingReportCommand extends Command
         return collect($warnings)
             ->unique()
             ->take(3)
+            ->implode(', ');
+    }
+
+    /**
+     * Etichetta i dati mancanti o incerti del livello di completamento.
+     *
+     * Questi segnali non indicano un errore del parser e non modificano lo
+     * stato Recognition del documento.
+     */
+    private function candidateCompletionLabel(
+        ProductIdentificationCandidate $candidate
+    ): string {
+        $completion = array_values(array_filter(
+            (array) data_get(
+                $candidate->metadata,
+                'product_understanding_python.warnings',
+                []
+            )
+        ));
+
+        if ($candidate->brand_id === null) {
+            $completion[] = 'missing_brand';
+        }
+
+        if ($candidate->category_id === null) {
+            $completion[] = 'missing_category';
+        }
+
+        if ($completion === []) {
+            return 'complete';
+        }
+
+        return collect($completion)
+            ->unique()
+            ->take(4)
             ->implode(', ');
     }
 

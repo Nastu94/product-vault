@@ -434,6 +434,21 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
 
         $patterns = [
             /*
+            * Quantità + unitario + totale senza prefisso tecnico.
+            *
+            * Caso comune quando il PDF separa:
+            * - codice e descrizione;
+            * - dettagli descrittivi;
+            * - quantità e importi su una riga numerica dedicata.
+            *
+            * Esempio:
+            * 1 899.00 899.00
+            */
+            '/^(?<quantity>\d+(?:[,.]\d+)?)\s+' .
+                $unitPricePattern . '\s+' .
+                $totalPricePattern . '\s*$/u',
+
+            /*
             * Supporto + quantità + IVA + unitario + totale
             */
             '/^(?<support>.+?)\s+(?<quantity>\d+(?:[,.]\d+)?)\s+(?<vat>\d{1,2}(?:[,.]\d{2})?%)\s+' .
@@ -449,11 +464,6 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
 
             /*
             * Supporto + quantità + unitario + totale
-            *
-            * Caso comune nelle fatture digitali senza IVA per riga:
-            * EAN 0196388123456 1.000 EUR 1.899,00 EUR 1.899,00
-            * SN LZ5-26A9K0041 1.000 EUR 749,00 EUR 749,00
-            * - 2.000 EUR 12,90 EUR 25,80
             */
             '/^(?<support>.+?)\s+(?<quantity>\d+(?:[,.]\d+)?)\s+' .
                 $unitPricePattern . '\s+' .
@@ -474,12 +484,15 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
 
             $support = trim((string) ($matches['support'] ?? ''));
 
-            if ($support === '') {
-                return null;
-            }
-
             $supportingLines = $pendingRow['supporting_lines'] ?? [];
-            $supportingLines[] = $support;
+
+            /*
+            * Il supporto tecnico è facoltativo: alcune fatture riportano soltanto
+            * quantità, prezzo unitario e totale sulla riga numerica conclusiva.
+            */
+            if ($support !== '') {
+                $supportingLines[] = $support;
+            }
 
             return array_merge($pendingRow, [
                 'supporting_lines' => $supportingLines,
@@ -1134,7 +1147,11 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
      */
     private function extractAmountsFromText(string $text): array
     {
-        if (! preg_match_all('/(?<![A-Z0-9])' . $this->amountPattern() . '(?![A-Z0-9])/iu', $text, $matches)) {
+        if (! preg_match_all(
+            '/(?<![A-Z0-9])' . $this->embeddedAmountPattern() . '(?![A-Z0-9])/iu',
+            $text,
+            $matches
+        )) {
             return [];
         }
 
@@ -1142,17 +1159,73 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
     }
 
     /**
-     * Normalizza e converte una stringa di importo in un float.
+     * Normalizza un importo europeo o internazionale.
      *
-     * Accetta anche importi con valuta già inclusa, per maggiore tolleranza
-     * verso estrattori PDF/OCR che non separano bene le colonne.
+     * Formati supportati:
+     * - 899,00
+     * - 1.899,00
+     * - 1 899,00
+     * - 899.00
+     * - 1,899.00
      */
     private function parseMoney(string $amount): ?float
     {
-        $amount = preg_replace('/\b(?:EURO|[A-Z]{3})\b|[€$£]/iu', '', $amount) ?: $amount;
+        $amount = preg_replace(
+            '/\b(?:EURO|[A-Z]{3})\b|[€$£]/iu',
+            '',
+            $amount
+        ) ?? $amount;
 
-        $normalized = str_replace(['.', ' '], '', trim($amount));
-        $normalized = str_replace(',', '.', $normalized);
+        $normalized = preg_replace(
+            '/\s+/u',
+            '',
+            trim($amount)
+        );
+
+        if ($normalized === null || $normalized === '') {
+            return null;
+        }
+
+        $lastCommaPosition = strrpos($normalized, ',');
+        $lastDotPosition = strrpos($normalized, '.');
+
+        /*
+        * Quando sono presenti entrambi i separatori, quello più a destra è
+        * considerato il separatore decimale; l'altro separa le migliaia.
+        */
+        if (
+            $lastCommaPosition !== false
+            && $lastDotPosition !== false
+        ) {
+            $decimalSeparator = $lastCommaPosition > $lastDotPosition
+                ? ','
+                : '.';
+
+            $thousandsSeparator = $decimalSeparator === ','
+                ? '.'
+                : ',';
+
+            $normalized = str_replace(
+                $thousandsSeparator,
+                '',
+                $normalized
+            );
+
+            if ($decimalSeparator === ',') {
+                $normalized = str_replace(',', '.', $normalized);
+            }
+        } elseif ($lastCommaPosition !== false) {
+            /*
+            * Solo virgola: formato europeo con virgola decimale.
+            */
+            $normalized = str_replace(',', '.', $normalized);
+        } elseif ($lastDotPosition !== false) {
+            /*
+            * Solo punto: formato internazionale con punto decimale.
+            * Il punto deve essere mantenuto.
+            */
+            $normalized = str_replace(',', '', $normalized);
+        }
 
         if (! is_numeric($normalized)) {
             return null;
@@ -1200,39 +1273,43 @@ class TextInvoiceTableExtractor implements InvoiceTableExtractor
     }
 
     /**
-     * Restituisce il pattern regex per riconoscere importi, che possono essere negativi e contenere separatori di migliaia.
-     * 
-     * @return string Il pattern regex per gli importi.
+     * Restituisce il pattern per importi con formato europeo o internazionale.
+     *
+     * Formati supportati:
+     * - 899,00
+     * - 1.899,00
+     * - 1 899,00
+     * - 899.00
+     * - 1,899.00
      */
     private function amountPattern(): string
     {
-        return '\-?\d{1,3}(?:[.\s]\d{3})*,\d{2}|\-?\d+,\d{2}';
+        return '\-?(?:(?:\d{1,3}(?:[.\s]\d{3})+|\d+),\d{2}'
+            . '|(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})';
     }
 
     /**
-    * Pattern importi per tabelle header-driven.
-    *
-    * Non accetta lo spazio come separatore migliaia perché, dopo la normalizzazione
-    * del testo, lo spazio è anche il separatore tra colonne.
-    *
-    * Esempio ambiguo:
-    * "Gen 11 2 749,50 1.499,00"
-    *
-    * Se accettassimo "2 749,50" come importo, il parser leggerebbe:
-    * quantity = 11
-    * unit_price = 2749.50
-    *
-    * In tabella header-driven preferiamo quindi:
-    * - 1.499,00
-    * - 1499,00
-    * - 749,50
-    *
-    * ma non:
-    * - 1 499,00
-    */
+     * Pattern prudente per cercare importi dentro testo descrittivo libero.
+     *
+     * Mantiene il comportamento precedente con virgola decimale, evitando che
+     * versioni tecniche come "USB 3.20" vengano trattate come prezzi.
+     */
+    private function embeddedAmountPattern(): string
+    {
+        return '\-?(?:\d{1,3}(?:[.\s]\d{3})+|\d+),\d{2}';
+    }
+
+    /**
+     * Pattern importi per tabelle header-driven.
+     *
+     * Accetta sia il formato europeo sia quello internazionale, ma non accetta
+     * lo spazio come separatore delle migliaia perché nelle righe normalizzate
+     * lo spazio separa anche le colonne.
+     */
     private function headerDrivenAmountPattern(): string
     {
-        return '\-?\d{1,3}(?:\.\d{3})*,\d{2}|\-?\d+,\d{2}';
+        return '\-?(?:(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}'
+            . '|(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})';
     }
 
     /**

@@ -15,10 +15,10 @@ use Illuminate\Support\Str;
     {--expected=storage/app/testing/BATCH01_expected.json : Percorso JSON expected batch}
     {--filename= : Filtra per original_filename, anche parziale}
     {--document= : Limita validazione a un singolo document_id}
-    {--strict : Valida anche merchant, data, totale documento, brand, categoria, EAN e seriali}
+    {--strict : Valida anche campi documentali e dati di completion}
     {--show-candidates : Mostra dettaglio candidati effettivi per documento}
-    {--fail-on-warnings : Restituisce exit code failure se la validazione produce warning}')]
-#[Description('Valida un batch documentale confrontando il DB locale con un file expected JSON')]
+    {--fail-on-warnings : Restituisce failure solo per warning di recognition; i completion warning restano non bloccanti}')]
+#[Description('Valida un batch documentale separando recognition quality e completion')]
 class ValidateDocumentBatchCommand extends Command
 {
     /**
@@ -69,7 +69,8 @@ class ValidateDocumentBatchCommand extends Command
         $rows = [];
         $detailRows = [];
         $failed = false;
-        $warnings = false;
+        $hasRecognitionWarnings = false;
+        $hasCompletionWarnings = false;
 
         foreach ($expectedBatch as $expectedDocument) {
             $filename = (string) ($expectedDocument['filename'] ?? '');
@@ -104,8 +105,9 @@ class ValidateDocumentBatchCommand extends Command
                     'cand' => '-',
                     'matched' => '0/' . count((array) data_get($expected, 'expected_candidates', [])),
                     'excluded' => '-',
-                    'status' => 'FAIL',
-                    'errors' => 'document_not_found',
+                    'recognition' => 'FAIL',
+                    'recognition_issues' => 'document_not_found',
+                    'completion' => '-',
                 ];
 
                 continue;
@@ -117,12 +119,16 @@ class ValidateDocumentBatchCommand extends Command
                 strict: $strict
             );
 
-            if ($result['status'] === 'FAIL') {
+            if ($result['recognition_status'] === 'FAIL') {
                 $failed = true;
             }
 
-            if ($result['status'] === 'WARN') {
-                $warnings = true;
+            if ($result['recognition_status'] === 'WARN') {
+                $hasRecognitionWarnings = true;
+            }
+
+            if ($result['completion_warning_count'] > 0) {
+                $hasCompletionWarnings = true;
             }
 
             $rows[] = [
@@ -133,8 +139,9 @@ class ValidateDocumentBatchCommand extends Command
                 'cand' => $result['candidates_label'],
                 'matched' => $result['matched_label'],
                 'excluded' => $result['excluded_label'],
-                'status' => $result['status'],
-                'errors' => $result['messages_label'],
+                'recognition' => $result['recognition_status'],
+                'recognition_issues' => $result['recognition_messages_label'],
+                'completion' => $result['completion_messages_label'],
             ];
 
             if ($showCandidates) {
@@ -153,9 +160,20 @@ class ValidateDocumentBatchCommand extends Command
             'Cand',
             'Matched',
             'Excluded',
-            'Status',
-            'Errors / Warnings',
+            'Recognition',
+            'Recognition Issues',
+            'Completion',
         ], $rows);
+
+        $this->newLine();
+
+        $this->line(
+            '<comment>Recognition</comment>: errori e warning strutturali di classificazione, righe, candidati e importi.'
+        );
+
+        $this->line(
+            '<comment>Completion</comment>: campi documentali o prodotto non bloccanti, mostrati solo in modalità strict.'
+        );
 
         if ($showCandidates && $detailRows !== []) {
             $this->newLine();
@@ -175,13 +193,19 @@ class ValidateDocumentBatchCommand extends Command
         }
 
         if ($failed) {
-            $this->error('Batch validation failed.');
+            $this->error('Batch recognition validation failed.');
 
             return self::FAILURE;
         }
 
-        if ($warnings) {
-            $message = 'Batch validation completed with warnings. Nessun dato è stato modificato.';
+        if ($hasRecognitionWarnings) {
+            $message = 'Batch recognition validation completed with warnings.';
+
+            if ($hasCompletionWarnings) {
+                $message .= ' Sono presenti anche warning non bloccanti di completion.';
+            }
+
+            $message .= ' Nessun dato è stato modificato.';
 
             if ($failOnWarnings) {
                 $this->error($message);
@@ -194,7 +218,17 @@ class ValidateDocumentBatchCommand extends Command
             return self::SUCCESS;
         }
 
-        $this->info('Batch validation passed. Nessun dato è stato modificato.');
+        if ($hasCompletionWarnings) {
+            $this->info(
+                'Batch recognition validation passed. '
+                . 'Sono presenti warning non bloccanti di completion. '
+                . 'Nessun dato è stato modificato.'
+            );
+
+            return self::SUCCESS;
+        }
+
+        $this->info('Batch recognition validation passed. Nessun dato è stato modificato.');
 
         return self::SUCCESS;
     }
@@ -202,12 +236,16 @@ class ValidateDocumentBatchCommand extends Command
     /**
      * Valida un singolo documento rispetto agli expected.
      *
+     * Gli errori e i warning di recognition possono modificare l'esito del
+     * comando. I completion warning sono informativi e non bloccanti.
+     *
      * @return array<string, mixed>
      */
     private function validateDocument(Document $document, array $expected, bool $strict): array
     {
-        $errors = [];
-        $warnings = [];
+        $recognitionErrors = [];
+        $recognitionWarnings = [];
+        $completionWarnings = [];
 
         $actualType = $document->documentType?->code;
         $expectedType = $expected['document_type'] ?? null;
@@ -215,18 +253,22 @@ class ValidateDocumentBatchCommand extends Command
         if ($expectedType !== null) {
             if ($expectedType === 'irrelevant') {
                 if ($document->productIdentificationCandidates->count() > 0) {
-                    $errors[] = 'irrelevant_document_generated_candidates';
+                    $recognitionErrors[] = 'irrelevant_document_generated_candidates';
                 }
 
                 if ($this->productLines($document)->count() > 0) {
-                    $errors[] = 'irrelevant_document_generated_product_lines';
+                    $recognitionErrors[] = 'irrelevant_document_generated_product_lines';
                 }
 
+                /*
+                * Una classificazione diversa da irrelevant è una violazione
+                * strutturale anche quando non ha ancora generato candidati.
+                */
                 if ($actualType !== 'irrelevant') {
-                    $warnings[] = 'type expected irrelevant, got ' . ($actualType ?? '-');
+                    $recognitionErrors[] = 'type expected irrelevant, got ' . ($actualType ?? '-');
                 }
             } elseif ((string) $actualType !== (string) $expectedType) {
-                $errors[] = 'type expected ' . $expectedType . ', got ' . ($actualType ?? '-');
+                $recognitionErrors[] = 'type expected ' . $expectedType . ', got ' . ($actualType ?? '-');
             }
         }
 
@@ -234,8 +276,8 @@ class ValidateDocumentBatchCommand extends Command
             $this->validateStrictDocumentFields(
                 document: $document,
                 expected: $expected,
-                errors: $errors,
-                warnings: $warnings
+                recognitionWarnings: $recognitionWarnings,
+                completionWarnings: $completionWarnings
             );
         }
 
@@ -244,14 +286,26 @@ class ValidateDocumentBatchCommand extends Command
 
         $expectedProductLinesCount = $expected['product_lines_count'] ?? null;
 
-        if ($expectedProductLinesCount !== null && $productLines->count() !== (int) $expectedProductLinesCount) {
-            $errors[] = 'product_lines_count expected ' . $expectedProductLinesCount . ', got ' . $productLines->count();
+        if (
+            $expectedProductLinesCount !== null
+            && $productLines->count() !== (int) $expectedProductLinesCount
+        ) {
+            $recognitionErrors[] = 'product_lines_count expected '
+                . $expectedProductLinesCount
+                . ', got '
+                . $productLines->count();
         }
 
         $expectedCandidatesCount = $expected['candidates_count'] ?? null;
 
-        if ($expectedCandidatesCount !== null && $actualCandidates->count() !== (int) $expectedCandidatesCount) {
-            $errors[] = 'candidates_count expected ' . $expectedCandidatesCount . ', got ' . $actualCandidates->count();
+        if (
+            $expectedCandidatesCount !== null
+            && $actualCandidates->count() !== (int) $expectedCandidatesCount
+        ) {
+            $recognitionErrors[] = 'candidates_count expected '
+                . $expectedCandidatesCount
+                . ', got '
+                . $actualCandidates->count();
         }
 
         $candidateValidation = $this->validateExpectedCandidates(
@@ -260,14 +314,14 @@ class ValidateDocumentBatchCommand extends Command
             strict: $strict
         );
 
-        $errors = [
-            ...$errors,
-            ...$candidateValidation['errors'],
+        $recognitionErrors = [
+            ...$recognitionErrors,
+            ...$candidateValidation['recognition_errors'],
         ];
 
-        $warnings = [
-            ...$warnings,
-            ...$candidateValidation['warnings'],
+        $completionWarnings = [
+            ...$completionWarnings,
+            ...$candidateValidation['completion_warnings'],
         ];
 
         $excludedValidation = $this->validateShouldNotGenerate(
@@ -275,49 +329,69 @@ class ValidateDocumentBatchCommand extends Command
             shouldNotGenerate: (array) ($expected['should_not_generate'] ?? [])
         );
 
-        $errors = [
-            ...$errors,
-            ...$excludedValidation['errors'],
+        $recognitionErrors = [
+            ...$recognitionErrors,
+            ...$excludedValidation['recognition_errors'],
         ];
 
-        $status = $errors !== []
+        $recognitionStatus = $recognitionErrors !== []
             ? 'FAIL'
-            : ($warnings !== [] ? 'WARN' : 'OK');
+            : ($recognitionWarnings !== [] ? 'WARN' : 'OK');
 
-        $messages = array_values(array_unique([
-            ...$errors,
-            ...$warnings,
+        $recognitionMessages = array_values(array_unique([
+            ...$recognitionErrors,
+            ...$recognitionWarnings,
         ]));
 
+        $completionMessages = array_values(array_unique($completionWarnings));
+
         return [
-            'status' => $status,
+            'recognition_status' => $recognitionStatus,
+            'recognition_error_count' => count($recognitionErrors),
+            'recognition_warning_count' => count($recognitionWarnings),
+            'completion_warning_count' => count($completionMessages),
             'type_label' => ($expectedType ?? '-') . '→' . ($actualType ?? '-'),
             'lines_label' => ($expectedProductLinesCount ?? '-') . '→' . $productLines->count(),
             'candidates_label' => ($expectedCandidatesCount ?? '-') . '→' . $actualCandidates->count(),
             'matched_label' => $candidateValidation['matched'] . '/' . $candidateValidation['expected'],
             'excluded_label' => $excludedValidation['violations'] . '/' . $excludedValidation['expected'],
-            'messages_label' => $messages === [] ? '-' : Str::limit(implode(' | ', $messages), 180),
+            'recognition_messages_label' => $recognitionMessages === []
+                ? '-'
+                : Str::limit(implode(' | ', $recognitionMessages), 180),
+            'completion_messages_label' => $completionMessages === []
+                ? '-'
+                : Str::limit(implode(' | ', $completionMessages), 180),
         ];
     }
 
     /**
-     * Valida campi documento più stretti, utili dopo aver stabilizzato parser e classificazione.
+     * Valida campi aggiuntivi richiesti dalla modalità strict.
      *
-     * @param  array<int, string>  $errors
-     * @param  array<int, string>  $warnings
+     * Il totale documento resta un warning di recognition perché una differenza
+     * può indicare un problema di parsing degli importi. Merchant e data sono
+     * dati completabili manualmente e restano non bloccanti.
+     *
+     * @param  array<int, string>  $recognitionWarnings
+     * @param  array<int, string>  $completionWarnings
      */
     private function validateStrictDocumentFields(
         Document $document,
         array $expected,
-        array &$errors,
-        array &$warnings
+        array &$recognitionWarnings,
+        array &$completionWarnings
     ): void {
         if (array_key_exists('merchant', $expected)) {
             $expectedMerchant = $expected['merchant'];
             $actualMerchant = $document->merchant?->name;
 
-            if ($expectedMerchant !== null && (string) $actualMerchant !== (string) $expectedMerchant) {
-                $warnings[] = 'merchant expected ' . $expectedMerchant . ', got ' . ($actualMerchant ?? '-');
+            if (
+                $expectedMerchant !== null
+                && (string) $actualMerchant !== (string) $expectedMerchant
+            ) {
+                $completionWarnings[] = 'merchant expected '
+                    . $expectedMerchant
+                    . ', got '
+                    . ($actualMerchant ?? '-');
             }
         }
 
@@ -325,8 +399,14 @@ class ValidateDocumentBatchCommand extends Command
             $expectedPurchaseDate = $expected['purchase_date'];
             $actualPurchaseDate = $document->purchase_date?->toDateString();
 
-            if ($expectedPurchaseDate !== null && (string) $actualPurchaseDate !== (string) $expectedPurchaseDate) {
-                $warnings[] = 'purchase_date expected ' . $expectedPurchaseDate . ', got ' . ($actualPurchaseDate ?? '-');
+            if (
+                $expectedPurchaseDate !== null
+                && (string) $actualPurchaseDate !== (string) $expectedPurchaseDate
+            ) {
+                $completionWarnings[] = 'purchase_date expected '
+                    . $expectedPurchaseDate
+                    . ', got '
+                    . ($actualPurchaseDate ?? '-');
             }
         }
 
@@ -335,7 +415,10 @@ class ValidateDocumentBatchCommand extends Command
             $actualTotalAmount = $this->formatMoney($document->total_amount);
 
             if ($expectedTotalAmount !== $actualTotalAmount) {
-                $warnings[] = 'total_amount expected ' . ($expectedTotalAmount ?? '-') . ', got ' . ($actualTotalAmount ?? '-');
+                $recognitionWarnings[] = 'total_amount expected '
+                    . ($expectedTotalAmount ?? '-')
+                    . ', got '
+                    . ($actualTotalAmount ?? '-');
             }
         }
     }
@@ -345,12 +428,20 @@ class ValidateDocumentBatchCommand extends Command
      *
      * @param  Collection<int, ProductIdentificationCandidate>  $candidates
      * @param  array<int, array<string, mixed>>  $expectedCandidates
-     * @return array{expected:int, matched:int, errors:array<int, string>, warnings:array<int, string>}
+     * @return array{
+     *     expected:int,
+     *     matched:int,
+     *     recognition_errors:array<int, string>,
+     *     completion_warnings:array<int, string>
+     * }
      */
-    private function validateExpectedCandidates(Collection $candidates, array $expectedCandidates, bool $strict): array
-    {
-        $errors = [];
-        $warnings = [];
+    private function validateExpectedCandidates(
+        Collection $candidates,
+        array $expectedCandidates,
+        bool $strict
+    ): array {
+        $recognitionErrors = [];
+        $completionWarnings = [];
         $matched = 0;
 
         $unmatchedCandidates = $candidates->values();
@@ -368,7 +459,7 @@ class ValidateDocumentBatchCommand extends Command
             );
 
             if ($matchedIndex === false) {
-                $errors[] = 'candidate #' . ($index + 1) . ' not found: ' . (string) (
+                $recognitionErrors[] = 'candidate #' . ($index + 1) . ' not found: ' . (string) (
                     $expectedCandidate['name_contains']
                     ?? $expectedCandidate['name']
                     ?? 'unknown'
@@ -386,8 +477,8 @@ class ValidateDocumentBatchCommand extends Command
                 candidate: $candidate,
                 expectedCandidate: $expectedCandidate,
                 strict: $strict,
-                errors: $errors,
-                warnings: $warnings
+                recognitionErrors: $recognitionErrors,
+                completionWarnings: $completionWarnings
             );
 
             $unmatchedCandidates->forget($matchedIndex);
@@ -397,11 +488,13 @@ class ValidateDocumentBatchCommand extends Command
         return [
             'expected' => count(array_filter(
                 $expectedCandidates,
-                fn (array $expectedCandidate): bool => ($expectedCandidate['should_generate_candidate'] ?? true) === true
+                fn (array $expectedCandidate): bool => (
+                    $expectedCandidate['should_generate_candidate'] ?? true
+                ) === true
             )),
             'matched' => $matched,
-            'errors' => $errors,
-            'warnings' => $warnings,
+            'recognition_errors' => $recognitionErrors,
+            'completion_warnings' => $completionWarnings,
         ];
     }
 
@@ -431,15 +524,18 @@ class ValidateDocumentBatchCommand extends Command
     /**
      * Valida i campi del candidato trovato.
      *
-     * @param  array<int, string>  $errors
-     * @param  array<int, string>  $warnings
+     * Quantità e importi appartengono al recognition contract. Brand,
+     * categoria, EAN e seriale appartengono alla completion non bloccante.
+     *
+     * @param  array<int, string>  $recognitionErrors
+     * @param  array<int, string>  $completionWarnings
      */
     private function validateMatchedCandidateFields(
         ProductIdentificationCandidate $candidate,
         array $expectedCandidate,
         bool $strict,
-        array &$errors,
-        array &$warnings
+        array &$recognitionErrors,
+        array &$completionWarnings
     ): void {
         $candidateLabel = Str::limit((string) $candidate->name, 48);
 
@@ -452,54 +548,101 @@ class ValidateDocumentBatchCommand extends Command
                 continue;
             }
 
-            $expectedValue = $this->formatDecimal($expectedCandidate[$field], $decimals);
-            $actualValue = $this->formatDecimal(data_get($candidate->metadata, $field), $decimals);
+            $expectedValue = $this->formatDecimal(
+                $expectedCandidate[$field],
+                $decimals
+            );
+
+            $actualValue = $this->formatDecimal(
+                data_get($candidate->metadata, $field),
+                $decimals
+            );
 
             if ($expectedValue !== $actualValue) {
-                $errors[] = $candidateLabel . ' ' . $field . ' expected ' . ($expectedValue ?? '-') . ', got ' . ($actualValue ?? '-');
+                $recognitionErrors[] = $candidateLabel
+                    . ' '
+                    . $field
+                    . ' expected '
+                    . ($expectedValue ?? '-')
+                    . ', got '
+                    . ($actualValue ?? '-');
             }
         }
 
         if (
             ($expectedCandidate['amount_consistency'] ?? null) === 'consistent'
-            && data_get($candidate->metadata, 'document_line_amount_consistency.checked') === true
-            && data_get($candidate->metadata, 'document_line_amount_consistency.is_consistent') !== true
+            && data_get(
+                $candidate->metadata,
+                'document_line_amount_consistency.checked'
+            ) === true
+            && data_get(
+                $candidate->metadata,
+                'document_line_amount_consistency.is_consistent'
+            ) !== true
         ) {
-            $errors[] = $candidateLabel . ' amount_consistency expected consistent';
+            $recognitionErrors[] = $candidateLabel
+                . ' amount_consistency expected consistent';
         }
 
         if (! $strict) {
             return;
         }
 
-        if (array_key_exists('brand', $expectedCandidate) && $expectedCandidate['brand'] !== null) {
+        if (
+            array_key_exists('brand', $expectedCandidate)
+            && $expectedCandidate['brand'] !== null
+        ) {
             $actualBrand = $candidate->brand?->name;
 
-            if ($actualBrand === null || ! str_contains(
-                $this->normalizeComparableText($actualBrand),
-                $this->normalizeComparableText((string) $expectedCandidate['brand'])
-            )) {
-                $warnings[] = $candidateLabel . ' brand expected ' . $expectedCandidate['brand'] . ', got ' . ($actualBrand ?? '-');
+            if (
+                $actualBrand === null
+                || ! str_contains(
+                    $this->normalizeComparableText($actualBrand),
+                    $this->normalizeComparableText(
+                        (string) $expectedCandidate['brand']
+                    )
+                )
+            ) {
+                $completionWarnings[] = $candidateLabel
+                    . ' brand expected '
+                    . $expectedCandidate['brand']
+                    . ', got '
+                    . ($actualBrand ?? '-');
             }
         }
 
-        if (array_key_exists('category', $expectedCandidate) && $expectedCandidate['category'] !== null) {
+        if (
+            array_key_exists('category', $expectedCandidate)
+            && $expectedCandidate['category'] !== null
+        ) {
             $actualCategory = $candidate->category?->slug;
 
             if ($actualCategory === null) {
-                $warnings[] = $candidateLabel . ' category expected ' . $expectedCandidate['category'] . ', got -';
+                $completionWarnings[] = $candidateLabel
+                    . ' category expected '
+                    . $expectedCandidate['category']
+                    . ', got -';
             }
         }
 
         foreach (['ean_code', 'serial_number'] as $field) {
-            if (! array_key_exists($field, $expectedCandidate) || $expectedCandidate[$field] === null) {
+            if (
+                ! array_key_exists($field, $expectedCandidate)
+                || $expectedCandidate[$field] === null
+            ) {
                 continue;
             }
 
             $actualValue = $candidate->{$field} ?? null;
 
             if ((string) $actualValue !== (string) $expectedCandidate[$field]) {
-                $warnings[] = $candidateLabel . ' ' . $field . ' expected ' . $expectedCandidate[$field] . ', got ' . ($actualValue ?? '-');
+                $completionWarnings[] = $candidateLabel
+                    . ' '
+                    . $field
+                    . ' expected '
+                    . $expectedCandidate[$field]
+                    . ', got '
+                    . ($actualValue ?? '-');
             }
         }
     }
@@ -509,11 +652,17 @@ class ValidateDocumentBatchCommand extends Command
      *
      * @param  Collection<int, ProductIdentificationCandidate>  $candidates
      * @param  array<int, array<string, mixed>>  $shouldNotGenerate
-     * @return array{expected:int, violations:int, errors:array<int, string>}
+     * @return array{
+     *     expected:int,
+     *     violations:int,
+     *     recognition_errors:array<int, string>
+     * }
      */
-    private function validateShouldNotGenerate(Collection $candidates, array $shouldNotGenerate): array
-    {
-        $errors = [];
+    private function validateShouldNotGenerate(
+        Collection $candidates,
+        array $shouldNotGenerate
+    ): array {
+        $recognitionErrors = [];
         $violations = 0;
 
         foreach ($shouldNotGenerate as $excluded) {
@@ -525,33 +674,47 @@ class ValidateDocumentBatchCommand extends Command
 
             $normalizedText = $this->normalizeComparableText($text);
 
-            $matchedCandidate = $candidates->first(function (ProductIdentificationCandidate $candidate) use ($normalizedText): bool {
-                $haystacks = [
-                    (string) $candidate->name,
-                    (string) data_get($candidate->metadata, 'raw_line_text', ''),
-                    (string) $candidate->documentLine?->description,
-                    (string) $candidate->documentLine?->raw_text,
-                ];
+            $matchedCandidate = $candidates->first(
+                function (
+                    ProductIdentificationCandidate $candidate
+                ) use ($normalizedText): bool {
+                    $haystacks = [
+                        (string) $candidate->name,
+                        (string) data_get(
+                            $candidate->metadata,
+                            'raw_line_text',
+                            ''
+                        ),
+                        (string) $candidate->documentLine?->description,
+                        (string) $candidate->documentLine?->raw_text,
+                    ];
 
-                foreach ($haystacks as $haystack) {
-                    if (str_contains($this->normalizeComparableText($haystack), $normalizedText)) {
-                        return true;
+                    foreach ($haystacks as $haystack) {
+                        if (
+                            str_contains(
+                                $this->normalizeComparableText($haystack),
+                                $normalizedText
+                            )
+                        ) {
+                            return true;
+                        }
                     }
-                }
 
-                return false;
-            });
+                    return false;
+                }
+            );
 
             if ($matchedCandidate) {
                 $violations++;
-                $errors[] = 'should_not_generate violation: ' . $text;
+
+                $recognitionErrors[] = 'should_not_generate violation: ' . $text;
             }
         }
 
         return [
             'expected' => count($shouldNotGenerate),
             'violations' => $violations,
-            'errors' => $errors,
+            'recognition_errors' => $recognitionErrors,
         ];
     }
 

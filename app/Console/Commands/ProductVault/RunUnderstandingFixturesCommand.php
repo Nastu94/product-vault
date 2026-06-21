@@ -586,6 +586,59 @@ class RunUnderstandingFixturesCommand extends Command
                 ->orderBy('id')
                 ->get();
 
+            /*
+            * Ogni candidato creato dalla pipeline deve ricevere il contratto
+            * Assisted Review senza richiedere un refresh successivo.
+            */
+            $candidatesWithoutAssistedReview = $actualCandidates
+                ->filter(function (
+                    ProductIdentificationCandidate $candidate
+                ): bool {
+                    $fields = data_get(
+                        $candidate->metadata,
+                        'assisted_review.fields'
+                    );
+
+                    if (
+                        data_get(
+                            $candidate->metadata,
+                            'assisted_review.version'
+                        ) !== 'v1'
+                    ) {
+                        return true;
+                    }
+
+                    if (
+                        data_get(
+                            $candidate->metadata,
+                            'assisted_review.builder'
+                        ) !== 'assisted_review_metadata_builder_v1'
+                    ) {
+                        return true;
+                    }
+
+                    if (! is_array($fields)) {
+                        return true;
+                    }
+
+                    return array_diff(
+                        ['brand', 'category', 'model'],
+                        array_keys($fields)
+                    ) !== [];
+                })
+                ->pluck('id')
+                ->values()
+                ->all();
+
+            $record(
+                'pipeline',
+                $name,
+                'all candidates have assisted_review metadata',
+                $candidatesWithoutAssistedReview === [],
+                [],
+                $candidatesWithoutAssistedReview,
+            );
+
             foreach (($expect['candidates'] ?? []) as $expectedCandidate) {
                 $needle = (string) ($expectedCandidate['name_contains'] ?? '');
 

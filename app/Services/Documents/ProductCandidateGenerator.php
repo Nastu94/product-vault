@@ -7,6 +7,7 @@ use App\Models\DocumentLine;
 use App\Models\ProductIdentificationCandidate;
 use App\Models\Brand;
 use App\Models\Category;
+use App\Services\Documents\AssistedReview\AssistedReviewMetadataBuilder;
 use App\Services\Documents\ProductUnderstanding\ProductLineAnalyzer;
 use App\Services\Documents\ProductUnderstanding\ProductTextSimilarityAnalyzer;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackMatcher;
@@ -27,6 +28,7 @@ class ProductCandidateGenerator
         private readonly ProductUnderstandingGlobalFactMatcher $globalFactMatcher,
         private readonly ProductTextSimilarityAnalyzer $productTextSimilarityAnalyzer,
         private readonly InitialKnowledgeRepository $initialKnowledgeRepository,
+        private readonly AssistedReviewMetadataBuilder $assistedReviewMetadataBuilder,
     ) {
     }
 
@@ -213,7 +215,7 @@ class ProductCandidateGenerator
                 suggestedLineType: $analysis->lineType,
             );
 
-            ProductIdentificationCandidate::query()->create([
+            $this->createCandidateWithAssistedReview([
                 'document_id' => $document->id,
                 'document_line_id' => $line->id,
                 'product_id' => null,
@@ -266,6 +268,28 @@ class ProductCandidateGenerator
         $this->updateDocumentProductReliabilityScore($document);
 
         return $created;
+    }
+
+    /**
+     * Crea un candidato prodotto includendo il metadata Assisted Review.
+     *
+     * Il builder non modifica né salva il candidato. Il generatore mantiene
+     * l'autorità sul salvataggio e conserva invariati i valori riconosciuti
+     * dalla pipeline nei campi brand_id, category_id e model.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    private function createCandidateWithAssistedReview(
+        array $attributes
+    ): ProductIdentificationCandidate {
+        $candidate = new ProductIdentificationCandidate($attributes);
+
+        $candidate->metadata = $this->assistedReviewMetadataBuilder
+            ->mergeIntoMetadata($candidate);
+
+        $candidate->save();
+
+        return $candidate;
     }
 
     /**

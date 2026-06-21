@@ -33,14 +33,22 @@ class AssistedReviewMetadataBuilder
     ];
 
     /**
+     * Crea il builder usando i resolver dedicati ai singoli campi.
+     */
+    public function __construct(
+        private readonly AssistedReviewBrandSuggestionResolver
+            $brandSuggestionResolver
+    ) {
+    }
+
+    /**
      * Costruisce il namespace assisted_review del candidato.
      *
-     * In questa prima versione vengono rappresentati soltanto:
+     * Il payload distingue:
      * - valori già presenti sul candidato;
+     * - suggerimenti automatici non applicati;
      * - valori mancanti;
      * - eventuali decisioni utente già registrate.
-     *
-     * Non vengono ancora generate proposte automatiche.
      *
      * @return array<string, mixed>
      */
@@ -60,7 +68,8 @@ class AssistedReviewMetadataBuilder
 
         $fields['brand'] = $this->buildField(
             current: $this->currentBrand($candidate),
-            existingField: $this->existingField($existingFields, 'brand')
+            existingField: $this->existingField($existingFields, 'brand'),
+            suggestion: $this->brandSuggestionResolver->resolve($candidate),
         );
 
         $fields['category'] = $this->buildField(
@@ -118,22 +127,30 @@ class AssistedReviewMetadataBuilder
     }
 
     /**
-     * Costruisce lo stato di un singolo campo.
-     *
-     * @param  array<string, mixed>|null  $current
-     * @param  array<string, mixed>  $existingField
-     * @return array<string, mixed>
-     */
+    * Costruisce lo stato di un singolo campo.
+    *
+    * Ordine di precedenza:
+    * - decisione esplicita dell'utente;
+    * - valore già presente sul candidato;
+    * - suggerimento automatico;
+    * - valore mancante.
+    *
+    * @param  array<string, mixed>|null  $current
+    * @param  array<string, mixed>  $existingField
+    * @param  array<string, mixed>|null  $suggestion
+    * @return array<string, mixed>
+    */
     private function buildField(
         ?array $current,
-        array $existingField
+        array $existingField,
+        ?array $suggestion = null
     ): array {
         $existingState = $existingField['state'] ?? null;
 
         /*
-         * Una decisione esplicita dell'utente ha precedenza su qualsiasi
-         * successiva elaborazione automatica.
-         */
+        * Una decisione esplicita dell'utente ha precedenza su qualsiasi
+        * successiva elaborazione automatica.
+        */
         if (
             is_string($existingState)
             && in_array(
@@ -150,10 +167,32 @@ class AssistedReviewMetadataBuilder
             ], $existingField);
         }
 
+        /*
+        * Un valore già presente sul candidato è la fonte corrente e non deve
+        * essere affiancato da un suggerimento concorrente.
+        */
+        if ($current !== null) {
+            return [
+                'state' => 'present',
+                'required' => false,
+                'current' => $current,
+                'suggestion' => null,
+            ];
+        }
+
+        if ($suggestion !== null) {
+            return [
+                'state' => 'suggested',
+                'required' => false,
+                'current' => null,
+                'suggestion' => $suggestion,
+            ];
+        }
+
         return [
-            'state' => $current === null ? 'missing' : 'present',
+            'state' => 'missing',
             'required' => false,
-            'current' => $current,
+            'current' => null,
             'suggestion' => null,
         ];
     }

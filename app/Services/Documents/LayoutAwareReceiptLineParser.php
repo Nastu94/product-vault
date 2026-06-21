@@ -45,7 +45,11 @@ class LayoutAwareReceiptLineParser
             ->all();
 
         if (! $this->visualLinesLookLikeReceiptTable($visualLines)) {
-            return 0;
+            return $this->parseExplicitQuantityReceiptVisualLines(
+                document: $document,
+                lineTypeId: $lineTypeId,
+                visualLines: $visualLines
+            );
         }
 
         $created = 0;
@@ -109,6 +113,293 @@ class LayoutAwareReceiptLineParser
         }
 
         return $created;
+    }
+
+    /**
+     * Estrae prodotti da scontrini OCR senza intestazione tabellare.
+     *
+     * Struttura supportata:
+     *
+     * DESCRIZIONE PRODOTTO
+     * 1 x 79.90
+     * 79.90
+     *
+     * La sequenza di tre righe e la coerenza quantità × unitario = totale
+     * costituiscono il gate strutturale della strategia.
+     */
+    private function parseExplicitQuantityReceiptVisualLines(
+        Document $document,
+        ?int $lineTypeId,
+        array $visualLines
+    ): int {
+        $created = 0;
+        $linesCount = count($visualLines);
+
+        for ($index = 0; $index < $linesCount; $index++) {
+            $descriptionVisualLine = $visualLines[$index];
+
+            $rawDescription = $this->normalizeVisualLine(
+                (string) ($descriptionVisualLine['text'] ?? '')
+            );
+
+            if ($rawDescription === '') {
+                continue;
+            }
+
+            /*
+            * Dopo il totale dello scontrino non cerchiamo altri prodotti.
+            */
+            if ($this->visualLineEndsExplicitReceiptItems($rawDescription)) {
+                break;
+            }
+
+            if (! isset(
+                $visualLines[$index + 1],
+                $visualLines[$index + 2]
+            )) {
+                continue;
+            }
+
+            $quantityVisualLine = $visualLines[$index + 1];
+            $totalVisualLine = $visualLines[$index + 2];
+
+            $quantityLine = $this->normalizeVisualLine(
+                (string) ($quantityVisualLine['text'] ?? '')
+            );
+
+            $totalLine = $this->normalizeVisualLine(
+                (string) ($totalVisualLine['text'] ?? '')
+            );
+
+            $item = $this->extractExplicitQuantityReceiptItem(
+                description: $rawDescription,
+                quantityLine: $quantityLine,
+                totalLine: $totalLine
+            );
+
+            if ($item === null) {
+                continue;
+            }
+
+            DocumentLine::query()->create([
+                'document_id' => $document->id,
+                'document_line_type_id' => $lineTypeId,
+                'line_number' => $created + 1,
+                'raw_text' => trim(implode(' ', [
+                    $rawDescription,
+                    $quantityLine,
+                    $totalLine,
+                ])),
+                'description' => $item['description'],
+                'quantity' => $item['quantity'],
+                'unit_price' => $item['unit_price'],
+                'total_price' => $item['total_price'],
+                'confidence_score' => $this->estimateConfidenceScore(
+                    $item,
+                    []
+                ),
+                'metadata' => [
+                    'parser' => 'layout_aware_receipt_line_parser_v2',
+                    'mode' => 'ocr_visual_line_quantity_x_unit_total',
+                    'vat_rate' => null,
+                    'supporting_lines' => [
+                        $quantityLine,
+                        $totalLine,
+                    ],
+                    'source_visual_line_id' =>
+                        $descriptionVisualLine['id'] ?? null,
+                    'source_item_ids' => array_values(
+                        array_unique(
+                            array_filter([
+                                ...($descriptionVisualLine['item_ids'] ?? []),
+                                ...($quantityVisualLine['item_ids'] ?? []),
+                                ...($totalVisualLine['item_ids'] ?? []),
+                            ], fn ($itemId): bool => $itemId !== null)
+                        )
+                    ),
+                    'product_code_candidate' => null,
+                    'serial_number_candidate' => null,
+                    'ocr_description_normalization' => [
+                        'original' => $rawDescription,
+                        'normalized' => $item['description'],
+                        'zero_to_letter_o_applied' =>
+                            $rawDescription !== $item['description'],
+                    ],
+                ],
+            ]);
+
+            $created++;
+
+            /*
+            * Le due righe successive appartengono già al prodotto appena creato.
+            */
+            $index += 2;
+        }
+
+        return $created;
+    }
+
+    /**
+     * Interpreta una sequenza:
+     *
+     * DESCRIZIONE
+     * QUANTITÀ x PREZZO_UNITARIO
+     * TOTALE
+     *
+     * @return array{
+     *     description:string,
+     *     quantity:float,
+     *     unit_price:float,
+     *     total_price:float,
+     *     vat_rate:null
+     * }|null
+     */
+    private function extractExplicitQuantityReceiptItem(
+        string $description,
+        string $quantityLine,
+        string $totalLine
+    ): ?array {
+        $amountPattern =
+            '(?:\d{1,3}(?:[.\s]\d{3})*[,.]\d{2}|\d+[,.]\d{2})';
+
+        $quantityPattern = '/^'
+            . '(?<quantity>\d+(?:[,.]\d{1,3})?)'
+            . '\s*[x×]\s*'
+            . '(?<unit_price>' . $amountPattern . ')'
+            . '\s*$/iu';
+
+        if (! preg_match($quantityPattern, $quantityLine, $matches)) {
+            return null;
+        }
+
+        if (! preg_match(
+            '/^(?<total_price>' . $amountPattern . ')\s*$/u',
+            $totalLine,
+            $totalMatches
+        )) {
+            return null;
+        }
+
+        $quantity = $this->parseReceiptQuantity(
+            (string) ($matches['quantity'] ?? '')
+        );
+
+        $unitPrice = $this->parseMoney(
+            (string) ($matches['unit_price'] ?? '')
+        );
+
+        $totalPrice = $this->parseMoney(
+            (string) ($totalMatches['total_price'] ?? '')
+        );
+
+        if (
+            $quantity === null
+            || $unitPrice === null
+            || $totalPrice === null
+            || $quantity <= 0
+            || $unitPrice <= 0
+            || $totalPrice <= 0
+        ) {
+            return null;
+        }
+
+        /*
+        * Evita associazioni casuali tra descrizioni e numeri vicini.
+        */
+        $expectedTotal = round($quantity * $unitPrice, 2);
+
+        if (abs($expectedTotal - $totalPrice) > 0.02) {
+            return null;
+        }
+
+        $description = $this->normalizeReceiptOcrDescription(
+            $description
+        );
+
+        if (
+            $description === ''
+            || ! preg_match('/[\p{L}]/u', $description)
+        ) {
+            return null;
+        }
+
+        return [
+            'description' => $description,
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'total_price' => $totalPrice,
+            'vat_rate' => null,
+        ];
+    }
+
+    /**
+     * Converte una quantità OCR in float.
+     */
+    private function parseReceiptQuantity(string $quantity): ?float
+    {
+        $normalized = str_replace(',', '.', trim($quantity));
+
+        if (! is_numeric($normalized)) {
+            return null;
+        }
+
+        return round((float) $normalized, 3);
+    }
+
+    /**
+     * Corregge confusioni OCR molto circoscritte tra zero e lettera O.
+     *
+     * Vengono modificati solo token formati da lettere e zero:
+     * - R0UTER  → ROUTER
+     * - AER0NET → AERONET
+     *
+     * Token tecnici contenenti altre cifre restano invariati:
+     * - AX1800
+     * - 1080P
+     * - 1TB
+     */
+    private function normalizeReceiptOcrDescription(
+        string $description
+    ): string {
+        $description = $this->cleanDescription($description);
+
+        return preg_replace_callback(
+            '/\b[\p{L}0]{4,}\b/u',
+            function (array $matches): string {
+                $token = (string) ($matches[0] ?? '');
+
+                if (
+                    ! str_contains($token, '0')
+                    || ! preg_match('/\p{L}/u', $token)
+                ) {
+                    return $token;
+                }
+
+                return str_replace('0', 'O', $token);
+            },
+            $description
+        ) ?? $description;
+    }
+
+    /**
+     * Individua la fine della sezione prodotti negli scontrini senza header.
+     */
+    private function visualLineEndsExplicitReceiptItems(
+        string $line
+    ): bool {
+        $normalized = mb_strtolower(
+            $this->normalizeVisualLine($line)
+        );
+
+        if (preg_match(
+            '/^(?:subtotale|totale|pagamento)\b/u',
+            $normalized
+        )) {
+            return true;
+        }
+
+        return str_contains($normalized, 'documento commerciale')
+            || str_contains($normalized, 'documento di test');
     }
 
     /**

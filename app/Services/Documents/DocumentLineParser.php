@@ -68,6 +68,23 @@ class DocumentLineParser
         */
         $document->lines()->delete();
 
+        /*
+        |--------------------------------------------------------------------------
+        | Documenti non parsabili come acquisti
+        |--------------------------------------------------------------------------
+        |
+        | I documenti classificati come non pertinenti o sconosciuti devono
+        | restare archiviati, ma non devono generare righe prodotto.
+        |
+        */
+        if (in_array(
+            $document->documentType?->code,
+            ['irrelevant', 'unknown'],
+            true
+        )) {
+            return 0;
+        }
+
         $lines = preg_split('/\R/u', $text) ?: [];
     
         /*
@@ -138,6 +155,61 @@ class DocumentLineParser
                 $pendingCodeParts = [];
 
                 continue;
+            }
+            /*
+            |--------------------------------------------------------------------------
+            | Conferme ordine: quantità e importi su riga separata
+            |--------------------------------------------------------------------------
+            |
+            | Alcuni ordini digitali separano il prodotto in tre parti:
+            |
+            | TC11-128 Tablet TabCore 11 128GB WiFi 6
+            | Display 11 pollici - modello 2026 - colore blu
+            | 1 349.90 349.90
+            |
+            | La riga conclusiva è strutturale e contiene esclusivamente:
+            | quantità, prezzo unitario e totale.
+            |
+            | La intercettiamo prima delle euristiche generiche, così gli importi non
+            | finiscono nella descrizione e i numeri tecnici restano parte del prodotto.
+            |
+            */
+            if (
+                $document->documentType?->code === 'order_confirmation'
+                && $pendingCandidate !== null
+            ) {
+                $amountColumns = $this->extractOrderConfirmationPendingAmountColumns(
+                    $rawLine
+                );
+
+                if ($amountColumns !== null) {
+                    /*
+                    * La riga economica resta nel raw text per tracciabilità, ma non
+                    * viene aggiunta alle description_parts del prodotto.
+                    */
+                    $pendingCandidate['raw_text_parts'][] = $rawLine;
+                    $pendingCandidate['quantity'] = $amountColumns['quantity'];
+                    $pendingCandidate['unit_price'] = $amountColumns['unit_price'];
+                    $pendingCandidate['total_price'] = $amountColumns['total_price'];
+                    $pendingCandidate['amounts'] = [
+                        $amountColumns['unit_price'],
+                        $amountColumns['total_price'],
+                    ];
+                    $pendingCandidate['mode'] =
+                        'order_confirmation_multiline_amount_columns';
+
+                    $this->createLineFromPendingCandidate(
+                        $document,
+                        $lineTypeId,
+                        $pendingCandidate
+                    );
+
+                    $created++;
+                    $pendingCandidate = null;
+                    $pendingCodeParts = [];
+
+                    continue;
+                }
             }
 
             /*
@@ -613,11 +685,13 @@ class DocumentLineParser
                     'line_number' => $index + 1,
                     'raw_text_parts' => [$rawLine],
                     'description_parts' => [$productStart['description']],
+                    'supporting_lines' => [],
                     'quantity' => null,
                     'unit_price' => null,
                     'total_price' => null,
                     'amounts' => [],
                     'product_code' => $productStart['code'],
+                    'ean_code_candidate' => null,
                     'mode' => 'code_description_quantity',
                 ];
 
@@ -638,9 +712,43 @@ class DocumentLineParser
             | "Canapa Verde" completa la descrizione del candidato precedente.
             |
             */
-            if ($pendingCandidate && $this->lineLooksLikeDescriptionContinuation($rawLine)) {
+            if (
+                $pendingCandidate
+                && $this->lineLooksLikeDescriptionContinuation($rawLine)
+            ) {
+                /*
+                * La riga originale viene sempre mantenuta nel raw text.
+                */
                 $pendingCandidate['raw_text_parts'][] = $rawLine;
-                $pendingCandidate['description_parts'][] = $rawLine;
+
+                if ($document->documentType?->code === 'order_confirmation') {
+                    /*
+                    * Nelle conferme marketplace le righe successive possono contenere:
+                    * - variante o colore;
+                    * - venditore marketplace;
+                    * - EAN;
+                    * - SKU secondari.
+                    *
+                    * Le conserviamo come supporto, ma soltanto la parte realmente
+                    * descrittiva deve entrare nel nome del prodotto.
+                    */
+                    $pendingCandidate['supporting_lines'][] = $rawLine;
+
+                    $eanCode = $this->extractOrderConfirmationSupportingEan($rawLine);
+
+                    if ($eanCode !== null) {
+                        $pendingCandidate['ean_code_candidate'] = $eanCode;
+                    }
+
+                    $descriptionPart =
+                        $this->cleanOrderConfirmationDescriptionContinuation($rawLine);
+
+                    if ($descriptionPart !== null) {
+                        $pendingCandidate['description_parts'][] = $descriptionPart;
+                    }
+                } else {
+                    $pendingCandidate['description_parts'][] = $rawLine;
+                }
 
                 continue;
             }
@@ -947,6 +1055,173 @@ class DocumentLineParser
             'unit_price' => $unitPrice,
             'total_price' => $totalPrice,
         ];
+    }
+
+    /**
+     * Estrae quantità, prezzo unitario e totale da una riga numerica separata.
+     *
+     * La strategia viene usata esclusivamente quando esiste già un candidato
+     * prodotto pendente in una conferma ordine.
+     *
+     * Formati supportati:
+     * - 1 349,90 349,90
+     * - 1 349.90 349.90
+     * - 2 1.099,00 2.198,00
+     * - 2 1,099.00 2,198.00
+     *
+     * @return array{
+     *     quantity: float,
+     *     unit_price: float,
+     *     total_price: float
+     * }|null
+     */
+    private function extractOrderConfirmationPendingAmountColumns(
+        string $line
+    ): ?array {
+        $line = $this->normalizeLine($line);
+
+        if ($line === '') {
+            return null;
+        }
+
+        /*
+        * Formato europeo:
+        * - 349,90
+        * - 1.099,00
+        *
+        * Formato internazionale:
+        * - 349.90
+        * - 1,099.00
+        */
+        $amountPattern = '(?:'
+            . '\d{1,3}(?:\.\d{3})+,\d{2}'
+            . '|\d+,\d{2}'
+            . '|\d{1,3}(?:,\d{3})+\.\d{2}'
+            . '|\d+\.\d{2}'
+            . ')';
+
+        $currencyBefore = '(?:(?:EUR|EURO|€)\s*)?';
+        $currencyAfter = '(?:\s*(?:EUR|EURO|€))?';
+
+        $pattern = '/^'
+            . '(?<quantity>\d+(?:[,.]\d{1,3})?)\s+'
+            . $currencyBefore
+            . '(?<unit_price>' . $amountPattern . ')'
+            . $currencyAfter
+            . '\s+'
+            . $currencyBefore
+            . '(?<total_price>' . $amountPattern . ')'
+            . $currencyAfter
+            . '\s*$/iu';
+
+        if (! preg_match($pattern, $line, $matches)) {
+            return null;
+        }
+
+        $quantity = $this->parseQuantity(
+            (string) ($matches['quantity'] ?? '')
+        );
+
+        $unitPrice = $this->parseStructuredMoney(
+            (string) ($matches['unit_price'] ?? '')
+        );
+
+        $totalPrice = $this->parseStructuredMoney(
+            (string) ($matches['total_price'] ?? '')
+        );
+
+        /*
+        * Una riga economica valida deve avere valori positivi.
+        * Le righe a zero o negative restano escluse da questa strategia.
+        */
+        if (
+            $quantity === null
+            || $unitPrice === null
+            || $totalPrice === null
+            || $quantity <= 0
+            || $unitPrice <= 0
+            || $totalPrice <= 0
+        ) {
+            return null;
+        }
+
+        return [
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'total_price' => $totalPrice,
+        ];
+    }
+
+    /**
+     * Converte un importo strutturato europeo o internazionale in float.
+     *
+     * Questo metodo viene usato dalle righe economiche esplicite e non dalla
+     * ricerca generica nel testo descrittivo, così numeri tecnici con il punto
+     * non vengono automaticamente trattati come prezzi.
+     */
+    private function parseStructuredMoney(string $amount): ?float
+    {
+        $normalized = preg_replace(
+            '/\b(?:EUR|EURO)\b|[€$£]/iu',
+            '',
+            trim($amount)
+        ) ?? $amount;
+
+        $normalized = preg_replace(
+            '/\s+/u',
+            '',
+            $normalized
+        );
+
+        if ($normalized === null || $normalized === '') {
+            return null;
+        }
+
+        $lastCommaPosition = strrpos($normalized, ',');
+        $lastDotPosition = strrpos($normalized, '.');
+
+        /*
+        * Quando sono presenti entrambi i separatori, quello più a destra
+        * rappresenta i decimali e l'altro separa le migliaia.
+        */
+        if (
+            $lastCommaPosition !== false
+            && $lastDotPosition !== false
+        ) {
+            $decimalSeparator = $lastCommaPosition > $lastDotPosition
+                ? ','
+                : '.';
+
+            $thousandsSeparator = $decimalSeparator === ','
+                ? '.'
+                : ',';
+
+            $normalized = str_replace(
+                $thousandsSeparator,
+                '',
+                $normalized
+            );
+
+            if ($decimalSeparator === ',') {
+                $normalized = str_replace(',', '.', $normalized);
+            }
+        } elseif ($lastCommaPosition !== false) {
+            /*
+            * Con la sola virgola assumiamo il formato europeo.
+            */
+            $normalized = str_replace(',', '.', $normalized);
+        } elseif ($lastDotPosition !== false) {
+            /*
+            * Con il solo punto assumiamo il formato internazionale.
+            */
+            $normalized = str_replace(',', '', $normalized);
+        }
+
+        if (! is_numeric($normalized)) {
+            return null;
+        }
+
+        return round((float) $normalized, 2);
     }
 
     /**
@@ -3757,15 +4032,30 @@ class DocumentLineParser
     }
 
     /**
-     * Crea una riga documento partendo da un candidato multi-riga.
+     * Crea una DocumentLine partendo da un candidato multi-riga.
      */
-    private function createLineFromPendingCandidate(Document $document, ?int $lineTypeId, array $candidate): void
-    {
-        $description = trim(implode(' ', $candidate['description_parts']));
-        $rawText = trim(implode(' ', $candidate['raw_text_parts']));
+    private function createLineFromPendingCandidate(
+        Document $document,
+        ?int $lineTypeId,
+        array $candidate
+    ): void {
+        $description = trim(
+            implode(' ', $candidate['description_parts'] ?? [])
+        );
+
+        $rawText = trim(
+            implode(' ', $candidate['raw_text_parts'] ?? [])
+        );
+
         $amounts = $candidate['amounts'] ?? [];
         $quantity = $candidate['quantity'] ?? null;
         $productCode = $candidate['product_code'] ?? null;
+        $eanCode = $candidate['ean_code_candidate'] ?? null;
+
+        $supportingLines = array_values(array_unique(array_filter(
+            (array) ($candidate['supporting_lines'] ?? []),
+            fn ($line): bool => trim((string) $line) !== ''
+        )));
 
         DocumentLine::query()->create([
             'document_id' => $document->id,
@@ -3787,6 +4077,8 @@ class DocumentLineParser
                 'mode' => $candidate['mode'] ?? 'pending_candidate',
                 'amounts_found' => $amounts,
                 'product_code_candidate' => $productCode,
+                'ean_code_candidate' => $eanCode,
+                'supporting_lines' => $supportingLines,
             ],
         ]);
     }
@@ -3986,23 +4278,32 @@ class DocumentLineParser
     }
 
     /**
-     * Estrae coppia codice prodotto + descrizione.
+     * Estrae una coppia codice prodotto + descrizione.
+     *
+     * Supporta:
+     * - codici contenenti numeri: TC11-128, FS-256, ABC123;
+     * - SKU alfabetici multi-segmento: GS-CONT-W.
+     *
+     * Gli SKU alfabetici vengono accettati solo quando hanno una struttura
+     * sufficientemente forte, così parole amministrative con un trattino
+     * non vengono interpretate automaticamente come codici prodotto.
      */
     private function extractProductStartFromLine(string $line): ?array
     {
-        /*
-        |--------------------------------------------------------------------------
-        | Esempi supportati:
-        | PRD-IMMK3163 Divano Fabiola Lounge
-        | ABC123 Lavatrice Modello X
-        |--------------------------------------------------------------------------
-        */
-        if (! preg_match('/^(?<code>[A-Z]{2,}[A-Z0-9\-\/\.]*\d[A-Z0-9\-\/\.]*)\s+(?<description>.+)$/iu', $line, $matches)) {
+        if (! preg_match(
+            '/^(?<code>[A-Z0-9][A-Z0-9\-\/\.]{2,})\s+(?<description>.+)$/iu',
+            $line,
+            $matches
+        )) {
             return null;
         }
 
-        $code = trim($matches['code']);
-        $description = trim($matches['description']);
+        $code = trim((string) ($matches['code'] ?? ''));
+        $description = trim((string) ($matches['description'] ?? ''));
+
+        if (! $this->productStartCodeLooksStructured($code)) {
+            return null;
+        }
 
         if ($description === '' || mb_strlen($description) < 3) {
             return null;
@@ -4016,6 +4317,66 @@ class DocumentLineParser
             'code' => $code,
             'description' => $description,
         ];
+    }
+
+    /**
+     * Verifica che il token iniziale abbia una struttura plausibile da SKU.
+     *
+     * Regole:
+     * - un codice contenente almeno una cifra resta valido;
+     * - un codice senza cifre deve avere almeno tre segmenti alfabetici
+     *   separati da trattino, come GS-CONT-W;
+     * - almeno un segmento deve essere breve, caratteristica comune degli SKU.
+     */
+    private function productStartCodeLooksStructured(string $code): bool
+    {
+        $normalized = mb_strtoupper(trim($code));
+
+        if (
+            mb_strlen($normalized) < 3
+            || mb_strlen($normalized) > 40
+        ) {
+            return false;
+        }
+
+        if (! preg_match('/^[A-Z0-9][A-Z0-9\-\/\.]*$/u', $normalized)) {
+            return false;
+        }
+
+        /*
+        * Il comportamento esistente per codici con numeri resta invariato.
+        */
+        if (preg_match('/\d/u', $normalized)) {
+            return true;
+        }
+
+        /*
+        * Per codici completamente alfabetici richiediamo almeno tre segmenti.
+        *
+        * Valido:
+        * GS-CONT-W
+        *
+        * Non sufficiente:
+        * ORDINE-WEB
+        */
+        if (! preg_match('/^[A-Z]{1,12}(?:-[A-Z]{1,12}){2,}$/u', $normalized)) {
+            return false;
+        }
+
+        $segments = explode('-', $normalized);
+        $hasShortSegment = false;
+
+        foreach ($segments as $segment) {
+            if ($segment === '') {
+                return false;
+            }
+
+            if (mb_strlen($segment) <= 4) {
+                $hasShortSegment = true;
+            }
+        }
+
+        return $hasShortSegment;
     }
 
     /**
@@ -4480,5 +4841,95 @@ class DocumentLineParser
         }
 
         return min($score, 100);
+    }
+
+    /**
+     * Estrae un EAN/GTIN da una riga di supporto della conferma ordine.
+     */
+    private function extractOrderConfirmationSupportingEan(
+        string $line
+    ): ?string {
+        if (preg_match(
+            '/\b(?:EAN|GTIN|Barcode)\s*[:\-]?\s*'
+            . '(?<ean>\d{8}|\d{12}|\d{13}|\d{14})\b/iu',
+            $line,
+            $matches
+        )) {
+            return trim((string) $matches['ean']);
+        }
+
+        return null;
+    }
+
+    /**
+     * Restituisce soltanto la parte descrittiva utile di una riga marketplace.
+     *
+     * Esempi:
+     * - "Variante: nero - Venduto da TechWorld"
+     *   diventa "Variante: nero"
+     *
+     * - "UHS-I U3 - Venduto da MediaLab"
+     *   diventa "UHS-I U3"
+     *
+     * - "EAN 8050000000001"
+     *   non produce una parte descrittiva
+     *
+     * - "Venduto da MediaLab - SKU bundle VC-C4-KIT"
+     *   non produce una parte descrittiva
+     */
+    private function cleanOrderConfirmationDescriptionContinuation(
+        string $line
+    ): ?string {
+        $cleaned = $this->normalizeLine($line);
+
+        if ($cleaned === '') {
+            return null;
+        }
+
+        /*
+        * L'EAN resta nel raw text e nei metadata, ma non nel nome prodotto.
+        */
+        $cleaned = preg_replace(
+            '/\b(?:EAN|GTIN|Barcode)\s*[:\-]?\s*'
+            . '(?:\d{8}|\d{12}|\d{13}|\d{14})\b/iu',
+            '',
+            $cleaned
+        ) ?? $cleaned;
+
+        /*
+        * Rimuove il venditore marketplace e tutto ciò che segue.
+        */
+        $cleaned = preg_replace(
+            '/(?:^|[\s\-–—|]+)\s*'
+            . '(?:venduto\s+da|sold\s+by|seller(?:\s*:)?)(?:\s+|$).*$/iu',
+            '',
+            $cleaned
+        ) ?? $cleaned;
+
+        /*
+        * Eventuali SKU ripetuti sono metadata e non parte del nome.
+        */
+        $cleaned = preg_replace(
+            '/(?:^|[\s\-–—|]+)\s*'
+            . 'SKU(?:\s+bundle)?\s*[:\-]?\s*'
+            . '[A-Z0-9][A-Z0-9\-\/\.]{2,}\b/iu',
+            '',
+            $cleaned
+        ) ?? $cleaned;
+
+        $cleaned = trim(
+            preg_replace('/\s+/u', ' ', $cleaned) ?? $cleaned,
+            " \t\n\r\0\x0B-–—|,;"
+        );
+
+        if ($cleaned === '') {
+            return null;
+        }
+
+        if (! preg_match('/[\p{L}\p{N}]/u', $cleaned)) {
+            return null;
+        }
+
+        return $cleaned;
     }
 }

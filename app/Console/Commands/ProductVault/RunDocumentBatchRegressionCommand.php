@@ -16,7 +16,7 @@ use Throwable;
     {--filename= : Filtra per original_filename, anche parziale}
     {--strict : Passa --strict al validatore batch}
     {--show-candidates : Mostra dettaglio candidati nel validatore batch}
-    {--allow-warnings : Non fallisce se il validatore batch produce warning}
+    {--allow-warnings : Non fallisce sui warning di recognition prodotti dal validatore batch}
     {--no-reprocess : Non rilancia la pipeline prima della validazione}')]
 #[Description('Run Product Vault batch document regression from expected JSON files')]
 class RunDocumentBatchRegressionCommand extends Command
@@ -106,13 +106,25 @@ class RunDocumentBatchRegressionCommand extends Command
                 $failed = true;
             }
 
+            /*
+            * SKIP è un esito valido quando la pipeline non deve essere rilanciata
+            * tramite l'opzione --no-reprocess.
+            */
+            $reprocessPassed = in_array(
+                $reprocessResult['status'],
+                ['OK', 'SKIP'],
+                true
+            );
+
+            $validationPassed = $exitCode === self::SUCCESS;
+
             $summaryRows[] = [
                 'expected' => basename($expectedFile),
                 'docs' => $reprocessResult['processed'] . '/' . $reprocessResult['selected'],
                 'missing' => $reprocessResult['missing'],
                 'reprocess' => $reprocessResult['status'],
-                'validate' => $exitCode === self::SUCCESS ? 'OK' : 'FAIL',
-                'status' => $reprocessResult['status'] === 'OK' && $exitCode === self::SUCCESS ? 'OK' : 'FAIL',
+                'validate' => $validationPassed ? 'OK' : 'FAIL',
+                'status' => $reprocessPassed && $validationPassed ? 'OK' : 'FAIL',
                 'errors' => $reprocessResult['errors'] === []
                     ? '-'
                     : implode(' | ', $reprocessResult['errors']),

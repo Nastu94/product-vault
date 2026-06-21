@@ -37,7 +37,9 @@ class AssistedReviewMetadataBuilder
      */
     public function __construct(
         private readonly AssistedReviewBrandSuggestionResolver
-            $brandSuggestionResolver
+            $brandSuggestionResolver,
+        private readonly AssistedReviewCategorySuggestionResolver
+            $categorySuggestionResolver
     ) {
     }
 
@@ -74,7 +76,13 @@ class AssistedReviewMetadataBuilder
 
         $fields['category'] = $this->buildField(
             current: $this->currentCategory($candidate),
-            existingField: $this->existingField($existingFields, 'category')
+            existingField: $this->existingField(
+                $existingFields,
+                'category'
+            ),
+            suggestion: $this->categorySuggestionResolver->resolve(
+                $candidate
+            )
         );
 
         $fields['model'] = $this->buildField(

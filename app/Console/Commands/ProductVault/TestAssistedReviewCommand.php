@@ -139,6 +139,16 @@ class TestAssistedReviewCommand extends Command
 
         $assertSame(
             'complete_candidate',
+            'current category suppresses suggestion',
+            null,
+            data_get(
+                $completeMetadata,
+                'assisted_review.fields.category.suggestion'
+            )
+        );
+
+        $assertSame(
+            'complete_candidate',
             'model state',
             'present',
             data_get(
@@ -359,6 +369,7 @@ class TestAssistedReviewCommand extends Command
             'metadata' => [
                 'product_understanding' => [
                     'brand_candidate' => 'Sony',
+                    'suggested_category' => 'console',
                 ],
             ],
         ]);
@@ -747,6 +758,281 @@ class TestAssistedReviewCommand extends Command
                 $reviewedMetadata,
                 'assisted_review.completion_fields'
             )
+        );
+
+        /*
+        * Categoria proveniente da uno snapshot della knowledge iniziale.
+        */
+        $knowledgeCategoryCandidate = new ProductIdentificationCandidate([
+            'metadata' => [
+                'product_understanding_category' => [
+                    'matched' => true,
+                    'match_type' => 'initial_line_pattern_summary',
+                    'category_id' => 7,
+                    'category_name' => 'Computer',
+                    'category_slug' => 'computers',
+                ],
+            ],
+        ]);
+
+        $knowledgeCategoryMetadata = $builder->mergeIntoMetadata(
+            $knowledgeCategoryCandidate
+        );
+
+        $assertSame(
+            'category_knowledge_suggestion',
+            'category state',
+            'suggested',
+            data_get(
+                $knowledgeCategoryMetadata,
+                'assisted_review.fields.category.state'
+            )
+        );
+
+        $assertSame(
+            'category_knowledge_suggestion',
+            'category value',
+            'Computer',
+            data_get(
+                $knowledgeCategoryMetadata,
+                'assisted_review.fields.category.suggestion.value'
+            )
+        );
+
+        $assertSame(
+            'category_knowledge_suggestion',
+            'category reference key',
+            'computers',
+            data_get(
+                $knowledgeCategoryMetadata,
+                'assisted_review.fields.category.suggestion.ref.key'
+            )
+        );
+
+        $assertSame(
+            'category_knowledge_suggestion',
+            'category id not modified',
+            null,
+            $knowledgeCategoryCandidate->category_id
+        );
+
+        /*
+        * Mapping diretto di una macro-categoria dal tipo prodotto.
+        */
+        $dehumidifierCandidate = new ProductIdentificationCandidate([
+            'name' => 'Deumidificatore AriaDry 20L',
+            'metadata' => [],
+        ]);
+
+        $dehumidifierMetadata = $builder->mergeIntoMetadata(
+            $dehumidifierCandidate
+        );
+
+        $assertSame(
+            'category_name_dehumidifier',
+            'category value',
+            'Climatizzazione',
+            data_get(
+                $dehumidifierMetadata,
+                'assisted_review.fields.category.suggestion.value'
+            )
+        );
+
+        $assertSame(
+            'category_name_dehumidifier',
+            'category reference key',
+            'climate-control',
+            data_get(
+                $dehumidifierMetadata,
+                'assisted_review.fields.category.suggestion.ref.key'
+            )
+        );
+
+        $assertSame(
+            'category_name_dehumidifier',
+            'category source',
+            'product_type_mapping',
+            data_get(
+                $dehumidifierMetadata,
+                'assisted_review.fields.category.suggestion.source'
+            )
+        );
+
+        /*
+        * Una categoria errata dell'analyzer non deve prevalere sul tipo reale.
+        */
+        $smartTvCandidate = new ProductIdentificationCandidate([
+            'name' => 'Smart TV ViewPlus 55 4K WiFi HDMI',
+            'metadata' => [
+                'product_understanding' => [
+                    'suggested_category' => 'cable',
+                ],
+            ],
+        ]);
+
+        $smartTvMetadata = $builder->mergeIntoMetadata(
+            $smartTvCandidate
+        );
+
+        $assertSame(
+            'category_smart_tv_analysis_guard',
+            'category reference key',
+            'tv-audio',
+            data_get(
+                $smartTvMetadata,
+                'assisted_review.fields.category.suggestion.ref.key'
+            )
+        );
+
+        $assertSame(
+            'category_smart_tv_analysis_guard',
+            'category source',
+            'product_type_mapping',
+            data_get(
+                $smartTvMetadata,
+                'assisted_review.fields.category.suggestion.source'
+            )
+        );
+
+        /*
+        * Il simbolo "+" può separare specifiche e non indica necessariamente
+        * la presenza di più prodotti.
+        */
+        $powerBankPortsCandidate = new ProductIdentificationCandidate([
+            'name' => 'PowerBank VoltPro 20000mAh USB-C PD 65W 2 porte USB-C + 1 porta USB-A',
+            'metadata' => [
+                'product_understanding' => [
+                    'suggested_category' => 'cable',
+                ],
+            ],
+        ]);
+
+        $powerBankPortsMetadata = $builder->mergeIntoMetadata(
+            $powerBankPortsCandidate
+        );
+
+        $assertSame(
+            'category_plus_in_specs',
+            'category reference key',
+            'electronics',
+            data_get(
+                $powerBankPortsMetadata,
+                'assisted_review.fields.category.suggestion.ref.key'
+            )
+        );
+
+        $assertSame(
+            'category_plus_in_specs',
+            'category source',
+            'product_type_mapping',
+            data_get(
+                $powerBankPortsMetadata,
+                'assisted_review.fields.category.suggestion.source'
+            )
+        );
+
+        $assertSame(
+            'category_plus_in_specs',
+            'category id not modified',
+            null,
+            $powerBankPortsCandidate->category_id
+        );
+
+        /*
+        * L'analyzer viene usato solo se il nome corrobora il tipo semantico.
+        */
+        $analysisCategoryCandidate = new ProductIdentificationCandidate([
+            'name' => 'Access Point NetWave AX3000',
+            'metadata' => [
+                'product_understanding' => [
+                    'suggested_category' => 'network_device',
+                ],
+            ],
+        ]);
+
+        $analysisCategoryMetadata = $builder->mergeIntoMetadata(
+            $analysisCategoryCandidate
+        );
+
+        $assertSame(
+            'category_analysis_corroborated',
+            'category reference key',
+            'computers',
+            data_get(
+                $analysisCategoryMetadata,
+                'assisted_review.fields.category.suggestion.ref.key'
+            )
+        );
+
+        $assertSame(
+            'category_analysis_corroborated',
+            'category source',
+            'product_line_analysis',
+            data_get(
+                $analysisCategoryMetadata,
+                'assisted_review.fields.category.suggestion.source'
+            )
+        );
+
+        /*
+        * Ricambi e consumabili restano da classificare manualmente.
+        */
+        $replacementCandidate = new ProductIdentificationCandidate([
+            'name' => 'Filtro HEPA CleanBot S8 confezione 2 pezzi',
+            'metadata' => [],
+        ]);
+
+        $replacementMetadata = $builder->mergeIntoMetadata(
+            $replacementCandidate
+        );
+
+        $assertSame(
+            'category_replacement_guard',
+            'category remains missing',
+            'missing',
+            data_get(
+                $replacementMetadata,
+                'assisted_review.fields.category.state'
+            )
+        );
+
+        /*
+        * Un bundle multi-prodotto non riceve una categoria arbitraria.
+        */
+        $categoryBundleCandidate = new ProductIdentificationCandidate([
+            'name' => 'Bundle Camera VisionCam + microfono CreatorMic',
+            'metadata' => [],
+        ]);
+
+        $categoryBundleMetadata = $builder->mergeIntoMetadata(
+            $categoryBundleCandidate
+        );
+
+        $assertSame(
+            'category_bundle_guard',
+            'category remains missing',
+            'missing',
+            data_get(
+                $categoryBundleMetadata,
+                'assisted_review.fields.category.state'
+            )
+        );
+
+        /*
+        * Anche il suggerimento categoria deve essere idempotente.
+        */
+        $idempotentCategoryCandidate = clone $dehumidifierCandidate;
+        $idempotentCategoryCandidate->metadata = $dehumidifierMetadata;
+
+        $secondCategoryBuild = $builder->mergeIntoMetadata(
+            $idempotentCategoryCandidate
+        );
+
+        $assertSame(
+            'category_suggestion_idempotence',
+            'second build equals first build',
+            $dehumidifierMetadata,
+            $secondCategoryBuild
         );
 
         /*

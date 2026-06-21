@@ -673,6 +673,393 @@ class TestAssistedReviewCommand extends Command
         );
 
         /*
+        * Un modello mancante può essere suggerito da un token alfanumerico.
+        */
+        $missingModelCandidate = new ProductIdentificationCandidate([
+            'name' => 'SSD Kingston NV3 1TB',
+            'metadata' => [],
+        ]);
+
+        $missingModelMetadata = $builder->mergeIntoMetadata(
+            $missingModelCandidate
+        );
+
+        $assertSame(
+            'model_missing_alphanumeric',
+            'model state',
+            'suggested',
+            data_get(
+                $missingModelMetadata,
+                'assisted_review.fields.model.state'
+            )
+        );
+
+        $assertSame(
+            'model_missing_alphanumeric',
+            'model value',
+            'NV3',
+            data_get(
+                $missingModelMetadata,
+                'assisted_review.fields.model.suggestion.value'
+            )
+        );
+
+        $assertSame(
+            'model_missing_alphanumeric',
+            'model source',
+            'name_structure',
+            data_get(
+                $missingModelMetadata,
+                'assisted_review.fields.model.suggestion.source'
+            )
+        );
+
+        /*
+        * Una sequenza commerciale può essere proposta conservando più token.
+        */
+        $mouseModelCandidate = new ProductIdentificationCandidate([
+            'name' => 'Mouse Logitech MX Master 3S',
+            'metadata' => [],
+        ]);
+
+        $mouseModelMetadata = $builder->mergeIntoMetadata(
+            $mouseModelCandidate
+        );
+
+        $assertSame(
+            'model_multi_token',
+            'model value',
+            'MX Master 3S',
+            data_get(
+                $mouseModelMetadata,
+                'assisted_review.fields.model.suggestion.value'
+            )
+        );
+
+        /*
+        * Un placeholder corrente non deve essere considerato un modello valido.
+        */
+        $lenovoBrand = new Brand([
+            'name' => 'Lenovo',
+            'normalized_name' => 'lenovo',
+        ]);
+        $lenovoBrand->id = 13;
+
+        $placeholderModelCandidate = new ProductIdentificationCandidate([
+            'brand_id' => 13,
+            'name' => 'Notebook Lenovo ThinkPad X1 Carbon Gen 11',
+            'model' => 'UNIT',
+            'metadata' => [],
+        ]);
+
+        $placeholderModelCandidate->setRelation(
+            'brand',
+            $lenovoBrand
+        );
+
+        $placeholderModelMetadata = $builder->mergeIntoMetadata(
+            $placeholderModelCandidate
+        );
+
+        $assertSame(
+            'model_placeholder_recovery',
+            'model state',
+            'suggested',
+            data_get(
+                $placeholderModelMetadata,
+                'assisted_review.fields.model.state'
+            )
+        );
+
+        $assertSame(
+            'model_placeholder_recovery',
+            'current placeholder preserved',
+            'UNIT',
+            data_get(
+                $placeholderModelMetadata,
+                'assisted_review.fields.model.current.value'
+            )
+        );
+
+        $assertSame(
+            'model_placeholder_recovery',
+            'model value',
+            'ThinkPad X1 Carbon Gen 11',
+            data_get(
+                $placeholderModelMetadata,
+                'assisted_review.fields.model.suggestion.value'
+            )
+        );
+
+        $assertSame(
+            'model_placeholder_recovery',
+            'model issue',
+            ['generic_current_model'],
+            data_get(
+                $placeholderModelMetadata,
+                'assisted_review.fields.model.issues'
+            )
+        );
+
+        $assertSame(
+            'model_placeholder_recovery',
+            'candidate model not modified',
+            'UNIT',
+            $placeholderModelCandidate->model
+        );
+
+        /*
+        * Una sequenza modello distribuita su più token viene preservata.
+        */
+        $spacedModelCandidate = new ProductIdentificationCandidate([
+            'name' => 'Sony WH 1000 XM5 cuffie wireless nero',
+            'model' => 'UNIT',
+            'metadata' => [],
+        ]);
+
+        $spacedModelMetadata = $builder->mergeIntoMetadata(
+            $spacedModelCandidate
+        );
+
+        $assertSame(
+            'model_spaced_code',
+            'model value',
+            'WH 1000 XM5',
+            data_get(
+                $spacedModelMetadata,
+                'assisted_review.fields.model.suggestion.value'
+            )
+        );
+
+        /*
+        * Una specifica tecnica non deve diventare modello.
+        */
+        $technicalModelCandidate = new ProductIdentificationCandidate([
+            'name' => 'Lampada Smart LuxHome E27 WiFi',
+            'metadata' => [],
+        ]);
+
+        $technicalModelMetadata = $builder->mergeIntoMetadata(
+            $technicalModelCandidate
+        );
+
+        $assertSame(
+            'model_technical_spec_guard',
+            'model remains missing',
+            'missing',
+            data_get(
+                $technicalModelMetadata,
+                'assisted_review.fields.model.state'
+            )
+        );
+
+        /*
+        * Una classe Wi-Fi come AX3000 non è necessariamente un modello preciso.
+        * Il valore corrente viene conservato, ma richiede revisione manuale.
+        */
+        $wifiClassModelCandidate = new ProductIdentificationCandidate([
+            'name' => 'Router NetWave AX3000 WiFi 6',
+            'model' => 'AX3000',
+            'metadata' => [
+                'product_understanding' => [
+                    'model_candidate' => 'AX3000',
+                ],
+            ],
+        ]);
+
+        $wifiClassModelMetadata = $builder->mergeIntoMetadata(
+            $wifiClassModelCandidate
+        );
+
+        $assertSame(
+            'model_wifi_class_guard',
+            'model state',
+            'missing',
+            data_get(
+                $wifiClassModelMetadata,
+                'assisted_review.fields.model.state'
+            )
+        );
+
+        $assertSame(
+            'model_wifi_class_guard',
+            'current value preserved',
+            'AX3000',
+            data_get(
+                $wifiClassModelMetadata,
+                'assisted_review.fields.model.current.value'
+            )
+        );
+
+        $assertSame(
+            'model_wifi_class_guard',
+            'technical issue present',
+            true,
+            in_array(
+                'technical_specification_used_as_model',
+                data_get(
+                    $wifiClassModelMetadata,
+                    'assisted_review.fields.model.issues',
+                    []
+                ),
+                true
+            )
+        );
+
+        $assertSame(
+            'model_wifi_class_guard',
+            'no automatic replacement',
+            null,
+            data_get(
+                $wifiClassModelMetadata,
+                'assisted_review.fields.model.suggestion'
+            )
+        );
+
+        /*
+        * HDMI corrente viene conservato come evidenza ma non accettato.
+        */
+        $hdmiModelCandidate = new ProductIdentificationCandidate([
+            'name' => 'Docking Station USB-C Dual HDMI 4K',
+            'model' => 'HDMI',
+            'metadata' => [
+                'product_understanding' => [
+                    'model_candidate' => 'HDMI',
+                ],
+            ],
+        ]);
+
+        $hdmiModelMetadata = $builder->mergeIntoMetadata(
+            $hdmiModelCandidate
+        );
+
+        $assertSame(
+            'model_hdmi_guard',
+            'model state',
+            'missing',
+            data_get(
+                $hdmiModelMetadata,
+                'assisted_review.fields.model.state'
+            )
+        );
+
+        $assertSame(
+            'model_hdmi_guard',
+            'current value preserved',
+            'HDMI',
+            data_get(
+                $hdmiModelMetadata,
+                'assisted_review.fields.model.current.value'
+            )
+        );
+
+        $assertSame(
+            'model_hdmi_guard',
+            'technical issue present',
+            true,
+            in_array(
+                'technical_specification_used_as_model',
+                data_get(
+                    $hdmiModelMetadata,
+                    'assisted_review.fields.model.issues',
+                    []
+                ),
+                true
+            )
+        );
+
+        /*
+        * Il brand non deve essere riproposto come modello.
+        */
+        $brandAsModelCandidate = new ProductIdentificationCandidate([
+            'name' => 'SSD FLASHCORE 1TB NVME',
+            'model' => 'FLASHCORE',
+            'metadata' => [],
+        ]);
+
+        $brandAsModelMetadata = $builder->mergeIntoMetadata(
+            $brandAsModelCandidate
+        );
+
+        $assertSame(
+            'model_brand_guard',
+            'model state',
+            'missing',
+            data_get(
+                $brandAsModelMetadata,
+                'assisted_review.fields.model.state'
+            )
+        );
+
+        $assertSame(
+            'model_brand_guard',
+            'brand issue present',
+            true,
+            in_array(
+                'brand_used_as_model',
+                data_get(
+                    $brandAsModelMetadata,
+                    'assisted_review.fields.model.issues',
+                    []
+                ),
+                true
+            )
+        );
+
+        /*
+        * Un model candidate valido dell'analyzer può essere suggerito.
+        */
+        $analysisModelCandidate = new ProductIdentificationCandidate([
+            'name' => 'Cuffie Sony serie professionale',
+            'metadata' => [
+                'product_understanding' => [
+                    'model_candidate' => 'WH-1000XM5',
+                ],
+            ],
+        ]);
+
+        $analysisModelMetadata = $builder->mergeIntoMetadata(
+            $analysisModelCandidate
+        );
+
+        $assertSame(
+            'model_analysis_suggestion',
+            'model value',
+            'WH-1000XM5',
+            data_get(
+                $analysisModelMetadata,
+                'assisted_review.fields.model.suggestion.value'
+            )
+        );
+
+        $assertSame(
+            'model_analysis_suggestion',
+            'model source',
+            'product_line_analysis',
+            data_get(
+                $analysisModelMetadata,
+                'assisted_review.fields.model.suggestion.source'
+            )
+        );
+
+        /*
+        * Il suggerimento modello deve restare idempotente.
+        */
+        $idempotentModelCandidate = clone $placeholderModelCandidate;
+        $idempotentModelCandidate->metadata = $placeholderModelMetadata;
+
+        $secondModelBuild = $builder->mergeIntoMetadata(
+            $idempotentModelCandidate
+        );
+
+        $assertSame(
+            'model_suggestion_idempotence',
+            'second build equals first build',
+            $placeholderModelMetadata,
+            $secondModelBuild
+        );
+
+        /*
          * Scenario 6:
          * decisioni esplicite dell'utente devono essere preservate.
          */

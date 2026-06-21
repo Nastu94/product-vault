@@ -39,7 +39,9 @@ class AssistedReviewMetadataBuilder
         private readonly AssistedReviewBrandSuggestionResolver
             $brandSuggestionResolver,
         private readonly AssistedReviewCategorySuggestionResolver
-            $categorySuggestionResolver
+            $categorySuggestionResolver,
+        private readonly AssistedReviewModelSuggestionResolver
+            $modelSuggestionResolver
     ) {
     }
 
@@ -61,6 +63,10 @@ class AssistedReviewMetadataBuilder
         $existingFields = is_array($existingNamespace['fields'] ?? null)
             ? $existingNamespace['fields']
             : [];
+
+        $modelAssessment = $this->modelSuggestionResolver->assess(
+            $candidate
+        );
 
         /*
          * Manteniamo eventuali campi futuri non ancora conosciuti da questa
@@ -87,7 +93,13 @@ class AssistedReviewMetadataBuilder
 
         $fields['model'] = $this->buildField(
             current: $this->currentModel($candidate),
-            existingField: $this->existingField($existingFields, 'model')
+            existingField: $this->existingField(
+                $existingFields,
+                'model'
+            ),
+            suggestion: $modelAssessment['suggestion'],
+            currentIsUsable: $modelAssessment['current_is_usable'],
+            issues: $modelAssessment['issues']
         );
 
         $completionFields = [];
@@ -135,30 +147,32 @@ class AssistedReviewMetadataBuilder
     }
 
     /**
-    * Costruisce lo stato di un singolo campo.
-    *
-    * Ordine di precedenza:
-    * - decisione esplicita dell'utente;
-    * - valore già presente sul candidato;
-    * - suggerimento automatico;
-    * - valore mancante.
-    *
-    * @param  array<string, mixed>|null  $current
-    * @param  array<string, mixed>  $existingField
-    * @param  array<string, mixed>|null  $suggestion
-    * @return array<string, mixed>
-    */
+     * Costruisce lo stato di un singolo campo.
+     *
+     * Ordine di precedenza:
+     * - decisione esplicita dell'utente;
+     * - valore corrente valido;
+     * - suggerimento automatico;
+     * - valore mancante o corrente non affidabile.
+     *
+     * Un valore corrente non affidabile viene conservato nel payload come
+     * evidenza, ma non impedisce al campo di richiedere revisione.
+     *
+     * @param  array<string, mixed>|null  $current
+     * @param  array<string, mixed>  $existingField
+     * @param  array<string, mixed>|null  $suggestion
+     * @param  array<int, string>  $issues
+     * @return array<string, mixed>
+     */
     private function buildField(
         ?array $current,
         array $existingField,
-        ?array $suggestion = null
+        ?array $suggestion = null,
+        bool $currentIsUsable = true,
+        array $issues = []
     ): array {
         $existingState = $existingField['state'] ?? null;
 
-        /*
-        * Una decisione esplicita dell'utente ha precedenza su qualsiasi
-        * successiva elaborazione automatica.
-        */
         if (
             is_string($existingState)
             && in_array(
@@ -175,11 +189,7 @@ class AssistedReviewMetadataBuilder
             ], $existingField);
         }
 
-        /*
-        * Un valore già presente sul candidato è la fonte corrente e non deve
-        * essere affiancato da un suggerimento concorrente.
-        */
-        if ($current !== null) {
+        if ($current !== null && $currentIsUsable) {
             return [
                 'state' => 'present',
                 'required' => false,
@@ -189,20 +199,32 @@ class AssistedReviewMetadataBuilder
         }
 
         if ($suggestion !== null) {
-            return [
+            $field = [
                 'state' => 'suggested',
                 'required' => false,
-                'current' => null,
+                'current' => $current,
                 'suggestion' => $suggestion,
             ];
+
+            if ($issues !== []) {
+                $field['issues'] = array_values(array_unique($issues));
+            }
+
+            return $field;
         }
 
-        return [
+        $field = [
             'state' => 'missing',
             'required' => false,
-            'current' => null,
+            'current' => $current,
             'suggestion' => null,
         ];
+
+        if ($issues !== []) {
+            $field['issues'] = array_values(array_unique($issues));
+        }
+
+        return $field;
     }
 
     /**

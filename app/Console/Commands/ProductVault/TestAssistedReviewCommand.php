@@ -6,6 +6,7 @@ use App\Models\Brand;
 use App\Models\Category;
 use App\Models\ProductIdentificationCandidate;
 use App\Services\Documents\AssistedReview\AssistedReviewMetadataBuilder;
+use App\Services\Documents\AssistedReview\AssistedReviewPresenter;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
@@ -18,7 +19,8 @@ class TestAssistedReviewCommand extends Command
      * Esegue gli scenari isolati del contratto assisted_review.
      */
     public function handle(
-        AssistedReviewMetadataBuilder $builder
+        AssistedReviewMetadataBuilder $builder,
+        AssistedReviewPresenter $presenter
     ): int {
         $rows = [];
         $failures = [];
@@ -1420,6 +1422,438 @@ class TestAssistedReviewCommand extends Command
             'second build equals first build',
             $dehumidifierMetadata,
             $secondCategoryBuild
+        );
+
+        /*
+         * Presenter 1:
+         * un candidato completo viene tradotto in dati leggibili per la UI.
+         */
+        $completePresentationCandidate = clone $completeCandidate;
+        $completePresentationCandidate->metadata = $completeMetadata;
+
+        $attributesBeforePresentation = $completePresentationCandidate
+            ->getAttributes();
+
+        $completePresentation = $presenter->present(
+            $completePresentationCandidate
+        );
+
+        $assertSame(
+            'presenter_complete_candidate',
+            'contract available',
+            true,
+            data_get($completePresentation, 'available')
+        );
+
+        $assertSame(
+            'presenter_complete_candidate',
+            'contract version',
+            'v1',
+            data_get($completePresentation, 'version')
+        );
+
+        $assertSame(
+            'presenter_complete_candidate',
+            'brand state label',
+            'Estratto dal documento',
+            data_get(
+                $completePresentation,
+                'fields.brand.state_label'
+            )
+        );
+
+        $assertSame(
+            'presenter_complete_candidate',
+            'model display value',
+            'XS1000',
+            data_get(
+                $completePresentation,
+                'fields.model.display_value'
+            )
+        );
+
+        $assertSame(
+            'presenter_complete_candidate',
+            'completion not required',
+            false,
+            data_get(
+                $completePresentation,
+                'needs_user_completion'
+            )
+        );
+
+        $assertSame(
+            'presenter_complete_candidate',
+            'presenter is read only',
+            $attributesBeforePresentation,
+            $completePresentationCandidate->getAttributes()
+        );
+
+        /*
+         * Presenter 2:
+         * suggerimenti e campi mancanti richiedono una decisione esplicita.
+         */
+        $actionCandidate = new ProductIdentificationCandidate([
+            'metadata' => [
+                'assisted_review' => [
+                    'version' => 'v1',
+                    'builder' => 'assisted_review_metadata_builder_v1',
+                    'needs_user_completion' => true,
+                    'completion_fields' => [
+                        'brand',
+                        'model',
+                    ],
+                    'fields' => [
+                        'brand' => [
+                            'state' => 'suggested',
+                            'required' => false,
+                            'current' => null,
+                            'suggestion' => [
+                                'value' => 'Kingston',
+                                'source' => 'name_structure',
+                                'method' => 'name_structure_title_before_model',
+                                'confidence' => 78,
+                            ],
+                        ],
+                        'category' => [
+                            'state' => 'present',
+                            'required' => false,
+                            'current' => [
+                                'value' => 'Computer',
+                            ],
+                            'suggestion' => null,
+                        ],
+                        'model' => [
+                            'state' => 'missing',
+                            'required' => false,
+                            'current' => [
+                                'value' => 'AX3000',
+                            ],
+                            'suggestion' => null,
+                            'issues' => [
+                                'technical_specification_used_as_model',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        $actionAttributesBefore = $actionCandidate->getAttributes();
+
+        $actionPresentation = $presenter->present(
+            $actionCandidate
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'brand state',
+            'suggested',
+            data_get(
+                $actionPresentation,
+                'fields.brand.state'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'brand state label',
+            'Suggerito da Product Vault',
+            data_get(
+                $actionPresentation,
+                'fields.brand.state_label'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'brand display value',
+            'Kingston',
+            data_get(
+                $actionPresentation,
+                'fields.brand.display_value'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'brand needs action',
+            true,
+            data_get(
+                $actionPresentation,
+                'fields.brand.needs_action'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'brand suggestion can be accepted',
+            true,
+            data_get(
+                $actionPresentation,
+                'fields.brand.can_accept_suggestion'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'category state label',
+            'Estratto dal documento',
+            data_get(
+                $actionPresentation,
+                'fields.category.state_label'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'model state label',
+            'Da completare',
+            data_get(
+                $actionPresentation,
+                'fields.model.state_label'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'unreliable model current preserved',
+            'AX3000',
+            data_get(
+                $actionPresentation,
+                'fields.model.current_value'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'unreliable model not used as display value',
+            null,
+            data_get(
+                $actionPresentation,
+                'fields.model.display_value'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'unreliable model flagged',
+            true,
+            data_get(
+                $actionPresentation,
+                'fields.model.has_unreliable_current'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'missing model needs action',
+            true,
+            data_get(
+                $actionPresentation,
+                'fields.model.needs_action'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'model issues',
+            ['technical_specification_used_as_model'],
+            data_get(
+                $actionPresentation,
+                'fields.model.issues'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'completion fields',
+            ['brand', 'model'],
+            data_get(
+                $actionPresentation,
+                'completion_fields'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'completion count',
+            2,
+            data_get(
+                $actionPresentation,
+                'completion_count'
+            )
+        );
+
+        $assertSame(
+            'presenter_action_candidate',
+            'presenter does not mutate candidate',
+            $actionAttributesBefore,
+            $actionCandidate->getAttributes()
+        );
+
+        /*
+         * Presenter 3:
+         * le decisioni esplicite dell'utente non tornano azionabili.
+         */
+        $protectedCandidate = new ProductIdentificationCandidate([
+            'metadata' => [
+                'assisted_review' => [
+                    'version' => 'v1',
+                    'fields' => [
+                        'brand' => [
+                            'state' => 'confirmed',
+                            'required' => false,
+                            'current' => [
+                                'value' => 'Kingston',
+                            ],
+                            'suggestion' => null,
+                        ],
+                        'category' => [
+                            'state' => 'modified',
+                            'required' => false,
+                            'current' => [
+                                'value' => 'Archiviazione',
+                            ],
+                            'suggestion' => null,
+                        ],
+                        'model' => [
+                            'state' => 'declined',
+                            'required' => false,
+                            'current' => null,
+                            'suggestion' => null,
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        $protectedPresentation = $presenter->present(
+            $protectedCandidate
+        );
+
+        $assertSame(
+            'presenter_protected_states',
+            'confirmed label',
+            'Confermato da te',
+            data_get(
+                $protectedPresentation,
+                'fields.brand.state_label'
+            )
+        );
+
+        $assertSame(
+            'presenter_protected_states',
+            'modified label',
+            'Modificato da te',
+            data_get(
+                $protectedPresentation,
+                'fields.category.state_label'
+            )
+        );
+
+        $assertSame(
+            'presenter_protected_states',
+            'declined label',
+            'Non disponibile',
+            data_get(
+                $protectedPresentation,
+                'fields.model.state_label'
+            )
+        );
+
+        $assertSame(
+            'presenter_protected_states',
+            'protected fields need no action',
+            false,
+            data_get(
+                $protectedPresentation,
+                'needs_user_completion'
+            )
+        );
+
+        /*
+         * Presenter 4:
+         * il fallback legge soltanto valori già presenti sul candidato.
+         */
+        $fallbackBrand = new Brand([
+            'name' => 'Kingston',
+            'normalized_name' => 'kingston',
+        ]);
+        $fallbackBrand->id = 12;
+
+        $fallbackCategory = new Category([
+            'name' => 'Computer',
+            'slug' => 'computers',
+        ]);
+        $fallbackCategory->id = 7;
+
+        $fallbackCandidate = new ProductIdentificationCandidate([
+            'brand_id' => 12,
+            'category_id' => 7,
+            'model' => 'NV3',
+            'metadata' => [],
+        ]);
+
+        $fallbackCandidate->setRelation(
+            'brand',
+            $fallbackBrand
+        );
+
+        $fallbackCandidate->setRelation(
+            'category',
+            $fallbackCategory
+        );
+
+        $fallbackPresentation = $presenter->present(
+            $fallbackCandidate
+        );
+
+        $assertSame(
+            'presenter_metadata_fallback',
+            'contract unavailable',
+            false,
+            data_get($fallbackPresentation, 'available')
+        );
+
+        $assertSame(
+            'presenter_metadata_fallback',
+            'brand fallback value',
+            'Kingston',
+            data_get(
+                $fallbackPresentation,
+                'fields.brand.display_value'
+            )
+        );
+
+        $assertSame(
+            'presenter_metadata_fallback',
+            'category fallback value',
+            'Computer',
+            data_get(
+                $fallbackPresentation,
+                'fields.category.display_value'
+            )
+        );
+
+        $assertSame(
+            'presenter_metadata_fallback',
+            'model fallback value',
+            'NV3',
+            data_get(
+                $fallbackPresentation,
+                'fields.model.display_value'
+            )
+        );
+
+        $assertSame(
+            'presenter_metadata_fallback',
+            'fallback completion not required',
+            false,
+            data_get(
+                $fallbackPresentation,
+                'needs_user_completion'
+            )
         );
 
         /*

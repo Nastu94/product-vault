@@ -23,7 +23,7 @@ final class AssistedReviewPresenter
      * @var array<string, string>
      */
     private const STATE_LABELS = [
-        'present' => 'Estratto dal documento',
+        'present' => 'Dato disponibile',
         'suggested' => 'Suggerito da Product Vault',
         'missing' => 'Da completare',
         'confirmed' => 'Confermato da te',

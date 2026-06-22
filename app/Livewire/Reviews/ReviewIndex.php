@@ -6,6 +6,7 @@ use App\Models\Document;
 use App\Models\ProductIdentificationCandidate;
 use App\Models\ProductUnderstandingGlobalFact;
 use App\Services\Documents\ProductFromCandidateCreator;
+use App\Services\Documents\AssistedReview\AssistedReviewPresenter;
 use App\Services\Documents\DocumentLines\DocumentLineAmountConsistencyChecker;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use Illuminate\Contracts\View\View;
@@ -86,6 +87,15 @@ class ReviewIndex extends Component
     private function applyCandidateFilter(Builder $query): Builder
     {
         return match ($this->filter) {
+            'needs_completion' => $query
+                ->where('review_status', 'pending')
+                ->whereNull('product_id')
+                ->whereRaw("
+                    JSON_EXTRACT(
+                        metadata,
+                        '$.assisted_review.needs_user_completion'
+                    ) = true
+                "),
             'low_confidence' => $query
                 ->where('review_status', 'pending')
                 ->whereNull('product_id')
@@ -181,6 +191,24 @@ class ReviewIndex extends Component
     }
 
     /**
+     * Classi del badge associato allo stato Assisted Review.
+     *
+     * @param  array<string, mixed>  $field
+     */
+    public function assistedReviewStateBadgeClasses(
+        array $field
+    ): string {
+        return match ($field['state'] ?? 'missing') {
+            'present' => 'bg-gray-100 text-gray-700 ring-gray-500/20',
+            'suggested' => 'bg-indigo-50 text-indigo-700 ring-indigo-600/20',
+            'confirmed' => 'bg-green-50 text-green-700 ring-green-600/20',
+            'modified' => 'bg-green-50 text-green-700 ring-green-600/20',
+            'declined' => 'bg-gray-100 text-gray-600 ring-gray-400/20',
+            default => 'bg-orange-50 text-orange-700 ring-orange-600/20',
+        };
+    }
+
+    /**
      * Recupera il global fact EAN aggiornato per il candidato.
      *
      * I metadata del candidato sono uno snapshot del momento della generazione.
@@ -218,6 +246,15 @@ class ReviewIndex extends Component
 
         $pythonWarnings = data_get($candidate->metadata, 'product_understanding_python.warnings', []);
         $pythonWarnings = is_array($pythonWarnings) ? $pythonWarnings : [];
+
+        /*
+        * L'assenza di global facts è un gap di completezza prodotto,
+        * non un warning strutturale che richiede un allarme rosso.
+        */
+        $pythonWarnings = array_values(array_filter(
+            $pythonWarnings,
+            fn (mixed $warning): bool => $warning !== 'missing_global_facts'
+        ));
 
         $globalFactMatched = data_get($candidate->metadata, 'product_understanding_global_fact.matched') === true;
         $feedbackBias = data_get($candidate->metadata, 'product_understanding_feedback.suggested_bias');
@@ -598,6 +635,8 @@ class ReviewIndex extends Component
                 'document.currency',
                 'documentLine',
                 'product',
+                'brand',
+                'category',
             ]);
 
         $this->applyCandidateFilter($candidatesQuery);
@@ -607,10 +646,28 @@ class ReviewIndex extends Component
             ->latest('id')
             ->paginate($this->perPage);
 
+        $assistedReviewPresenter = app(
+            AssistedReviewPresenter::class
+        );
+
+        $assistedReviewPresentations = $candidates
+            ->getCollection()
+            ->mapWithKeys(
+                fn (
+                    ProductIdentificationCandidate $candidate
+                ): array => [
+                    $candidate->id => $assistedReviewPresenter->present(
+                        $candidate
+                    ),
+                ]
+            )
+            ->all();
+
         return view('livewire.reviews.review-index', [
             'summary' => $summary,
             'documentsNeedingReview' => $documentsNeedingReview,
             'candidates' => $candidates,
+            'assistedReviewPresentations' => $assistedReviewPresentations,
         ])->layout('layouts.app');
     }
 }

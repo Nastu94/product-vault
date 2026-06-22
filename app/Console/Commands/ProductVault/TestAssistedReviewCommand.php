@@ -1455,7 +1455,7 @@ class TestAssistedReviewCommand extends Command
         $assertSame(
             'presenter_complete_candidate',
             'brand state label',
-            'Estratto dal documento',
+            'Dato disponibile',
             data_get(
                 $completePresentation,
                 'fields.brand.state_label'
@@ -1598,7 +1598,7 @@ class TestAssistedReviewCommand extends Command
         $assertSame(
             'presenter_action_candidate',
             'category state label',
-            'Estratto dal documento',
+            'Dato disponibile',
             data_get(
                 $actionPresentation,
                 'fields.category.state_label'

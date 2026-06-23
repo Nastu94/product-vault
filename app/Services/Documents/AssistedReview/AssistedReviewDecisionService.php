@@ -172,6 +172,145 @@ final class AssistedReviewDecisionService
     }
 
     /**
+     * Applica un valore inserito o selezionato manualmente dall'utente.
+     *
+     * Il campo assume lo stato protetto "modified", così una successiva
+     * rigenerazione automatica non può sovrascrivere la decisione.
+     */
+    public function setManualValue(
+        ProductIdentificationCandidate $candidate,
+        string $fieldName,
+        mixed $value,
+        int $userId
+    ): ProductIdentificationCandidate {
+        $this->assertSupportedField($fieldName);
+
+        if ($userId <= 0) {
+            throw new InvalidArgumentException(
+                'L’utente che modifica il campo non è valido.'
+            );
+        }
+
+        $normalizedValue = $this->normalizeManualValue(
+            fieldName: $fieldName,
+            value: $value,
+        );
+
+        return DB::transaction(function () use (
+            $candidate,
+            $fieldName,
+            $normalizedValue,
+            $userId
+        ): ProductIdentificationCandidate {
+            $lockedCandidate = ProductIdentificationCandidate::query()
+                ->with('document')
+                ->lockForUpdate()
+                ->findOrFail($candidate->getKey());
+
+            $this->assertReviewable($lockedCandidate);
+
+            $metadata = is_array($lockedCandidate->metadata)
+                ? $lockedCandidate->metadata
+                : [];
+
+            $field = data_get(
+                $metadata,
+                "assisted_review.fields.{$fieldName}",
+                []
+            );
+
+            if (! is_array($field)) {
+                throw new RuntimeException(
+                    "Metadata Assisted Review non validi per {$fieldName}."
+                );
+            }
+
+            /*
+            * Un retry con lo stesso valore non deve riscrivere la decisione
+            * o creare nuovamente entità di supporto.
+            */
+            if ($this->manualValueAlreadyApplied(
+                candidate: $lockedCandidate,
+                field: $field,
+                fieldName: $fieldName,
+                value: $normalizedValue,
+            )) {
+                return $lockedCandidate->fresh([
+                    'brand',
+                    'category',
+                    'document',
+                ]);
+            }
+
+            $previousState = $this->nullableString(
+                $field['state'] ?? null
+            );
+
+            $previousCurrentValue = $this->nullableString(
+                data_get($field, 'current.value')
+            );
+
+            $previousSuggestedValue = $this->nullableString(
+                data_get($field, 'suggestion.value')
+            );
+
+            $current = match ($fieldName) {
+                'brand' => $this->applyManualBrandValue(
+                    candidate: $lockedCandidate,
+                    value: (string) $normalizedValue,
+                ),
+
+                'category' => $this->applyManualCategoryValue(
+                    candidate: $lockedCandidate,
+                    categoryId: (int) $normalizedValue,
+                ),
+
+                'model' => $this->applyManualModelValue(
+                    candidate: $lockedCandidate,
+                    value: (string) $normalizedValue,
+                ),
+            };
+
+            $field['state'] = 'modified';
+            $field['required'] = false;
+            $field['current'] = $current;
+            $field['suggestion'] = null;
+            $field['decision'] = [
+                'action' => 'manual_value',
+                'previous_state' => $previousState,
+                'previous_current_value' => $previousCurrentValue,
+                'previous_suggested_value' => $previousSuggestedValue,
+                'decided_by_user_id' => $userId,
+                'decided_at' => now()->toISOString(),
+            ];
+
+            /*
+            * Gli issue automatici non restano attivi dopo una decisione
+            * manuale esplicita dell'utente.
+            */
+            unset($field['issues']);
+
+            data_set(
+                $metadata,
+                "assisted_review.fields.{$fieldName}",
+                $field
+            );
+
+            $lockedCandidate->metadata = $this->recalculateCompletion(
+                $metadata
+            );
+
+            $lockedCandidate->save();
+
+            return $lockedCandidate->fresh([
+                'brand',
+                'category',
+                'document',
+            ]);
+        });
+    }
+
+    /**
      * Applica un suggerimento brand.
      *
      * Se il suggerimento non punta a un brand esistente, la conferma esplicita
@@ -353,6 +492,142 @@ final class AssistedReviewDecisionService
     }
 
     /**
+     * Applica un brand inserito manualmente.
+     *
+     * Il brand viene riutilizzato se esiste già globalmente o nel team.
+     * In caso contrario viene creato come brand privato e non verificato.
+     *
+     * @return array<string, mixed>
+     */
+    private function applyManualBrandValue(
+        ProductIdentificationCandidate $candidate,
+        string $value
+    ): array {
+        $teamId = $candidate->document?->team_id;
+
+        if ($teamId === null) {
+            throw new RuntimeException(
+                'Il candidato non appartiene a un workspace valido.'
+            );
+        }
+
+        $normalizedName = $this->normalizeName($value);
+
+        $brand = Brand::query()
+            ->whereNull('team_id')
+            ->where('normalized_name', $normalizedName)
+            ->where('is_active', true)
+            ->first();
+
+        if ($brand === null) {
+            $brand = Brand::query()
+                ->where('team_id', $teamId)
+                ->where('normalized_name', $normalizedName)
+                ->where('is_active', true)
+                ->first();
+        }
+
+        if ($brand === null) {
+            $brand = Brand::query()->create([
+                'team_id' => $teamId,
+                'name' => $value,
+                'normalized_name' => $normalizedName,
+                'website' => null,
+                'is_verified' => false,
+                'is_active' => true,
+            ]);
+        }
+
+        $candidate->brand_id = $brand->id;
+
+        return [
+            'value' => $brand->name,
+            'ref' => [
+                'type' => 'brand',
+                'id' => $brand->id,
+                'key' => $brand->normalized_name,
+            ],
+            'origin' => 'user_modified',
+            'source' => 'user_review',
+            'method' => 'manual_value',
+            'confidence' => null,
+        ];
+    }
+
+    /**
+     * Applica una categoria selezionata manualmente.
+     *
+     * Non vengono create nuove categorie dalla revisione: la categoria deve
+     * già esistere ed essere accessibile nel workspace corrente.
+     *
+     * @return array<string, mixed>
+     */
+    private function applyManualCategoryValue(
+        ProductIdentificationCandidate $candidate,
+        int $categoryId
+    ): array {
+        $teamId = $candidate->document?->team_id;
+
+        if ($teamId === null) {
+            throw new RuntimeException(
+                'Il candidato non appartiene a un workspace valido.'
+            );
+        }
+
+        $category = Category::query()
+            ->whereKey($categoryId)
+            ->where('is_active', true)
+            ->where(function ($query) use ($teamId): void {
+                $query
+                    ->whereNull('team_id')
+                    ->orWhere('team_id', $teamId);
+            })
+            ->first();
+
+        if ($category === null) {
+            throw new RuntimeException(
+                'La categoria selezionata non è disponibile nel workspace corrente.'
+            );
+        }
+
+        $candidate->category_id = $category->id;
+
+        return [
+            'value' => $category->name,
+            'ref' => [
+                'type' => 'category',
+                'id' => $category->id,
+                'key' => $category->slug,
+            ],
+            'origin' => 'user_modified',
+            'source' => 'user_review',
+            'method' => 'manual_value',
+            'confidence' => null,
+        ];
+    }
+
+    /**
+     * Applica un modello inserito manualmente.
+     *
+     * @return array<string, mixed>
+     */
+    private function applyManualModelValue(
+        ProductIdentificationCandidate $candidate,
+        string $value
+    ): array {
+        $candidate->model = $value;
+
+        return [
+            'value' => $value,
+            'ref' => null,
+            'origin' => 'user_modified',
+            'source' => 'user_review',
+            'method' => 'manual_value',
+            'confidence' => null,
+        ];
+    }
+
+    /**
      * Ricalcola i campi che richiedono ancora intervento.
      *
      * @param  array<string, mixed>  $metadata
@@ -414,6 +689,96 @@ final class AssistedReviewDecisionService
                 "Campo Assisted Review non supportato: {$fieldName}."
             );
         }
+    }
+
+    /**
+     * Normalizza e valida il valore manuale in base al campo.
+     */
+    private function normalizeManualValue(
+        string $fieldName,
+        mixed $value
+    ): string|int {
+        if ($fieldName === 'category') {
+            $categoryId = $this->positiveInteger($value);
+
+            if ($categoryId === null) {
+                throw new InvalidArgumentException(
+                    'La categoria selezionata non è valida.'
+                );
+            }
+
+            return $categoryId;
+        }
+
+        if (! is_string($value) && ! is_numeric($value)) {
+            throw new InvalidArgumentException(
+                "Il valore manuale per {$fieldName} non è valido."
+            );
+        }
+
+        $normalized = trim((string) $value);
+
+        if ($normalized === '') {
+            throw new InvalidArgumentException(
+                "Il valore manuale per {$fieldName} non può essere vuoto."
+            );
+        }
+
+        if (mb_strlen($normalized) > 255) {
+            throw new InvalidArgumentException(
+                "Il valore manuale per {$fieldName} è troppo lungo."
+            );
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Verifica se la stessa modifica manuale è già stata applicata.
+     *
+     * @param  array<string, mixed>  $field
+     */
+    private function manualValueAlreadyApplied(
+        ProductIdentificationCandidate $candidate,
+        array $field,
+        string $fieldName,
+        string|int $value
+    ): bool {
+        if (
+            ($field['state'] ?? null) !== 'modified'
+            || data_get($field, 'decision.action') !== 'manual_value'
+        ) {
+            return false;
+        }
+
+        return match ($fieldName) {
+            'brand' => (
+                $candidate->brand_id !== null
+                && $this->positiveInteger(
+                    data_get($field, 'current.ref.id')
+                ) === (int) $candidate->brand_id
+                && $this->normalizeName(
+                    (string) data_get($field, 'current.value')
+                ) === $this->normalizeName((string) $value)
+            ),
+
+            'category' => (
+                $candidate->category_id !== null
+                && (int) $candidate->category_id === (int) $value
+                && $this->positiveInteger(
+                    data_get($field, 'current.ref.id')
+                ) === (int) $value
+            ),
+
+            'model' => (
+                $candidate->model === (string) $value
+                && $this->nullableString(
+                    data_get($field, 'current.value')
+                ) === (string) $value
+            ),
+
+            default => false,
+        };
     }
 
     /**

@@ -7,6 +7,7 @@ use App\Models\ProductIdentificationCandidate;
 use App\Models\ProductUnderstandingGlobalFact;
 use App\Services\Documents\ProductFromCandidateCreator;
 use App\Services\Documents\AssistedReview\AssistedReviewPresenter;
+use App\Services\Documents\AssistedReview\AssistedReviewDecisionService;
 use App\Services\Documents\DocumentLines\DocumentLineAmountConsistencyChecker;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use Illuminate\Contracts\View\View;
@@ -14,6 +15,8 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
 use Livewire\WithPagination;
+use InvalidArgumentException;
+use RuntimeException;
 
 class ReviewIndex extends Component
 {
@@ -387,6 +390,57 @@ class ReviewIndex extends Component
         }
 
         return number_format((float) $value, $decimals, ',', '.');
+    }
+
+    /**
+     * Applica al candidato un suggerimento Assisted Review confermato
+     * esplicitamente dall'utente.
+     *
+     * L'azione aggiorna esclusivamente il campo selezionato e i relativi
+     * metadata. Non conferma il candidato e non crea alcun prodotto.
+     */
+    public function acceptAssistedReviewSuggestion(
+        int $candidateId,
+        string $fieldName,
+        AssistedReviewDecisionService $decisionService
+    ): void {
+        abort_unless(
+            Auth::user()?->can('documents.review'),
+            403
+        );
+
+        $candidate = $this->findReviewableCandidate(
+            $candidateId
+        );
+
+        try {
+            $decisionService->acceptSuggestion(
+                candidate: $candidate,
+                fieldName: $fieldName,
+                userId: (int) Auth::id(),
+            );
+        } catch (
+            InvalidArgumentException | RuntimeException $exception
+        ) {
+            session()->flash(
+                'review_warning',
+                $exception->getMessage()
+            );
+
+            return;
+        }
+
+        $fieldLabel = match ($fieldName) {
+            'brand' => 'Brand',
+            'category' => 'Categoria',
+            'model' => 'Modello',
+            default => 'Campo',
+        };
+
+        session()->flash(
+            'review_success',
+            "{$fieldLabel}: suggerimento accettato."
+        );
     }
 
     /**

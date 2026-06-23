@@ -361,6 +361,25 @@
                                                                 <p class="mt-1 text-xs text-indigo-700">
                                                                     Proposta non ancora applicata.
                                                                 </p>
+
+                                                                @if (
+                                                                    ($field['can_accept_suggestion'] ?? false) === true
+                                                                    && $candidate->review_status === 'pending'
+                                                                    && $candidate->product_id === null
+                                                                )
+                                                                    <div class="mt-3">
+                                                                        <button
+                                                                            type="button"
+                                                                            wire:key="accept-assisted-review-{{ $candidate->id }}-{{ $fieldName }}"
+                                                                            wire:click="acceptAssistedReviewSuggestion({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            wire:loading.attr="disabled"
+                                                                            wire:target="acceptAssistedReviewSuggestion"
+                                                                            class="inline-flex items-center justify-center rounded-md border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        >
+                                                                            Accetta suggerimento
+                                                                        </button>
+                                                                    </div>
+                                                                @endif
                                                             @endif
                                                         @elseif ($hasUnreliableCurrent)
                                                             <div class="mt-3 text-sm text-gray-900">

@@ -9,8 +9,8 @@
                 </h1>
 
                 <p class="mt-2 max-w-3xl text-sm text-gray-600">
-                    Controlla i documenti e i candidati prodotto che richiedono attenzione.
-                    Qui trovi anche i segnali usati dal sistema per spiegare perché un prodotto è stato proposto.
+                    Controlla cosa è stato letto dal documento, cosa viene suggerito
+                    da Product Vault e quali campi richiedono una verifica.
                 </p>
             </div>
         </div>
@@ -163,6 +163,7 @@
                             class="mt-1 rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                         >
                             <option value="pending">Da revisionare</option>
+                            <option value="needs_completion">Da completare</option>
                             <option value="low_confidence">Bassa affidabilità</option>
                             <option value="python_warnings">Warning Python</option>
                             <option value="amount_mismatch">Importi incoerenti</option>
@@ -181,6 +182,15 @@
                             $globalFact = $candidate->metadata['product_understanding_global_fact'] ?? [];
                             $python = $candidate->metadata['product_understanding_python'] ?? [];
                             $understanding = $candidate->metadata['product_understanding'] ?? [];
+                            $assistedReview = $assistedReviewPresentations[
+                                $candidate->id
+                            ] ?? [];
+
+                            $assistedReviewFields = is_array(
+                                $assistedReview['fields'] ?? null
+                            )
+                                ? $assistedReview['fields']
+                                : [];
                             $amountConsistency = $this->candidateAmountConsistency($candidate);
                             $amountConsistencySignals = $this->metadataList($amountConsistency['signals'] ?? []);
                             $hasAmountConsistencyMismatch = $this->candidateHasAmountConsistencyMismatch($candidate);
@@ -204,7 +214,10 @@
                             | come se fossero ancora attivi.
                             */
                             $effectivePythonWarnings = $candidate->review_status === 'pending'
-                                ? $pythonWarnings
+                                ? array_values(array_filter(
+                                    $pythonWarnings,
+                                    fn ($warning) => $warning !== 'missing_global_facts'
+                                ))
                                 : [];
                         @endphp
 
@@ -284,31 +297,267 @@
                                         </div>
                                     @endif
 
+                                    @if (($assistedReview['available'] ?? false) === true)
+                                        <section class="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/30 p-4">
+                                            <div class="flex flex-wrap items-start justify-between gap-3">
+                                                <div>
+                                                    <h4 class="text-sm font-medium text-gray-900">
+                                                        {{ ($assistedReview['needs_user_completion'] ?? false)
+                                                            ? 'Dati prodotto da verificare'
+                                                            : 'Dati prodotto' }}
+                                                    </h4>
+
+                                                    <p class="mt-1 text-xs text-gray-600">
+                                                        @if (($assistedReview['needs_user_completion'] ?? false) === true)
+                                                            Product Vault ha individuato
+                                                            {{ $assistedReview['completion_count'] }}
+                                                            {{ ($assistedReview['completion_count'] ?? 0) === 1 ? 'campo da completare o verificare.' : 'campi da completare o verificare.' }}
+                                                            Nessun suggerimento viene applicato automaticamente.
+                                                        @else
+                                                            Brand, categoria e modello risultano già disponibili.
+                                                        @endif
+                                                    </p>
+                                                </div>
+
+                                                @if (($assistedReview['needs_user_completion'] ?? false) === true)
+                                                    <span class="inline-flex items-center rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-600/20">
+                                                        Da completare:
+                                                        {{ $assistedReview['completion_count'] }}
+                                                    </span>
+                                                @else
+                                                    <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
+                                                        Dati presenti
+                                                    </span>
+                                                @endif
+                                            </div>
+
+                                            <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                                @foreach (['brand', 'category', 'model'] as $fieldName)
+                                                    @php
+                                                        $field = $assistedReviewFields[$fieldName] ?? [];
+                                                        $displayValue = $field['display_value'] ?? null;
+                                                        $hasUnreliableCurrent = (
+                                                            $field['has_unreliable_current'] ?? false
+                                                        ) === true;
+                                                    @endphp
+
+                                                    <div class="rounded-md bg-white p-3 ring-1 ring-gray-200">
+                                                        <div class="flex flex-wrap items-start justify-between gap-2">
+                                                            <div class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                                {{ $field['label'] ?? ucfirst($fieldName) }}
+                                                            </div>
+
+                                                            <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset {{ $this->assistedReviewStateBadgeClasses($field) }}">
+                                                                {{ $field['state_label'] ?? 'Da completare' }}
+                                                            </span>
+                                                        </div>
+
+                                                        @if ($displayValue !== null)
+                                                            <div class="mt-3 text-sm font-medium text-gray-900">
+                                                                {{ $displayValue }}
+                                                            </div>
+
+                                                            @if (($field['state'] ?? null) === 'suggested')
+                                                                <p class="mt-1 text-xs text-indigo-700">
+                                                                    Proposta non ancora applicata.
+                                                                </p>
+                                                            @endif
+                                                        @elseif ($hasUnreliableCurrent)
+                                                            <div class="mt-3 text-sm text-gray-900">
+                                                                Valore letto:
+                                                                <span class="font-medium">
+                                                                    {{ $field['current_value'] }}
+                                                                </span>
+                                                            </div>
+
+                                                            <p class="mt-1 text-xs text-orange-700">
+                                                                Da verificare: non viene usato come valore valido.
+                                                            </p>
+                                                        @else
+                                                            <div class="mt-3 text-sm text-gray-500">
+                                                                Non disponibile
+                                                            </div>
+                                                        @endif
+                                                        @php
+                                                            $assistedReviewFieldState =
+                                                                $field['state'] ?? 'missing';
+
+                                                            $assistedReviewFieldIsActionable = in_array(
+                                                                $assistedReviewFieldState,
+                                                                ['missing', 'suggested'],
+                                                                true
+                                                            );
+
+                                                            $assistedReviewFieldIsEditing = (bool) data_get(
+                                                                $assistedReviewEditingFields,
+                                                                "{$candidate->id}.{$fieldName}",
+                                                                false
+                                                            );
+
+                                                            $assistedReviewManualErrorKey =
+                                                                "assistedReviewManualForms.{$candidate->id}.{$fieldName}";
+                                                        @endphp
+
+                                                        @if (
+                                                            $assistedReviewFieldIsActionable
+                                                            && $candidate->review_status === 'pending'
+                                                            && $candidate->product_id === null
+                                                        )
+                                                            @if ($assistedReviewFieldIsEditing)
+                                                                <div class="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+                                                                    <label
+                                                                        for="assisted-review-manual-{{ $candidate->id }}-{{ $fieldName }}"
+                                                                        class="block text-xs font-medium text-gray-700"
+                                                                    >
+                                                                        @switch($fieldName)
+                                                                            @case('brand')
+                                                                                Inserisci il brand
+                                                                                @break
+
+                                                                            @case('category')
+                                                                                Seleziona la categoria
+                                                                                @break
+
+                                                                            @case('model')
+                                                                                Inserisci il modello
+                                                                                @break
+
+                                                                            @default
+                                                                                Inserisci il valore
+                                                                        @endswitch
+                                                                    </label>
+
+                                                                    @if ($fieldName === 'category')
+                                                                        <select
+                                                                            id="assisted-review-manual-{{ $candidate->id }}-{{ $fieldName }}"
+                                                                            wire:model.defer="assistedReviewManualForms.{{ $candidate->id }}.{{ $fieldName }}"
+                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                        >
+                                                                            <option value="">
+                                                                                Seleziona una categoria
+                                                                            </option>
+
+                                                                            @foreach ($assistedReviewCategories as $categoryOption)
+                                                                                <option value="{{ $categoryOption->id }}">
+                                                                                    {{ $categoryOption->name }}
+                                                                                </option>
+                                                                            @endforeach
+                                                                        </select>
+                                                                    @else
+                                                                        <input
+                                                                            id="assisted-review-manual-{{ $candidate->id }}-{{ $fieldName }}"
+                                                                            type="text"
+                                                                            wire:model.defer="assistedReviewManualForms.{{ $candidate->id }}.{{ $fieldName }}"
+                                                                            autocomplete="off"
+                                                                            @if ($fieldName === 'brand')
+                                                                                placeholder="Esempio: NetWave"
+                                                                            @elseif ($fieldName === 'model')
+                                                                                placeholder="Esempio: NX-500"
+                                                                            @endif
+                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                        >
+                                                                    @endif
+
+                                                                    @error($assistedReviewManualErrorKey)
+                                                                        <p class="mt-1 text-xs text-red-600">
+                                                                            {{ $message }}
+                                                                        </p>
+                                                                    @enderror
+
+                                                                    <div class="mt-3 flex flex-wrap items-center gap-2">
+                                                                        <button
+                                                                            type="button"
+                                                                            wire:click="saveAssistedReviewManualValue({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            wire:loading.attr="disabled"
+                                                                            wire:target="saveAssistedReviewManualValue({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            class="inline-flex items-center justify-center rounded-md border border-transparent bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        >
+                                                                            Salva valore
+                                                                        </button>
+
+                                                                        <button
+                                                                            type="button"
+                                                                            wire:click="cancelAssistedReviewManualEditor({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            wire:loading.attr="disabled"
+                                                                            wire:target="saveAssistedReviewManualValue({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        >
+                                                                            Annulla
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            @else
+                                                                <div class="mt-3 flex flex-wrap items-center gap-2">
+                                                                    @if (
+                                                                        $assistedReviewFieldState === 'suggested'
+                                                                        && ($field['can_accept_suggestion'] ?? false) === true
+                                                                    )
+                                                                        <button
+                                                                            type="button"
+                                                                            wire:key="accept-assisted-review-{{ $candidate->id }}-{{ $fieldName }}"
+                                                                            wire:click="acceptAssistedReviewSuggestion({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            wire:loading.attr="disabled"
+                                                                            wire:target="acceptAssistedReviewSuggestion({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            class="inline-flex items-center justify-center rounded-md border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        >
+                                                                            Accetta suggerimento
+                                                                        </button>
+                                                                    @endif
+
+                                                                    <button
+                                                                        type="button"
+                                                                        wire:click="openAssistedReviewManualEditor({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                        wire:loading.attr="disabled"
+                                                                        wire:target="openAssistedReviewManualEditor({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                        class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                    >
+                                                                        {{ $assistedReviewFieldState === 'suggested'
+                                                                            ? 'Usa un altro valore'
+                                                                            : 'Inserisci manualmente' }}
+                                                                    </button>
+
+                                                                    <button
+                                                                        type="button"
+                                                                        wire:click="declineAssistedReviewField({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                        wire:confirm="Confermi che questo dato non è disponibile?"
+                                                                        wire:loading.attr="disabled"
+                                                                        wire:target="declineAssistedReviewField({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                        class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                    >
+                                                                        Non disponibile
+                                                                    </button>
+                                                                </div>
+                                                            @endif
+                                                        @endif
+                                                    </div>
+                                                @endforeach
+                                            </div>
+                                        </section>
+                                    @endif
+
                                     <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
                                         <div class="rounded-md border border-gray-200 p-4">
                                             <div class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                                Identificazione
+                                                Identificativi
                                             </div>
 
                                             <dl class="mt-3 space-y-2 text-sm">
                                                 <div>
-                                                    <dt class="text-xs text-gray-500">Modello</dt>
-                                                    <dd class="text-gray-900">{{ $candidate->model ?? '—' }}</dd>
+                                                    <dt class="text-xs text-gray-500">
+                                                        EAN
+                                                    </dt>
+                                                    <dd class="text-gray-900">
+                                                        {{ $candidate->ean_code ?? '—' }}
+                                                    </dd>
                                                 </div>
 
                                                 <div>
-                                                    <dt class="text-xs text-gray-500">EAN</dt>
-                                                    <dd class="text-gray-900">{{ $candidate->ean_code ?? '—' }}</dd>
-                                                </div>
-
-                                                <div>
-                                                    <dt class="text-xs text-gray-500">Seriale</dt>
-                                                    <dd class="text-gray-900">{{ $candidate->serial_number ?? '—' }}</dd>
-                                                </div>
-
-                                                <div>
-                                                    <dt class="text-xs text-gray-500">Categoria suggerita</dt>
-                                                    <dd class="text-gray-900">{{ $understanding['suggested_category'] ?? '—' }}</dd>
+                                                    <dt class="text-xs text-gray-500">
+                                                        Seriale
+                                                    </dt>
+                                                    <dd class="text-gray-900">
+                                                        {{ $candidate->serial_number ?? '—' }}
+                                                    </dd>
                                                 </div>
                                             </dl>
                                         </div>
@@ -538,7 +787,7 @@
 
             if ($selectedCandidate->review_status !== 'pending' || $selectedCurrentGlobalFact) {
                 $selectedEffectivePythonWarnings = array_values(array_filter(
-                    $selectedEffectivePythonWarnings,
+                    $selectedPythonWarnings,
                     fn ($warning) => $warning !== 'missing_global_facts'
                 ));
             }

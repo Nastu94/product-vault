@@ -361,25 +361,6 @@
                                                                 <p class="mt-1 text-xs text-indigo-700">
                                                                     Proposta non ancora applicata.
                                                                 </p>
-
-                                                                @if (
-                                                                    ($field['can_accept_suggestion'] ?? false) === true
-                                                                    && $candidate->review_status === 'pending'
-                                                                    && $candidate->product_id === null
-                                                                )
-                                                                    <div class="mt-3">
-                                                                        <button
-                                                                            type="button"
-                                                                            wire:key="accept-assisted-review-{{ $candidate->id }}-{{ $fieldName }}"
-                                                                            wire:click="acceptAssistedReviewSuggestion({{ $candidate->id }}, '{{ $fieldName }}')"
-                                                                            wire:loading.attr="disabled"
-                                                                            wire:target="acceptAssistedReviewSuggestion"
-                                                                            class="inline-flex items-center justify-center rounded-md border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                                                        >
-                                                                            Accetta suggerimento
-                                                                        </button>
-                                                                    </div>
-                                                                @endif
                                                             @endif
                                                         @elseif ($hasUnreliableCurrent)
                                                             <div class="mt-3 text-sm text-gray-900">
@@ -396,6 +377,157 @@
                                                             <div class="mt-3 text-sm text-gray-500">
                                                                 Non disponibile
                                                             </div>
+                                                        @endif
+                                                        @php
+                                                            $assistedReviewFieldState =
+                                                                $field['state'] ?? 'missing';
+
+                                                            $assistedReviewFieldIsActionable = in_array(
+                                                                $assistedReviewFieldState,
+                                                                ['missing', 'suggested'],
+                                                                true
+                                                            );
+
+                                                            $assistedReviewFieldIsEditing = (bool) data_get(
+                                                                $assistedReviewEditingFields,
+                                                                "{$candidate->id}.{$fieldName}",
+                                                                false
+                                                            );
+
+                                                            $assistedReviewManualErrorKey =
+                                                                "assistedReviewManualForms.{$candidate->id}.{$fieldName}";
+                                                        @endphp
+
+                                                        @if (
+                                                            $assistedReviewFieldIsActionable
+                                                            && $candidate->review_status === 'pending'
+                                                            && $candidate->product_id === null
+                                                        )
+                                                            @if ($assistedReviewFieldIsEditing)
+                                                                <div class="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+                                                                    <label
+                                                                        for="assisted-review-manual-{{ $candidate->id }}-{{ $fieldName }}"
+                                                                        class="block text-xs font-medium text-gray-700"
+                                                                    >
+                                                                        @switch($fieldName)
+                                                                            @case('brand')
+                                                                                Inserisci il brand
+                                                                                @break
+
+                                                                            @case('category')
+                                                                                Seleziona la categoria
+                                                                                @break
+
+                                                                            @case('model')
+                                                                                Inserisci il modello
+                                                                                @break
+
+                                                                            @default
+                                                                                Inserisci il valore
+                                                                        @endswitch
+                                                                    </label>
+
+                                                                    @if ($fieldName === 'category')
+                                                                        <select
+                                                                            id="assisted-review-manual-{{ $candidate->id }}-{{ $fieldName }}"
+                                                                            wire:model.defer="assistedReviewManualForms.{{ $candidate->id }}.{{ $fieldName }}"
+                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                        >
+                                                                            <option value="">
+                                                                                Seleziona una categoria
+                                                                            </option>
+
+                                                                            @foreach ($assistedReviewCategories as $categoryOption)
+                                                                                <option value="{{ $categoryOption->id }}">
+                                                                                    {{ $categoryOption->name }}
+                                                                                </option>
+                                                                            @endforeach
+                                                                        </select>
+                                                                    @else
+                                                                        <input
+                                                                            id="assisted-review-manual-{{ $candidate->id }}-{{ $fieldName }}"
+                                                                            type="text"
+                                                                            wire:model.defer="assistedReviewManualForms.{{ $candidate->id }}.{{ $fieldName }}"
+                                                                            autocomplete="off"
+                                                                            @if ($fieldName === 'brand')
+                                                                                placeholder="Esempio: NetWave"
+                                                                            @elseif ($fieldName === 'model')
+                                                                                placeholder="Esempio: NX-500"
+                                                                            @endif
+                                                                            class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                                        >
+                                                                    @endif
+
+                                                                    @error($assistedReviewManualErrorKey)
+                                                                        <p class="mt-1 text-xs text-red-600">
+                                                                            {{ $message }}
+                                                                        </p>
+                                                                    @enderror
+
+                                                                    <div class="mt-3 flex flex-wrap items-center gap-2">
+                                                                        <button
+                                                                            type="button"
+                                                                            wire:click="saveAssistedReviewManualValue({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            wire:loading.attr="disabled"
+                                                                            wire:target="saveAssistedReviewManualValue({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            class="inline-flex items-center justify-center rounded-md border border-transparent bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        >
+                                                                            Salva valore
+                                                                        </button>
+
+                                                                        <button
+                                                                            type="button"
+                                                                            wire:click="cancelAssistedReviewManualEditor({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            wire:loading.attr="disabled"
+                                                                            wire:target="saveAssistedReviewManualValue({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        >
+                                                                            Annulla
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            @else
+                                                                <div class="mt-3 flex flex-wrap items-center gap-2">
+                                                                    @if (
+                                                                        $assistedReviewFieldState === 'suggested'
+                                                                        && ($field['can_accept_suggestion'] ?? false) === true
+                                                                    )
+                                                                        <button
+                                                                            type="button"
+                                                                            wire:key="accept-assisted-review-{{ $candidate->id }}-{{ $fieldName }}"
+                                                                            wire:click="acceptAssistedReviewSuggestion({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            wire:loading.attr="disabled"
+                                                                            wire:target="acceptAssistedReviewSuggestion({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                            class="inline-flex items-center justify-center rounded-md border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        >
+                                                                            Accetta suggerimento
+                                                                        </button>
+                                                                    @endif
+
+                                                                    <button
+                                                                        type="button"
+                                                                        wire:click="openAssistedReviewManualEditor({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                        wire:loading.attr="disabled"
+                                                                        wire:target="openAssistedReviewManualEditor({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                        class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                    >
+                                                                        {{ $assistedReviewFieldState === 'suggested'
+                                                                            ? 'Usa un altro valore'
+                                                                            : 'Inserisci manualmente' }}
+                                                                    </button>
+
+                                                                    <button
+                                                                        type="button"
+                                                                        wire:click="declineAssistedReviewField({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                        wire:confirm="Confermi che questo dato non è disponibile?"
+                                                                        wire:loading.attr="disabled"
+                                                                        wire:target="declineAssistedReviewField({{ $candidate->id }}, '{{ $fieldName }}')"
+                                                                        class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                    >
+                                                                        Non disponibile
+                                                                    </button>
+                                                                </div>
+                                                            @endif
                                                         @endif
                                                     </div>
                                                 @endforeach

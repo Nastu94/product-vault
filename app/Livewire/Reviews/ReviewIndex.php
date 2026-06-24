@@ -3,6 +3,7 @@
 namespace App\Livewire\Reviews;
 
 use App\Models\Document;
+use App\Models\Category;
 use App\Models\ProductIdentificationCandidate;
 use App\Models\ProductUnderstandingGlobalFact;
 use App\Services\Documents\ProductFromCandidateCreator;
@@ -45,12 +46,35 @@ class ReviewIndex extends Component
     public ?int $selectedCandidateId = null;
 
     /**
-     * Reset paginazione quando cambia filtro.
+     * Valori inseriti manualmente nei campi Assisted Review.
+     *
+     * Struttura:
+     * [candidate_id][field_name] = value
+     *
+     * @var array<int, array<string, mixed>>
+     */
+    public array $assistedReviewManualForms = [];
+
+    /**
+     * Campi per i quali è aperto l'editor manuale.
+     *
+     * Struttura:
+     * [candidate_id][field_name] = true
+     *
+     * @var array<int, array<string, bool>>
+     */
+    public array $assistedReviewEditingFields = [];
+
+    /**
+     * Reset della pagina e degli editor quando cambia il filtro.
      */
     public function updatedFilter(): void
     {
         $this->selectedCandidateId = null;
+        $this->assistedReviewManualForms = [];
+        $this->assistedReviewEditingFields = [];
 
+        $this->resetErrorBag();
         $this->resetPage();
     }
 
@@ -444,6 +468,217 @@ class ReviewIndex extends Component
     }
 
     /**
+     * Apre l'editor manuale per un campo Assisted Review.
+     *
+     * L'editor può essere aperto solamente per campi ancora mancanti
+     * oppure per suggerimenti automatici non ancora accettati.
+     */
+    public function openAssistedReviewManualEditor(
+        int $candidateId,
+        string $fieldName
+    ): void {
+        abort_unless(
+            Auth::user()?->can('documents.review'),
+            403
+        );
+
+        if (! $this->isSupportedAssistedReviewField($fieldName)) {
+            session()->flash(
+                'review_warning',
+                'Il campo Assisted Review richiesto non è supportato.'
+            );
+
+            return;
+        }
+
+        $candidate = $this->findReviewableCandidate(
+            $candidateId
+        );
+
+        $field = data_get(
+            $candidate->metadata,
+            "assisted_review.fields.{$fieldName}"
+        );
+
+        if (! is_array($field)) {
+            session()->flash(
+                'review_warning',
+                'I dati Assisted Review del candidato non sono validi.'
+            );
+
+            return;
+        }
+
+        if (! in_array(
+            $field['state'] ?? null,
+            ['missing', 'suggested'],
+            true
+        )) {
+            session()->flash(
+                'review_warning',
+                'Questo campo è già stato completato.'
+            );
+
+            return;
+        }
+
+        $this->resetErrorBag(
+            "assistedReviewManualForms.{$candidateId}.{$fieldName}"
+        );
+
+        $this->assistedReviewEditingFields[$candidateId][$fieldName] = true;
+
+        /*
+        * Non precompiliamo il form con il suggerimento automatico o con un
+        * valore corrente non affidabile. L'utente deve inserire o selezionare
+        * consapevolmente il valore manuale.
+        */
+        $this->assistedReviewManualForms[$candidateId][$fieldName] = '';
+    }
+
+    /**
+     * Chiude un editor manuale senza salvare modifiche.
+     */
+    public function cancelAssistedReviewManualEditor(
+        int $candidateId,
+        string $fieldName
+    ): void {
+        $this->clearAssistedReviewManualEditor(
+            candidateId: $candidateId,
+            fieldName: $fieldName,
+        );
+    }
+
+    /**
+     * Salva un valore inserito o selezionato manualmente.
+     *
+     * Il candidato resta pending e non viene creato alcun prodotto.
+     */
+    public function saveAssistedReviewManualValue(
+        int $candidateId,
+        string $fieldName,
+        AssistedReviewDecisionService $decisionService
+    ): void {
+        abort_unless(
+            Auth::user()?->can('documents.review'),
+            403
+        );
+
+        if (! $this->isSupportedAssistedReviewField($fieldName)) {
+            session()->flash(
+                'review_warning',
+                'Il campo Assisted Review richiesto non è supportato.'
+            );
+
+            return;
+        }
+
+        $candidate = $this->findReviewableCandidate(
+            $candidateId
+        );
+
+        $errorKey = "assistedReviewManualForms.{$candidateId}.{$fieldName}";
+
+        $this->resetErrorBag($errorKey);
+
+        $value = data_get(
+            $this->assistedReviewManualForms,
+            "{$candidateId}.{$fieldName}"
+        );
+
+        try {
+            $decisionService->setManualValue(
+                candidate: $candidate,
+                fieldName: $fieldName,
+                value: $value,
+                userId: (int) Auth::id(),
+            );
+        } catch (
+            InvalidArgumentException | RuntimeException $exception
+        ) {
+            /*
+            * Mostriamo l'errore accanto al relativo input anziché usare
+            * un messaggio generico in cima alla pagina.
+            */
+            $this->addError(
+                $errorKey,
+                $exception->getMessage()
+            );
+
+            return;
+        }
+
+        $this->clearAssistedReviewManualEditor(
+            candidateId: $candidateId,
+            fieldName: $fieldName,
+        );
+
+        session()->flash(
+            'review_success',
+            $this->assistedReviewFieldLabel($fieldName)
+                . ': valore manuale salvato.'
+        );
+    }
+
+    /**
+     * Segna esplicitamente un campo come non disponibile.
+     *
+     * L'azione rimuove l'eventuale valore operativo non affidabile, ma
+     * conserva nei metadata la precedente evidenza per tracciabilità.
+     */
+    public function declineAssistedReviewField(
+        int $candidateId,
+        string $fieldName,
+        AssistedReviewDecisionService $decisionService
+    ): void {
+        abort_unless(
+            Auth::user()?->can('documents.review'),
+            403
+        );
+
+        if (! $this->isSupportedAssistedReviewField($fieldName)) {
+            session()->flash(
+                'review_warning',
+                'Il campo Assisted Review richiesto non è supportato.'
+            );
+
+            return;
+        }
+
+        $candidate = $this->findReviewableCandidate(
+            $candidateId
+        );
+
+        try {
+            $decisionService->declineField(
+                candidate: $candidate,
+                fieldName: $fieldName,
+                userId: (int) Auth::id(),
+            );
+        } catch (
+            InvalidArgumentException | RuntimeException $exception
+        ) {
+            session()->flash(
+                'review_warning',
+                $exception->getMessage()
+            );
+
+            return;
+        }
+
+        $this->clearAssistedReviewManualEditor(
+            candidateId: $candidateId,
+            fieldName: $fieldName,
+        );
+
+        session()->flash(
+            'review_success',
+            $this->assistedReviewFieldLabel($fieldName)
+                . ': campo segnato come non disponibile.'
+        );
+    }
+
+    /**
      * Conferma rapidamente un candidato dalla pagina revisioni.
      */
     public function confirmCandidate(
@@ -522,6 +757,76 @@ class ReviewIndex extends Component
         session()->flash('review_success', 'Candidato escluso dalla revisione.');
 
         $this->resetPage();
+    }
+
+    /**
+     * Verifica che il campo appartenga al contratto Assisted Review v1.
+     */
+    private function isSupportedAssistedReviewField(
+        string $fieldName
+    ): bool {
+        return in_array(
+            $fieldName,
+            [
+                'brand',
+                'category',
+                'model',
+            ],
+            true
+        );
+    }
+
+    /**
+     * Restituisce l'etichetta italiana del campo Assisted Review.
+     */
+    private function assistedReviewFieldLabel(
+        string $fieldName
+    ): string {
+        return match ($fieldName) {
+            'brand' => 'Brand',
+            'category' => 'Categoria',
+            'model' => 'Modello',
+            default => 'Campo',
+        };
+    }
+
+    /**
+     * Rimuove dalla memoria Livewire il form manuale di un campo.
+     */
+    private function clearAssistedReviewManualEditor(
+        int $candidateId,
+        string $fieldName
+    ): void {
+        unset(
+            $this->assistedReviewManualForms[$candidateId][$fieldName],
+            $this->assistedReviewEditingFields[$candidateId][$fieldName]
+        );
+
+        /*
+        * Eliminiamo anche i contenitori ormai vuoti per mantenere lo stato
+        * Livewire compatto e prevedibile.
+        */
+        if (
+            isset($this->assistedReviewManualForms[$candidateId])
+            && $this->assistedReviewManualForms[$candidateId] === []
+        ) {
+            unset(
+                $this->assistedReviewManualForms[$candidateId]
+            );
+        }
+
+        if (
+            isset($this->assistedReviewEditingFields[$candidateId])
+            && $this->assistedReviewEditingFields[$candidateId] === []
+        ) {
+            unset(
+                $this->assistedReviewEditingFields[$candidateId]
+            );
+        }
+
+        $this->resetErrorBag(
+            "assistedReviewManualForms.{$candidateId}.{$fieldName}"
+        );
     }
 
     /**
@@ -682,6 +987,30 @@ class ReviewIndex extends Component
             ->limit(5)
             ->get();
 
+        /*
+        * Categorie selezionabili durante la compilazione manuale.
+        *
+        * Sono visibili le categorie globali e quelle appartenenti al workspace
+        * corrente. La selezione effettiva viene comunque verificata nuovamente
+        * dal service prima del salvataggio.
+        */
+        $assistedReviewCategories = Category::query()
+            ->where('is_active', true)
+            ->where(function (Builder $query): void {
+                $query
+                    ->whereNull('team_id')
+                    ->orWhere(
+                        'team_id',
+                        $this->currentTeamId()
+                    );
+            })
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get([
+                'id',
+                'name',
+            ]);
+
         $candidatesQuery = $this->baseCandidateQuery()
             ->with([
                 'document.documentType',
@@ -722,6 +1051,7 @@ class ReviewIndex extends Component
             'documentsNeedingReview' => $documentsNeedingReview,
             'candidates' => $candidates,
             'assistedReviewPresentations' => $assistedReviewPresentations,
+            'assistedReviewCategories' => $assistedReviewCategories,
         ])->layout('layouts.app');
     }
 }

@@ -311,6 +311,142 @@ final class AssistedReviewDecisionService
     }
 
     /**
+     * Segna esplicitamente un campo come non disponibile.
+     *
+     * La decisione è ammessa per campi mancanti o suggeriti. Un eventuale
+     * valore corrente non affidabile viene rimosso dal candidato, ma resta
+     * conservato nei metadata della decisione per tracciabilità.
+     */
+    public function declineField(
+        ProductIdentificationCandidate $candidate,
+        string $fieldName,
+        int $userId
+    ): ProductIdentificationCandidate {
+        $this->assertSupportedField($fieldName);
+
+        if ($userId <= 0) {
+            throw new InvalidArgumentException(
+                'L’utente che completa la revisione non è valido.'
+            );
+        }
+
+        return DB::transaction(function () use (
+            $candidate,
+            $fieldName,
+            $userId
+        ): ProductIdentificationCandidate {
+            $lockedCandidate = ProductIdentificationCandidate::query()
+                ->with('document')
+                ->lockForUpdate()
+                ->findOrFail($candidate->getKey());
+
+            $this->assertReviewable($lockedCandidate);
+
+            $metadata = is_array($lockedCandidate->metadata)
+                ? $lockedCandidate->metadata
+                : [];
+
+            $field = data_get(
+                $metadata,
+                "assisted_review.fields.{$fieldName}",
+                []
+            );
+
+            if (! is_array($field)) {
+                throw new RuntimeException(
+                    "Metadata Assisted Review non validi per {$fieldName}."
+                );
+            }
+
+            /*
+            * Un retry della stessa decisione non deve aggiornare nuovamente
+            * timestamp o metadata.
+            */
+            if (
+                ($field['state'] ?? null) === 'declined'
+                && data_get(
+                    $field,
+                    'decision.action'
+                ) === 'marked_unavailable'
+            ) {
+                return $lockedCandidate->fresh([
+                    'brand',
+                    'category',
+                    'document',
+                ]);
+            }
+
+            $previousState = $this->nullableString(
+                $field['state'] ?? null
+            );
+
+            if (! in_array(
+                $previousState,
+                ['missing', 'suggested'],
+                true
+            )) {
+                throw new RuntimeException(
+                    "Il campo {$fieldName} non può essere segnato come non disponibile nello stato corrente."
+                );
+            }
+
+            $previousCurrent = is_array(
+                $field['current'] ?? null
+            )
+                ? $field['current']
+                : null;
+
+            $previousSuggestion = is_array(
+                $field['suggestion'] ?? null
+            )
+                ? $field['suggestion']
+                : null;
+
+            /*
+            * Il campo reale del candidato deve essere svuotato. In particolare,
+            * un valore tecnico non affidabile non deve arrivare al Product.
+            */
+            $this->clearCandidateField(
+                candidate: $lockedCandidate,
+                fieldName: $fieldName,
+            );
+
+            $field['state'] = 'declined';
+            $field['required'] = false;
+            $field['current'] = null;
+            $field['suggestion'] = null;
+            $field['decision'] = [
+                'action' => 'marked_unavailable',
+                'previous_state' => $previousState,
+                'previous_current' => $previousCurrent,
+                'previous_suggestion' => $previousSuggestion,
+                'decided_by_user_id' => $userId,
+                'decided_at' => now()->toISOString(),
+            ];
+
+            unset($field['issues']);
+
+            data_set(
+                $metadata,
+                "assisted_review.fields.{$fieldName}",
+                $field
+            );
+
+            $lockedCandidate->metadata = $this->recalculateCompletion(
+                $metadata
+            );
+
+            $lockedCandidate->save();
+
+            return $lockedCandidate->fresh([
+                'brand',
+                'category',
+                'document',
+            ]);
+        });
+    }
+
+    /**
      * Applica un suggerimento brand.
      *
      * Se il suggerimento non punta a un brand esistente, la conferma esplicita
@@ -625,6 +761,37 @@ final class AssistedReviewDecisionService
             'method' => 'manual_value',
             'confidence' => null,
         ];
+    }
+
+    /**
+     * Rimuove dal candidato il valore operativo del campo dichiarato
+     * non disponibile.
+     */
+    private function clearCandidateField(
+        ProductIdentificationCandidate $candidate,
+        string $fieldName
+    ): void {
+        switch ($fieldName) {
+            case 'brand':
+                $candidate->brand_id = null;
+
+                break;
+
+            case 'category':
+                $candidate->category_id = null;
+
+                break;
+
+            case 'model':
+                $candidate->model = null;
+
+                break;
+
+            default:
+                throw new InvalidArgumentException(
+                    "Campo Assisted Review non supportato: {$fieldName}."
+                );
+        }
     }
 
     /**

@@ -32,8 +32,9 @@ class TestAssistedReviewDecisionsCommand extends Command
         $failures = [];
 
         $candidateId = null;
-        $teamId = null;
         $manualCandidateId = null;
+        $declinedCandidateId = null;
+        $teamId = null;
 
         $brandName = 'Assisted Review Test ' . Str::uuid();
         $manualBrandName = 'Assisted Review Manual ' . Str::uuid();
@@ -846,6 +847,339 @@ class TestAssistedReviewDecisionsCommand extends Command
                 $productsBefore,
                 Product::query()->count()
             );
+
+            /*
+            * Decisione esplicita "Non disponibile".
+            */
+            $declinedBrandName = 'Declined Brand Test ' . Str::uuid();
+
+            $declinedBrandCountBefore = Brand::query()
+                ->where('name', $declinedBrandName)
+                ->count();
+
+            $declinedCandidate = ProductIdentificationCandidate::query()
+                ->create([
+                    'document_id' => $document->id,
+                    'document_line_id' => null,
+                    'product_id' => null,
+                    'brand_id' => null,
+                    'category_id' => null,
+                    'name' => 'Prodotto Declined Assisted Review Test',
+                    'model' => 'AX3000',
+                    'serial_number' => null,
+                    'ean_code' => null,
+                    'price' => 69.90,
+                    'source' => 'test',
+                    'confidence_score' => 80,
+                    'is_selected' => false,
+                    'review_status' => 'pending',
+                    'metadata' => [
+                        'declined_test_namespace' => [
+                            'preserve_me' => true,
+                        ],
+                        'assisted_review' => [
+                            'version' => 'v1',
+                            'builder' => 'assisted_review_metadata_builder_v1',
+                            'needs_user_completion' => true,
+                            'completion_fields' => [
+                                'brand',
+                                'category',
+                                'model',
+                            ],
+                            'fields' => [
+                                'brand' => [
+                                    'state' => 'suggested',
+                                    'required' => false,
+                                    'current' => null,
+                                    'suggestion' => [
+                                        'value' => $declinedBrandName,
+                                        'ref' => null,
+                                        'origin' => 'automatic',
+                                        'source' => 'transactional_test',
+                                        'method' => 'synthetic_declined_test',
+                                        'confidence' => 75,
+                                    ],
+                                ],
+                                'category' => [
+                                    'state' => 'missing',
+                                    'required' => false,
+                                    'current' => null,
+                                    'suggestion' => null,
+                                ],
+                                'model' => [
+                                    'state' => 'missing',
+                                    'required' => false,
+                                    'current' => [
+                                        'value' => 'AX3000',
+                                        'ref' => null,
+                                        'origin' => 'existing',
+                                        'source' => 'candidate_field',
+                                        'method' => 'candidate_model',
+                                        'confidence' => null,
+                                    ],
+                                    'suggestion' => null,
+                                    'issues' => [
+                                        'technical_specification_used_as_model',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ]);
+
+            $declinedCandidateId = (int) $declinedCandidate->id;
+
+            /*
+            * Il modello non affidabile viene dichiarato non disponibile.
+            */
+            $declinedCandidate = $decisionService->declineField(
+                candidate: $declinedCandidate,
+                fieldName: 'model',
+                userId: $userId,
+            );
+
+            $assertSame(
+                'decline_model',
+                'candidate model cleared',
+                null,
+                $declinedCandidate->model
+            );
+
+            $assertSame(
+                'decline_model',
+                'field state declined',
+                'declined',
+                data_get(
+                    $declinedCandidate->metadata,
+                    'assisted_review.fields.model.state'
+                )
+            );
+
+            $assertSame(
+                'decline_model',
+                'decision action',
+                'marked_unavailable',
+                data_get(
+                    $declinedCandidate->metadata,
+                    'assisted_review.fields.model.decision.action'
+                )
+            );
+
+            $assertSame(
+                'decline_model',
+                'previous unreliable value preserved',
+                'AX3000',
+                data_get(
+                    $declinedCandidate->metadata,
+                    'assisted_review.fields.model.decision.previous_current.value'
+                )
+            );
+
+            $assertSame(
+                'decline_model',
+                'completion fields recalculated',
+                ['brand', 'category'],
+                data_get(
+                    $declinedCandidate->metadata,
+                    'assisted_review.completion_fields'
+                )
+            );
+
+            /*
+            * La categoria mancante viene dichiarata non disponibile.
+            */
+            $declinedCandidate = $decisionService->declineField(
+                candidate: $declinedCandidate,
+                fieldName: 'category',
+                userId: $userId,
+            );
+
+            $assertSame(
+                'decline_category',
+                'candidate category remains null',
+                null,
+                $declinedCandidate->category_id
+            );
+
+            $assertSame(
+                'decline_category',
+                'field state declined',
+                'declined',
+                data_get(
+                    $declinedCandidate->metadata,
+                    'assisted_review.fields.category.state'
+                )
+            );
+
+            $assertSame(
+                'decline_category',
+                'completion fields recalculated',
+                ['brand'],
+                data_get(
+                    $declinedCandidate->metadata,
+                    'assisted_review.completion_fields'
+                )
+            );
+
+            /*
+            * Il suggerimento brand viene rifiutato senza creare il brand.
+            */
+            $declinedCandidate = $decisionService->declineField(
+                candidate: $declinedCandidate,
+                fieldName: 'brand',
+                userId: $userId,
+            );
+
+            $assertSame(
+                'decline_brand',
+                'candidate brand remains null',
+                null,
+                $declinedCandidate->brand_id
+            );
+
+            $assertSame(
+                'decline_brand',
+                'field state declined',
+                'declined',
+                data_get(
+                    $declinedCandidate->metadata,
+                    'assisted_review.fields.brand.state'
+                )
+            );
+
+            $assertSame(
+                'decline_brand',
+                'previous suggestion preserved',
+                $declinedBrandName,
+                data_get(
+                    $declinedCandidate->metadata,
+                    'assisted_review.fields.brand.decision.previous_suggestion.value'
+                )
+            );
+
+            $assertSame(
+                'decline_brand',
+                'suggested brand not created',
+                $declinedBrandCountBefore,
+                Brand::query()
+                    ->where('name', $declinedBrandName)
+                    ->count()
+            );
+
+            $assertSame(
+                'decline_brand',
+                'completion fields empty',
+                [],
+                data_get(
+                    $declinedCandidate->metadata,
+                    'assisted_review.completion_fields'
+                )
+            );
+
+            $assertSame(
+                'decline_brand',
+                'completion no longer required',
+                false,
+                data_get(
+                    $declinedCandidate->metadata,
+                    'assisted_review.needs_user_completion'
+                )
+            );
+
+            $assertSame(
+                'decline_brand',
+                'foreign metadata preserved',
+                true,
+                data_get(
+                    $declinedCandidate->metadata,
+                    'declined_test_namespace.preserve_me'
+                )
+            );
+
+            /*
+            * Retry della stessa decisione.
+            */
+            $declinedDecisionTimestamp = data_get(
+                $declinedCandidate->metadata,
+                'assisted_review.fields.brand.decision.decided_at'
+            );
+
+            $declinedCandidate = $decisionService->declineField(
+                candidate: $declinedCandidate,
+                fieldName: 'brand',
+                userId: $userId,
+            );
+
+            $assertSame(
+                'decline_idempotence',
+                'decision timestamp unchanged',
+                $declinedDecisionTimestamp,
+                data_get(
+                    $declinedCandidate->metadata,
+                    'assisted_review.fields.brand.decision.decided_at'
+                )
+            );
+
+            /*
+            * Presentazione finale delle decisioni.
+            */
+            $declinedPresentation = $presenter->present(
+                $declinedCandidate->loadMissing([
+                    'brand',
+                    'category',
+                ])
+            );
+
+            $assertSame(
+                'declined_presentation',
+                'brand label',
+                'Non disponibile',
+                data_get(
+                    $declinedPresentation,
+                    'fields.brand.state_label'
+                )
+            );
+
+            $assertSame(
+                'declined_presentation',
+                'category label',
+                'Non disponibile',
+                data_get(
+                    $declinedPresentation,
+                    'fields.category.state_label'
+                )
+            );
+
+            $assertSame(
+                'declined_presentation',
+                'model label',
+                'Non disponibile',
+                data_get(
+                    $declinedPresentation,
+                    'fields.model.state_label'
+                )
+            );
+
+            $assertSame(
+                'declined_candidate_lifecycle',
+                'candidate remains pending',
+                'pending',
+                $declinedCandidate->review_status
+            );
+
+            $assertSame(
+                'declined_candidate_lifecycle',
+                'candidate product remains null',
+                null,
+                $declinedCandidate->product_id
+            );
+
+            $assertSame(
+                'declined_candidate_lifecycle',
+                'product count unchanged',
+                $productsBefore,
+                Product::query()->count()
+            );
         } catch (Throwable $exception) {
             $rows[] = [
                 'unexpected_exception',
@@ -890,6 +1224,17 @@ class TestAssistedReviewDecisionsCommand extends Command
                 null,
                 ProductIdentificationCandidate::query()->find(
                     $manualCandidateId
+                )
+            );
+        }
+
+        if ($declinedCandidateId !== null) {
+            $assertSame(
+                'transaction_rollback',
+                'declined test candidate removed',
+                null,
+                ProductIdentificationCandidate::query()->find(
+                    $declinedCandidateId
                 )
             );
         }

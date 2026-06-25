@@ -131,6 +131,24 @@ class TestAssistedReviewConfirmationGuardCommand extends Command
             $completeResult['unresolved_fields']
         );
 
+        $completeExceptionMessage = null;
+
+        try {
+            $guard->ensureCanConfirm(
+                $completeCandidate
+            );
+        } catch (\Throwable $exception) {
+            $completeExceptionMessage =
+                $exception->getMessage();
+        }
+
+        $assertSame(
+            'complete_candidate',
+            'enforcement does not throw',
+            null,
+            $completeExceptionMessage
+        );
+
         /*
          * Campi mancanti o suggeriti devono bloccare la conferma.
          */
@@ -189,6 +207,35 @@ class TestAssistedReviewConfirmationGuardCommand extends Command
             'message',
             'Completa o dichiara non disponibili i seguenti campi prima di confermare il candidato: brand, modello.',
             $incompleteResult['message']
+        );
+
+        $incompleteExceptionClass = null;
+        $incompleteExceptionMessage = null;
+
+        try {
+            $guard->ensureCanConfirm(
+                $incompleteCandidate
+            );
+        } catch (\Throwable $exception) {
+            $incompleteExceptionClass =
+                $exception::class;
+
+            $incompleteExceptionMessage =
+                $exception->getMessage();
+        }
+
+        $assertSame(
+            'incomplete_candidate',
+            'enforcement exception class',
+            \App\Services\Documents\AssistedReview\AssistedReviewConfirmationBlockedException::class,
+            $incompleteExceptionClass
+        );
+
+        $assertSame(
+            'incomplete_candidate',
+            'enforcement exception message',
+            $incompleteResult['message'],
+            $incompleteExceptionMessage
         );
 
         /*

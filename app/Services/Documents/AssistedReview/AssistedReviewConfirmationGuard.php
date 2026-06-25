@@ -82,6 +82,27 @@ class AssistedReviewConfirmationGuard
     }
 
     /**
+     * Impedisce la conferma quando restano campi Assisted Review
+     * senza una decisione esplicita dell'utente.
+     *
+     * @throws AssistedReviewConfirmationBlockedException
+     */
+    public function ensureCanConfirm(
+        ProductIdentificationCandidate $candidate
+    ): void {
+        $result = $this->evaluate($candidate);
+
+        if ($result['allowed'] === true) {
+            return;
+        }
+
+        throw new AssistedReviewConfirmationBlockedException(
+            $result['message']
+                ?? 'Completa i dati prodotto prima di confermare il candidato.'
+        );
+    }
+
+    /**
      * Restituisce i campi ancora da completare.
      *
      * @param  array<string, mixed>  $assistedReview

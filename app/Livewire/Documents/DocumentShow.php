@@ -13,6 +13,7 @@ use App\Models\Merchant;
 use App\Services\Documents\ProductCandidateGenerator;
 use App\Services\Documents\ProductFromCandidateCreator;
 use App\Services\Documents\AssistedReview\AssistedReviewConfirmationBlockedException;
+use App\Services\Documents\AssistedReview\AssistedReviewConfirmationGuard;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
@@ -290,6 +291,27 @@ class DocumentShow extends Component
             ->first();
 
         session()->flash('processing_success', 'Processing avviato correttamente.');
+    }
+
+    /**
+     * Restituisce lo stato di confermabilità del candidato.
+     *
+     * La view usa lo stesso guardrail applicato dal creator, così il
+     * messaggio mostrato all'utente resta coerente con il backend.
+     *
+     * @return array{
+     *     allowed: bool,
+     *     reason: string,
+     *     unresolved_fields: array<int, string>,
+     *     message: string|null
+     * }
+     */
+    public function candidateConfirmationState(
+        ProductIdentificationCandidate $candidate
+    ): array {
+        return app(
+            AssistedReviewConfirmationGuard::class
+        )->evaluate($candidate);
     }
 
     /**

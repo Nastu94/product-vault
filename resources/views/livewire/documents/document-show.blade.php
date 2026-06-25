@@ -467,6 +467,18 @@
 
                         $candidate = $productCandidatesByLineId->get($line->id);
                         $candidateMetadata = $candidate?->metadata ?? [];
+                        $candidateConfirmationState = $candidate
+                            ? $this->candidateConfirmationState($candidate)
+                            : [
+                                'allowed' => true,
+                                'reason' => 'candidate_absent',
+                                'unresolved_fields' => [],
+                                'message' => null,
+                            ];
+
+                        $candidateConfirmationBlocked =
+                            ($candidateConfirmationState['allowed'] ?? true)
+                                !== true;
                         $sourceLine = $candidate?->documentLine;
                         $sourceLineMetadata = $sourceLine?->metadata ?? [];
                         $candidateSupportingLines = $sourceLineMetadata['supporting_lines'] ?? [];
@@ -700,6 +712,20 @@
                                                 <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20">
                                                     Documento già collegato
                                                 </span>
+                                            @elseif ($candidateConfirmationBlocked)
+                                                <a
+                                                    href="{{ route('reviews.index', [
+                                                        'filter' => 'needs_completion',
+                                                    ]) }}"
+                                                    class="inline-flex w-full items-center justify-center rounded-md border border-orange-300 bg-orange-50 px-3 py-2 text-xs font-semibold uppercase tracking-widest text-orange-800 hover:bg-orange-100"
+                                                >
+                                                    Completa dati prodotto
+                                                </a>
+
+                                                <p class="text-xs text-orange-700">
+                                                    {{ $candidateConfirmationState['message']
+                                                        ?? 'Completa i dati prodotto prima della conferma.' }}
+                                                </p>
                                             @else
                                                 <button
                                                     type="button"
@@ -999,6 +1025,27 @@
                                 width="max-w-2xl"
                             >
                                 <div class="space-y-6">
+                                    @if ($candidateConfirmationBlocked)
+                                        <div class="rounded-md border border-orange-200 bg-orange-50 p-4">
+                                            <h3 class="text-sm font-semibold text-orange-900">
+                                                Dati prodotto da completare
+                                            </h3>
+
+                                            <p class="mt-1 text-sm text-orange-800">
+                                                {{ $candidateConfirmationState['message']
+                                                    ?? 'Completa i dati prodotto prima della conferma.' }}
+                                            </p>
+
+                                            <a
+                                                href="{{ route('reviews.index', [
+                                                    'filter' => 'needs_completion',
+                                                ]) }}"
+                                                class="mt-3 inline-flex items-center rounded-md border border-orange-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-orange-800 hover:bg-orange-100"
+                                            >
+                                                Vai alle revisioni
+                                            </a>
+                                        </div>
+                                    @endif
                                     <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
                                         <h3 class="text-sm font-semibold text-gray-900">
                                             Prodotto da creare
@@ -1132,15 +1179,27 @@
                                             Modifica prima
                                         </button>
 
-                                        <button
-                                            type="button"
-                                            wire:click="confirmProductCandidate({{ $candidate->id }})"
-                                            wire:loading.attr="disabled"
-                                            wire:target="confirmProductCandidate({{ $candidate->id }})"
-                                            class="inline-flex items-center justify-center rounded-md border border-transparent bg-gray-800 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
-                                        >
-                                            Crea prodotto
-                                        </button>
+                                        @if ($candidateConfirmationBlocked)
+                                            <button
+                                                type="button"
+                                                disabled
+                                                title="{{ $candidateConfirmationState['message']
+                                                    ?? 'Completa i dati prodotto prima della conferma.' }}"
+                                                class="inline-flex cursor-not-allowed items-center justify-center rounded-md border border-transparent bg-gray-200 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-gray-500"
+                                            >
+                                                Dati da completare
+                                            </button>
+                                        @else
+                                            <button
+                                                type="button"
+                                                wire:click="confirmProductCandidate({{ $candidate->id }})"
+                                                wire:loading.attr="disabled"
+                                                wire:target="confirmProductCandidate({{ $candidate->id }})"
+                                                class="inline-flex items-center justify-center rounded-md border border-transparent bg-gray-800 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
+                                            >
+                                                Crea prodotto
+                                            </button>
+                                        @endif
                                     </div>
                                 </div>
                             </x-ui.drawer>

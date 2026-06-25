@@ -6,6 +6,7 @@ use App\Models\DocumentRelationshipType;
 use App\Models\IdentificationStatus;
 use App\Models\Product;
 use App\Models\ProductIdentificationCandidate;
+use App\Services\Documents\AssistedReview\AssistedReviewConfirmationGuard;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use App\Services\Warranties\DefaultWarrantyCreator;
 use App\Services\Products\ProductLifecycleEventRecorder;
@@ -23,6 +24,7 @@ class ProductFromCandidateCreator
         private readonly ProductUnderstandingFeedbackRecorder $feedbackRecorder,
         private readonly DefaultWarrantyCreator $defaultWarrantyCreator,
         private readonly ProductLifecycleEventRecorder $eventRecorder,
+        private readonly AssistedReviewConfirmationGuard $confirmationGuard,
     ) {
     }
 
@@ -51,6 +53,14 @@ class ProductFromCandidateCreator
             if ($candidate->product_id) {
                 throw new \RuntimeException('Questo candidato è già stato trasformato in prodotto.');
             }
+
+            /*
+            * La conferma deve passare dal guardrail centrale, indipendentemente
+            * dalla pagina o dal componente che ha richiesto la creazione.
+            */
+            $this->confirmationGuard->ensureCanConfirm(
+                $candidate
+            );
 
             $identificationStatusId = IdentificationStatus::query()
                 ->where('code', 'user_confirmed')

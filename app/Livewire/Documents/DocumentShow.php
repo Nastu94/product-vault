@@ -12,6 +12,8 @@ use App\Models\ProductIdentificationCandidate;
 use App\Models\Merchant;
 use App\Services\Documents\ProductCandidateGenerator;
 use App\Services\Documents\ProductFromCandidateCreator;
+use App\Services\Documents\AssistedReview\AssistedReviewConfirmationBlockedException;
+use App\Services\Documents\AssistedReview\AssistedReviewConfirmationGuard;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
@@ -292,6 +294,27 @@ class DocumentShow extends Component
     }
 
     /**
+     * Restituisce lo stato di confermabilità del candidato.
+     *
+     * La view usa lo stesso guardrail applicato dal creator, così il
+     * messaggio mostrato all'utente resta coerente con il backend.
+     *
+     * @return array{
+     *     allowed: bool,
+     *     reason: string,
+     *     unresolved_fields: array<int, string>,
+     *     message: string|null
+     * }
+     */
+    public function candidateConfirmationState(
+        ProductIdentificationCandidate $candidate
+    ): array {
+        return app(
+            AssistedReviewConfirmationGuard::class
+        )->evaluate($candidate);
+    }
+
+    /**
      * Conferma un candidato prodotto e crea la scheda prodotto definitiva.
      */
     public function confirmProductCandidate(
@@ -313,10 +336,21 @@ class DocumentShow extends Component
             return;
         }
 
-        $product = $productFromCandidateCreator->create(
-            candidate: $candidate,
-            userId: (int) Auth::id(),
-        );
+        try {
+            $product = $productFromCandidateCreator->create(
+                candidate: $candidate,
+                userId: (int) Auth::id(),
+            );
+        } catch (
+            AssistedReviewConfirmationBlockedException $exception
+        ) {
+            session()->flash(
+                'product_warning',
+                $exception->getMessage()
+            );
+
+            return;
+        }
 
         $this->refreshDocumentState();
 

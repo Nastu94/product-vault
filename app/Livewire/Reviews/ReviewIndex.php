@@ -9,6 +9,8 @@ use App\Models\ProductUnderstandingGlobalFact;
 use App\Services\Documents\ProductFromCandidateCreator;
 use App\Services\Documents\AssistedReview\AssistedReviewPresenter;
 use App\Services\Documents\AssistedReview\AssistedReviewDecisionService;
+use App\Services\Documents\AssistedReview\AssistedReviewConfirmationBlockedException;
+use App\Services\Documents\AssistedReview\AssistedReviewConfirmationGuard;
 use App\Services\Documents\DocumentLines\DocumentLineAmountConsistencyChecker;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use Illuminate\Contracts\View\View;
@@ -701,10 +703,21 @@ class ReviewIndex extends Component
             return;
         }
 
-        $product = $productFromCandidateCreator->create(
-            candidate: $candidate,
-            userId: (int) Auth::id(),
-        );
+        try {
+            $product = $productFromCandidateCreator->create(
+                candidate: $candidate,
+                userId: (int) Auth::id(),
+            );
+        } catch (
+            AssistedReviewConfirmationBlockedException $exception
+        ) {
+            session()->flash(
+                'review_warning',
+                $exception->getMessage()
+            );
+
+            return;
+        }
 
         session()->flash('review_success', 'Prodotto creato correttamente: ' . $product->name);
 
@@ -1046,12 +1059,37 @@ class ReviewIndex extends Component
             )
             ->all();
 
+        /*
+        * Stato della conferma per ogni candidato mostrato.
+        *
+        * La UI usa lo stesso guardrail del creator, evitando di duplicare
+        * le regole sui campi ancora da completare.
+        */
+        $assistedReviewConfirmationGuard = app(
+            AssistedReviewConfirmationGuard::class
+        );
+
+        $assistedReviewConfirmationStates = $candidates
+            ->getCollection()
+            ->mapWithKeys(
+                fn (
+                    ProductIdentificationCandidate $candidate
+                ): array => [
+                    $candidate->id =>
+                        $assistedReviewConfirmationGuard->evaluate(
+                            $candidate
+                        ),
+                ]
+            )
+            ->all();
+
         return view('livewire.reviews.review-index', [
             'summary' => $summary,
             'documentsNeedingReview' => $documentsNeedingReview,
             'candidates' => $candidates,
             'assistedReviewPresentations' => $assistedReviewPresentations,
             'assistedReviewCategories' => $assistedReviewCategories,
+            'assistedReviewConfirmationStates' => $assistedReviewConfirmationStates,
         ])->layout('layouts.app');
     }
 }

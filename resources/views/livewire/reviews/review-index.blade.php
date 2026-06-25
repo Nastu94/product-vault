@@ -186,6 +186,19 @@
                                 $candidate->id
                             ] ?? [];
 
+                            $confirmationState =
+                                $assistedReviewConfirmationStates[
+                                    $candidate->id
+                                ] ?? [
+                                    'allowed' => true,
+                                    'reason' => 'not_evaluated',
+                                    'unresolved_fields' => [],
+                                    'message' => null,
+                                ];
+
+                            $confirmationBlocked =
+                                ($confirmationState['allowed'] ?? true) !== true;
+
                             $assistedReviewFields = is_array(
                                 $assistedReview['fields'] ?? null
                             )
@@ -330,6 +343,19 @@
                                                     </span>
                                                 @endif
                                             </div>
+
+                                            @if ($confirmationBlocked)
+                                                <div class="mt-4 rounded-md border border-orange-200 bg-orange-50 p-3">
+                                                    <p class="text-sm font-medium text-orange-900">
+                                                        Conferma non ancora disponibile
+                                                    </p>
+
+                                                    <p class="mt-1 text-xs text-orange-800">
+                                                        {{ $confirmationState['message']
+                                                            ?? 'Completa i dati prodotto prima di confermare il candidato.' }}
+                                                    </p>
+                                                </div>
+                                            @endif
 
                                             <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
                                                 @foreach (['brand', 'category', 'model'] as $fieldName)
@@ -683,14 +709,32 @@
 
                                 <div class="flex shrink-0 flex-col gap-2 lg:w-40">
                                     @if ($candidate->review_status === 'pending' && ! $candidate->product_id)
-                                        <button
-                                            type="button"
-                                            wire:click="confirmCandidate({{ $candidate->id }})"
-                                            wire:confirm="Confermare questo candidato e creare la scheda prodotto?"
-                                            class="inline-flex items-center justify-center rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800"
-                                        >
-                                            Conferma
-                                        </button>
+                                        @if ($confirmationBlocked)
+                                            <button
+                                                type="button"
+                                                disabled
+                                                title="{{ $confirmationState['message']
+                                                    ?? 'Completa i dati prodotto prima di confermare.' }}"
+                                                class="inline-flex cursor-not-allowed items-center justify-center rounded-md bg-gray-200 px-3 py-2 text-sm font-medium text-gray-500"
+                                            >
+                                                Completa dati
+                                            </button>
+
+                                            <p class="text-center text-xs text-orange-700">
+                                                Risolvi i campi indicati prima di creare il prodotto.
+                                            </p>
+                                        @else
+                                            <button
+                                                type="button"
+                                                wire:click="confirmCandidate({{ $candidate->id }})"
+                                                wire:confirm="Confermare questo candidato e creare la scheda prodotto?"
+                                                wire:loading.attr="disabled"
+                                                wire:target="confirmCandidate({{ $candidate->id }})"
+                                                class="inline-flex items-center justify-center rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                            >
+                                                Conferma
+                                            </button>
+                                        @endif
 
                                         <button
                                             type="button"

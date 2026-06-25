@@ -9,6 +9,7 @@ use App\Models\ProductUnderstandingGlobalFact;
 use App\Services\Documents\ProductFromCandidateCreator;
 use App\Services\Documents\AssistedReview\AssistedReviewPresenter;
 use App\Services\Documents\AssistedReview\AssistedReviewDecisionService;
+use App\Services\Documents\AssistedReview\AssistedReviewConfirmationBlockedException;
 use App\Services\Documents\DocumentLines\DocumentLineAmountConsistencyChecker;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use Illuminate\Contracts\View\View;
@@ -701,10 +702,21 @@ class ReviewIndex extends Component
             return;
         }
 
-        $product = $productFromCandidateCreator->create(
-            candidate: $candidate,
-            userId: (int) Auth::id(),
-        );
+        try {
+            $product = $productFromCandidateCreator->create(
+                candidate: $candidate,
+                userId: (int) Auth::id(),
+            );
+        } catch (
+            AssistedReviewConfirmationBlockedException $exception
+        ) {
+            session()->flash(
+                'review_warning',
+                $exception->getMessage()
+            );
+
+            return;
+        }
 
         session()->flash('review_success', 'Prodotto creato correttamente: ' . $product->name);
 

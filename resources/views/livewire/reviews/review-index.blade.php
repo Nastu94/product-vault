@@ -199,6 +199,12 @@
                             $confirmationBlocked =
                                 ($confirmationState['allowed'] ?? true) !== true;
 
+                            $confirmationHasOptionalCompletion =
+                                ($confirmationState['reason'] ?? null)
+                                    === 'assisted_review_optional_completion'
+                                && ($confirmationState['unresolved_fields'] ?? [])
+                                    !== [];
+
                             $assistedReviewFields = is_array(
                                 $assistedReview['fields'] ?? null
                             )
@@ -316,7 +322,7 @@
                                                 <div>
                                                     <h4 class="text-sm font-medium text-gray-900">
                                                         {{ ($assistedReview['needs_user_completion'] ?? false)
-                                                            ? 'Dati prodotto da verificare'
+                                                            ? 'Dati prodotto opzionali da verificare'
                                                             : 'Dati prodotto' }}
                                                     </h4>
 
@@ -324,8 +330,11 @@
                                                         @if (($assistedReview['needs_user_completion'] ?? false) === true)
                                                             Product Vault ha individuato
                                                             {{ $assistedReview['completion_count'] }}
-                                                            {{ ($assistedReview['completion_count'] ?? 0) === 1 ? 'campo da completare o verificare.' : 'campi da completare o verificare.' }}
-                                                            Nessun suggerimento viene applicato automaticamente.
+                                                            {{ ($assistedReview['completion_count'] ?? 0) === 1
+                                                                ? 'campo opzionale da completare o verificare.'
+                                                                : 'campi opzionali da completare o verificare.' }}
+                                                            Puoi comunque confermare il prodotto: i valori non
+                                                            confermati resteranno vuoti.
                                                         @else
                                                             Brand, categoria e modello risultano già disponibili.
                                                         @endif
@@ -334,7 +343,7 @@
 
                                                 @if (($assistedReview['needs_user_completion'] ?? false) === true)
                                                     <span class="inline-flex items-center rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-600/20">
-                                                        Da completare:
+                                                        Opzionali:
                                                         {{ $assistedReview['completion_count'] }}
                                                     </span>
                                                 @else
@@ -345,14 +354,24 @@
                                             </div>
 
                                             @if ($confirmationBlocked)
-                                                <div class="mt-4 rounded-md border border-orange-200 bg-orange-50 p-3">
-                                                    <p class="text-sm font-medium text-orange-900">
-                                                        Conferma non ancora disponibile
+                                                <div class="mt-4 rounded-md border border-red-200 bg-red-50 p-3">
+                                                    <p class="text-sm font-medium text-red-900">
+                                                        Conferma non disponibile
                                                     </p>
 
-                                                    <p class="mt-1 text-xs text-orange-800">
+                                                    <p class="mt-1 text-xs text-red-800">
                                                         {{ $confirmationState['message']
-                                                            ?? 'Completa i dati prodotto prima di confermare il candidato.' }}
+                                                            ?? 'Il candidato non può essere confermato.' }}
+                                                    </p>
+                                                </div>
+                                            @elseif ($confirmationHasOptionalCompletion)
+                                                <div class="mt-4 rounded-md border border-blue-200 bg-blue-50 p-3">
+                                                    <p class="text-sm font-medium text-blue-900">
+                                                        Conferma disponibile
+                                                    </p>
+
+                                                    <p class="mt-1 text-xs text-blue-800">
+                                                        {{ $confirmationState['message'] }}
                                                     </p>
                                                 </div>
                                             @endif
@@ -734,6 +753,12 @@
                                             >
                                                 Conferma
                                             </button>
+                                            @if ($confirmationHasOptionalCompletion)
+                                                <p class="text-center text-xs text-blue-700">
+                                                    Verranno salvati soltanto i dati già presenti o
+                                                    confermati.
+                                                </p>
+                                            @endif
                                         @endif
 
                                         <button

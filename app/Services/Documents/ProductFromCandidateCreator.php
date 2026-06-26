@@ -7,6 +7,7 @@ use App\Models\IdentificationStatus;
 use App\Models\Product;
 use App\Models\ProductIdentificationCandidate;
 use App\Services\Documents\AssistedReview\AssistedReviewConfirmationGuard;
+use App\Services\Documents\ProductConfirmation\ProductConfirmationFieldTransferPolicy;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use App\Services\Warranties\DefaultWarrantyCreator;
 use App\Services\Products\ProductLifecycleEventRecorder;
@@ -25,6 +26,7 @@ class ProductFromCandidateCreator
         private readonly DefaultWarrantyCreator $defaultWarrantyCreator,
         private readonly ProductLifecycleEventRecorder $eventRecorder,
         private readonly AssistedReviewConfirmationGuard $confirmationGuard,
+        private readonly ProductConfirmationFieldTransferPolicy $fieldTransferPolicy,
     ) {
     }
 
@@ -62,6 +64,17 @@ class ProductFromCandidateCreator
                 $candidate
             );
 
+            /*
+            * Brand, categoria e modello non vengono copiati direttamente dal
+            * candidato. La policy decide quali valori sono sufficientemente
+            * affidabili o confermati per entrare nel prodotto definitivo.
+            */
+            $fieldTransfer = $this->fieldTransferPolicy->resolve(
+                $candidate
+            );
+
+            $productValues = $fieldTransfer['values'];
+
             $identificationStatusId = IdentificationStatus::query()
                 ->where('code', 'user_confirmed')
                 ->value('id');
@@ -83,18 +96,21 @@ class ProductFromCandidateCreator
             $product = Product::query()->create([
                 'team_id' => $document->team_id,
                 'created_by_user_id' => $userId,
-                'category_id' => $candidate->category_id,
-                'brand_id' => $candidate->brand_id,
+                'category_id' => $productValues['category_id'],
+                'brand_id' => $productValues['brand_id'],
                 'merchant_id' => $document->merchant_id,
                 'identification_status_id' => $identificationStatusId,
                 'currency_id' => $document->currency_id,
                 'name' => $candidate->name,
-                'model' => $candidate->model,
+                'model' => $productValues['model'],
                 'serial_number' => $candidate->serial_number,
                 'ean_code' => $candidate->ean_code,
                 'purchase_date' => $document->purchase_date,
                 'purchase_price' => $candidate->price,
-                'reliability_score' => $this->estimateReliabilityScore($candidate),
+                'reliability_score' => $this->estimateReliabilityScore(
+                    candidate: $candidate,
+                    productValues: $productValues,
+                ),
                 'notes' => null,
             ]);
 
@@ -209,12 +225,19 @@ class ProductFromCandidateCreator
     }
 
     /**
-     * Stima iniziale dell'affidabilità prodotto.
+     * Stima l'affidabilità usando i valori effettivamente trasferiti
+     * al prodotto e non quelli grezzi ancora presenti sul candidato.
      *
-     * Non è ancora lo scorer definitivo: serve a dare un valore sensato
-     * al prodotto appena creato da un candidato confermato.
+     * @param  array{
+     *     brand_id: int|null,
+     *     category_id: int|null,
+     *     model: string|null
+     * }  $productValues
      */
-    private function estimateReliabilityScore(ProductIdentificationCandidate $candidate): int
+    private function estimateReliabilityScore(
+        ProductIdentificationCandidate $candidate,
+        array $productValues
+    ): int
     {
         $score = 30;
 
@@ -222,7 +245,7 @@ class ProductFromCandidateCreator
             $score += 20;
         }
 
-        if ($candidate->model) {
+        if ($productValues['model'] !== null) {
             $score += 15;
         }
 

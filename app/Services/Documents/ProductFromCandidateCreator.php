@@ -36,15 +36,37 @@ class ProductFromCandidateCreator
      * Questo service rappresenta il passaggio:
      * candidato automatico -> prodotto reale confermato dall'utente.
      */
-    public function create(ProductIdentificationCandidate $candidate, int $userId): Product
-    {
-        return DB::transaction(function () use ($candidate, $userId) {
-            $candidate->load([
-                'document.currency',
-                'document.merchant',
-                'document.documentType',
-                'documentLine',
-            ]);
+    public function create(
+        ProductIdentificationCandidate $candidate,
+        int $userId
+    ): Product {
+        $candidateId = $candidate->getKey();
+
+        if ($candidateId === null) {
+            throw new \RuntimeException(
+                'Il candidato deve essere persistito prima della conferma.'
+            );
+        }
+
+        return DB::transaction(function () use (
+            $candidateId,
+            $userId
+        ) {
+            /*
+            * Il lock serializza le conferme dello stesso candidato.
+            *
+            * Una seconda richiesta attende la prima transazione e, quando può
+            * proseguire, trova il product_id già assegnato.
+            */
+            $candidate = ProductIdentificationCandidate::query()
+                ->with([
+                    'document.currency',
+                    'document.merchant',
+                    'document.documentType',
+                    'documentLine',
+                ])
+                ->lockForUpdate()
+                ->findOrFail($candidateId);
 
             $document = $candidate->document;
 
@@ -52,8 +74,29 @@ class ProductFromCandidateCreator
                 throw new \RuntimeException('Documento non trovato per il candidato prodotto.');
             }
 
-            if ($candidate->product_id) {
-                throw new \RuntimeException('Questo candidato è già stato trasformato in prodotto.');
+            /*
+            * Un retry della conferma restituisce il prodotto già creato.
+            *
+            * Gli effetti collaterali sottostanti non devono essere rieseguiti.
+            */
+            if ($candidate->product_id !== null) {
+                $existingProduct = Product::query()->find(
+                    $candidate->product_id
+                );
+
+                if ($existingProduct === null) {
+                    throw new \RuntimeException(
+                        'Il candidato risulta collegato a un prodotto non disponibile.'
+                    );
+                }
+
+                return $existingProduct;
+            }
+
+            if ($candidate->review_status !== 'pending') {
+                throw new \RuntimeException(
+                    'Il candidato non è disponibile per la conferma.'
+                );
             }
 
             /*

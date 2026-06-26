@@ -43,6 +43,7 @@ class TestProductConfirmationTransferIntegrationCommand extends Command
 
         $trustedCandidateId = null;
         $excludedCandidateId = null;
+        $optionalCandidateId = null;
 
         $productsBefore = Product::query()->count();
 
@@ -324,10 +325,143 @@ class TestProductConfirmationTransferIntegrationCommand extends Command
                 $excludedCandidate->review_status
             );
 
+            /*
+            * Scenario 3: campi opzionali ancora incompleti.
+            *
+            * Brand e modello non devono bloccare la conferma e non devono
+            * essere trasferiti. La categoria presente resta invece valida.
+            */
+            $optionalCandidate =
+                ProductIdentificationCandidate::query()->create([
+                    'document_id' => $document->id,
+                    'document_line_id' => null,
+                    'product_id' => null,
+                    'brand_id' => $brand->id,
+                    'category_id' => $category->id,
+                    'name' => 'Transfer Integration Optional '
+                        . Str::uuid(),
+                    'model' => 'AX3000',
+                    'serial_number' => null,
+                    'ean_code' => null,
+                    'price' => 79.90,
+                    'source' => 'transactional_test',
+                    'confidence_score' => 75,
+                    'is_selected' => false,
+                    'review_status' => 'pending',
+                    'metadata' => [
+                        'assisted_review' => [
+                            'version' => 'v1',
+                            'needs_user_completion' => true,
+                            'completion_fields' => [
+                                'brand',
+                                'model',
+                            ],
+                            'fields' => [
+                                'brand' => [
+                                    'state' => 'suggested',
+                                    'required' => false,
+                                    'current' => [
+                                        'value' => $brand->name,
+                                        'ref' => [
+                                            'type' => 'brand',
+                                            'id' => $brand->id,
+                                        ],
+                                    ],
+                                    'suggestion' => [
+                                        'value' => $brand->name,
+                                    ],
+                                ],
+                                'category' => [
+                                    'state' => 'present',
+                                    'required' => false,
+                                    'current' => [
+                                        'value' => $category->name,
+                                        'ref' => [
+                                            'type' => 'category',
+                                            'id' => $category->id,
+                                        ],
+                                    ],
+                                    'suggestion' => null,
+                                ],
+                                'model' => [
+                                    'state' => 'missing',
+                                    'required' => false,
+                                    'current' => [
+                                        'value' => 'AX3000',
+                                    ],
+                                    'suggestion' => null,
+                                    'issues' => [
+                                        'technical_specification_used_as_model',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ]);
+
+            $optionalCandidateId =
+                (int) $optionalCandidate->id;
+
+            $optionalProduct = $creator->create(
+                candidate: $optionalCandidate,
+                userId: $userId,
+            );
+
+            $optionalCandidate->refresh();
+
+            $assertSame(
+                'optional_completion',
+                'product created',
+                true,
+                $optionalProduct->exists
+            );
+
+            $assertSame(
+                'optional_completion',
+                'brand suggestion excluded',
+                null,
+                $optionalProduct->brand_id
+            );
+
+            $assertSame(
+                'optional_completion',
+                'present category transferred',
+                (int) $category->id,
+                (int) $optionalProduct->category_id
+            );
+
+            $assertSame(
+                'optional_completion',
+                'missing model excluded',
+                null,
+                $optionalProduct->model
+            );
+
+            $assertSame(
+                'optional_completion',
+                'raw candidate brand preserved',
+                (int) $brand->id,
+                (int) $optionalCandidate->brand_id
+            );
+
+            $assertSame(
+                'optional_completion',
+                'raw candidate model preserved',
+                'AX3000',
+                $optionalCandidate->model
+            );
+
+            $assertSame(
+                'optional_completion',
+                'candidate confirmed',
+                'confirmed',
+                $optionalCandidate->review_status
+            );
+
             $assertSame(
                 'transaction',
-                'two products created',
-                2,
+                'three products created',
+                3,
                 Product::query()->count() - $productsBefore
             );
         } catch (Throwable $exception) {
@@ -374,6 +508,17 @@ class TestProductConfirmationTransferIntegrationCommand extends Command
                 false,
                 ProductIdentificationCandidate::query()
                     ->whereKey($excludedCandidateId)
+                    ->exists()
+            );
+        }
+
+        if ($optionalCandidateId !== null) {
+            $assertSame(
+                'rollback',
+                'optional candidate removed',
+                false,
+                ProductIdentificationCandidate::query()
+                    ->whereKey($optionalCandidateId)
                     ->exists()
             );
         }

@@ -150,8 +150,11 @@ class TestAssistedReviewConfirmationGuardCommand extends Command
         );
 
         /*
-         * Campi mancanti o suggeriti devono bloccare la conferma.
-         */
+        * Campi mancanti o suggeriti sono warning di completezza.
+        *
+        * La conferma resta disponibile perché i valori non approvati
+        * saranno esclusi dalla Transfer Policy.
+        */
         $incompleteCandidate = $this->candidateWithMetadata([
             'assisted_review' => [
                 'version' => 'v1',
@@ -180,15 +183,15 @@ class TestAssistedReviewConfirmationGuardCommand extends Command
 
         $assertSame(
             'incomplete_candidate',
-            'confirmation blocked',
-            false,
+            'confirmation allowed',
+            true,
             $incompleteResult['allowed']
         );
 
         $assertSame(
             'incomplete_candidate',
             'reason',
-            'assisted_review_incomplete',
+            'assisted_review_optional_completion',
             $incompleteResult['reason']
         );
 
@@ -205,11 +208,10 @@ class TestAssistedReviewConfirmationGuardCommand extends Command
         $assertSame(
             'incomplete_candidate',
             'message',
-            'Completa o dichiara non disponibili i seguenti campi prima di confermare il candidato: brand, modello.',
+            'Puoi confermare il prodotto anche senza completare i seguenti campi: brand, modello. I valori non confermati non verranno salvati nel prodotto.',
             $incompleteResult['message']
         );
 
-        $incompleteExceptionClass = null;
         $incompleteExceptionMessage = null;
 
         try {
@@ -217,24 +219,14 @@ class TestAssistedReviewConfirmationGuardCommand extends Command
                 $incompleteCandidate
             );
         } catch (\Throwable $exception) {
-            $incompleteExceptionClass =
-                $exception::class;
-
             $incompleteExceptionMessage =
                 $exception->getMessage();
         }
 
         $assertSame(
             'incomplete_candidate',
-            'enforcement exception class',
-            \App\Services\Documents\AssistedReview\AssistedReviewConfirmationBlockedException::class,
-            $incompleteExceptionClass
-        );
-
-        $assertSame(
-            'incomplete_candidate',
-            'enforcement exception message',
-            $incompleteResult['message'],
+            'enforcement does not throw',
+            null,
             $incompleteExceptionMessage
         );
 
@@ -259,9 +251,16 @@ class TestAssistedReviewConfirmationGuardCommand extends Command
 
         $assertSame(
             'completion_fields_fallback',
-            'confirmation blocked',
-            false,
+            'confirmation allowed',
+            true,
             $fallbackResult['allowed']
+        );
+
+        $assertSame(
+            'completion_fields_fallback',
+            'reason',
+            'assisted_review_optional_completion',
+            $fallbackResult['reason']
         );
 
         $assertSame(
@@ -274,8 +273,9 @@ class TestAssistedReviewConfirmationGuardCommand extends Command
         );
 
         /*
-         * Un flag incompleto privo di campi validi non può essere ignorato.
-         */
+        * Un flag incompleto privo di campi validi viene segnalato come warning
+        * generico, ma non impedisce la conferma.
+        */
         $unknownCandidate = $this->candidateWithMetadata([
             'assisted_review' => [
                 'version' => 'v1',
@@ -291,9 +291,16 @@ class TestAssistedReviewConfirmationGuardCommand extends Command
 
         $assertSame(
             'unknown_incomplete',
-            'confirmation blocked',
-            false,
+            'confirmation allowed',
+            true,
             $unknownResult['allowed']
+        );
+
+        $assertSame(
+            'unknown_incomplete',
+            'reason',
+            'assisted_review_optional_completion',
+            $unknownResult['reason']
         );
 
         $assertSame(

@@ -186,6 +186,57 @@
                                 $candidate->id
                             ] ?? [];
 
+                            $reviewSignalPresentation =
+                                $reviewSignalPresentations[$candidate->id] ?? [];
+
+                            $reviewSignalGroups = data_get(
+                                $reviewSignalPresentation,
+                                'primary.groups',
+                                []
+                            );
+
+                            $reviewSignalSections = [
+                                'attention' => [
+                                    'title' => 'Controlli consigliati',
+                                    'container_classes' =>
+                                        'border-yellow-200 bg-yellow-50',
+                                    'title_classes' =>
+                                        'text-yellow-900',
+                                    'message_classes' =>
+                                        'text-yellow-800',
+                                    'chip_classes' =>
+                                        'bg-yellow-100 text-yellow-900 ring-yellow-600/20',
+                                ],
+                                'missing' => [
+                                    'title' => 'Dati da completare',
+                                    'container_classes' =>
+                                        'border-blue-200 bg-blue-50',
+                                    'title_classes' =>
+                                        'text-blue-900',
+                                    'message_classes' =>
+                                        'text-blue-800',
+                                    'chip_classes' =>
+                                        'bg-blue-100 text-blue-900 ring-blue-600/20',
+                                ],
+                                'positive' => [
+                                    'title' => 'Dati coerenti',
+                                    'container_classes' =>
+                                        'border-green-200 bg-green-50',
+                                    'title_classes' =>
+                                        'text-green-900',
+                                    'message_classes' =>
+                                        'text-green-800',
+                                    'chip_classes' =>
+                                        'bg-green-100 text-green-900 ring-green-600/20',
+                                ],
+                            ];
+
+                            $primaryReviewSignalCount = (int) data_get(
+                                $reviewSignalPresentation,
+                                'counts.primary',
+                                0
+                            );
+
                             $confirmationState =
                                 $assistedReviewConfirmationStates[
                                     $candidate->id
@@ -211,33 +262,16 @@
                                 ? $assistedReview['fields']
                                 : [];
                             $amountConsistency = $this->candidateAmountConsistency($candidate);
-                            $amountConsistencySignals = $this->metadataList($amountConsistency['signals'] ?? []);
                             $hasAmountConsistencyMismatch = $this->candidateHasAmountConsistencyMismatch($candidate);
-                            $pythonWarnings = $python['warnings'] ?? [];
-                            $pythonSignals = $python['signals'] ?? [];
-                            $globalSignals = $globalFact['signals'] ?? [];
-                            $feedbackSignals = $feedback['signals'] ?? [];
+                            $currentGlobalFact =
+                                $this->candidateCurrentGlobalFact($candidate);
 
-                            $currentGlobalFact = $this->candidateCurrentGlobalFact($candidate);
+                            $pythonSimilarity =
+                                $python['best_match']['similarity'] ?? null;
 
-                            $pythonWarnings = is_array($pythonWarnings) ? $pythonWarnings : [];
-                            $pythonSignals = is_array($pythonSignals) ? $pythonSignals : [];
-                            $globalSignals = is_array($globalSignals) ? $globalSignals : [];
-                            $feedbackSignals = is_array($feedbackSignals) ? $feedbackSignals : [];
-
-                            $pythonSimilarity = $python['best_match']['similarity'] ?? null;
-                            $showPythonBestMatch = $pythonSimilarity !== null && (float) $pythonSimilarity >= 70;
-
-                            /*
-                            | Dopo la conferma non mostriamo più warning storici come missing_global_facts
-                            | come se fossero ancora attivi.
-                            */
-                            $effectivePythonWarnings = $candidate->review_status === 'pending'
-                                ? array_values(array_filter(
-                                    $pythonWarnings,
-                                    fn ($warning) => $warning !== 'missing_global_facts'
-                                ))
-                                : [];
+                            $showPythonBestMatch =
+                                $pythonSimilarity !== null
+                                && (float) $pythonSimilarity >= 70;
                         @endphp
 
                         <article class="p-6">
@@ -672,55 +706,107 @@
                                         </div>
 
                                         <div class="rounded-md border border-gray-200 p-4">
-                                            <div class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                                Segnali
+                                            <div class="flex items-center justify-between gap-3">
+                                                <div class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                    Indicazioni di revisione
+                                                </div>
+
+                                                @if ($primaryReviewSignalCount > 0)
+                                                    <span class="inline-flex shrink-0 items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+                                                        {{ $primaryReviewSignalCount }}
+                                                    </span>
+                                                @endif
                                             </div>
 
-                                            <div class="mt-3 space-y-3">
-                                                @if ($effectivePythonWarnings !== [])
-                                                    <div>
-                                                        <div class="text-xs font-medium text-red-700">
-                                                            Warning
-                                                        </div>
-
-                                                        <div class="mt-1 flex flex-wrap gap-1">
-                                                            @foreach ($effectivePythonWarnings as $warning)
-                                                                <span class="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">
-                                                                    {{ $this->formatSignal($warning) }}
-                                                                </span>
-                                                            @endforeach
-                                                        </div>
-                                                    </div>
-                                                @endif
-
+                                            <div class="mt-3 space-y-2">
                                                 @php
-                                                    $allSignals = collect($pythonSignals)
-                                                        ->merge($globalSignals)
-                                                        ->merge($feedbackSignals)
-                                                        ->merge($amountConsistencySignals)
-                                                        ->unique()
-                                                        ->take(6);
+                                                    $hasPrimaryReviewSignals = false;
                                                 @endphp
 
-                                                @if ($allSignals->isNotEmpty())
-                                                    <div>
-                                                        <div class="text-xs font-medium text-gray-500">
-                                                            Segnali principali
-                                                        </div>
+                                                @foreach ($reviewSignalSections as $group => $section)
+                                                    @php
+                                                        $groupItems = $reviewSignalGroups[$group] ?? [];
+                                                        $groupItems = is_array($groupItems)
+                                                            ? $groupItems
+                                                            : [];
+                                                    @endphp
 
-                                                        <div class="mt-1 flex flex-wrap gap-1">
-                                                            @foreach ($allSignals as $signal)
-                                                                <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
-                                                                    {{ $this->formatSignal($signal) }}
-                                                                </span>
-                                                            @endforeach
-                                                        </div>
-                                                    </div>
-                                                @else
+                                                    @if ($groupItems !== [])
+                                                        @php
+                                                            $hasPrimaryReviewSignals = true;
+                                                        @endphp
+
+                                                        <section
+                                                            class="rounded-md border p-2.5 {{ $section['container_classes'] }}"
+                                                        >
+                                                            <div class="flex items-center justify-between gap-2">
+                                                                <div
+                                                                    class="text-xs font-medium uppercase tracking-wider {{ $section['title_classes'] }}"
+                                                                >
+                                                                    {{ $section['title'] }}
+                                                                </div>
+
+                                                                @if (count($groupItems) > 1)
+                                                                    <span
+                                                                        class="shrink-0 text-xs font-medium {{ $section['message_classes'] }}"
+                                                                    >
+                                                                        {{ count($groupItems) }}
+                                                                    </span>
+                                                                @endif
+                                                            </div>
+
+                                                            <div class="mt-2 flex flex-wrap gap-1.5">
+                                                                @foreach ($groupItems as $item)
+                                                                    <span
+                                                                        class="inline-flex max-w-full items-center rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset {{ $section['chip_classes'] }}"
+                                                                    >
+                                                                        {{ $item['title'] }}
+                                                                    </span>
+                                                                @endforeach
+                                                            </div>
+
+                                                            <details class="mt-2">
+                                                                <summary
+                                                                    class="cursor-pointer select-none text-xs font-medium {{ $section['message_classes'] }}"
+                                                                >
+                                                                    Mostra spiegazioni
+                                                                </summary>
+
+                                                                <div class="mt-2 space-y-3 border-t border-black/5 pt-2">
+                                                                    @foreach ($groupItems as $item)
+                                                                        <div>
+                                                                            <div
+                                                                                class="text-xs font-medium {{ $section['title_classes'] }}"
+                                                                            >
+                                                                                {{ $item['title'] }}
+                                                                            </div>
+
+                                                                            <p
+                                                                                class="mt-1 text-xs leading-5 {{ $section['message_classes'] }}"
+                                                                            >
+                                                                                {{ $item['message'] }}
+                                                                            </p>
+
+                                                                            @if ($item['action'] ?? null)
+                                                                                <p
+                                                                                    class="mt-1 text-xs font-medium leading-5 {{ $section['message_classes'] }}"
+                                                                                >
+                                                                                    {{ $item['action'] }}
+                                                                                </p>
+                                                                            @endif
+                                                                        </div>
+                                                                    @endforeach
+                                                                </div>
+                                                            </details>
+                                                        </section>
+                                                    @endif
+                                                @endforeach
+
+                                                @unless ($hasPrimaryReviewSignals)
                                                     <p class="text-sm text-gray-500">
-                                                        Nessun segnale specifico registrato.
+                                                        Nessuna verifica aggiuntiva richiesta.
                                                     </p>
-                                                @endif
+                                                @endunless
                                             </div>
                                         </div>
                                     </div>
@@ -836,30 +922,78 @@
             $selectedPython = $selectedCandidate->metadata['product_understanding_python'] ?? [];
             $selectedUnderstanding = $selectedCandidate->metadata['product_understanding'] ?? [];
             $selectedAmountConsistency = $this->candidateAmountConsistency($selectedCandidate);
-            $selectedAmountConsistencySignals = $this->metadataList($selectedAmountConsistency['signals'] ?? []);
             $selectedHasAmountConsistencyMismatch = $this->candidateHasAmountConsistencyMismatch($selectedCandidate);
 
             $selectedCurrentGlobalFact = $this->candidateCurrentGlobalFact($selectedCandidate);
 
-            $selectedPythonWarnings = $this->metadataList($selectedPython['warnings'] ?? []);
-            $selectedPythonSignals = $this->metadataList($selectedPython['signals'] ?? []);
-            $selectedGlobalSignals = $this->metadataList($selectedGlobalFactSnapshot['signals'] ?? []);
-            $selectedFeedbackSignals = $this->metadataList($selectedFeedback['signals'] ?? []);
+            $selectedReviewSignalPresentation =
+                $this->selectedCandidateReviewSignalPresentation;
 
-            /*
-            | I warning Python sono uno snapshot del momento in cui il candidato
-            | è stato generato. Se il candidato è già stato revisionato, oppure
-            | oggi esiste un global fact attuale, non mostriamo più missing_global_facts
-            | come warning attivo.
-            */
-            $selectedEffectivePythonWarnings = $selectedPythonWarnings;
+            $selectedReviewSignalGroups = data_get(
+                $selectedReviewSignalPresentation,
+                'primary.groups',
+                []
+            );
 
-            if ($selectedCandidate->review_status !== 'pending' || $selectedCurrentGlobalFact) {
-                $selectedEffectivePythonWarnings = array_values(array_filter(
-                    $selectedPythonWarnings,
-                    fn ($warning) => $warning !== 'missing_global_facts'
-                ));
-            }
+            $selectedReviewSignalDiagnostics = data_get(
+                $selectedReviewSignalPresentation,
+                'diagnostics.items',
+                []
+            );
+
+            $selectedSuppressedReviewSignalDuplicates = data_get(
+                $selectedReviewSignalPresentation,
+                'diagnostics.suppressed_duplicates',
+                []
+            );
+
+            $selectedReviewSignalGroups = is_array(
+                $selectedReviewSignalGroups
+            )
+                ? $selectedReviewSignalGroups
+                : [];
+
+            $selectedReviewSignalDiagnostics = is_array(
+                $selectedReviewSignalDiagnostics
+            )
+                ? $selectedReviewSignalDiagnostics
+                : [];
+
+            $selectedSuppressedReviewSignalDuplicates = is_array(
+                $selectedSuppressedReviewSignalDuplicates
+            )
+                ? $selectedSuppressedReviewSignalDuplicates
+                : [];
+
+            $selectedReviewSignalSections = [
+                'attention' => [
+                    'title' => 'Controlli consigliati',
+                    'container_classes' =>
+                        'border-yellow-200 bg-yellow-50',
+                    'title_classes' =>
+                        'text-yellow-900',
+                    'message_classes' =>
+                        'text-yellow-800',
+                ],
+                'missing' => [
+                    'title' => 'Dati da completare',
+                    'container_classes' =>
+                        'border-blue-200 bg-blue-50',
+                    'title_classes' =>
+                        'text-blue-900',
+                    'message_classes' =>
+                        'text-blue-800',
+                ],
+                'positive' => [
+                    'title' => 'Dati coerenti',
+                    'container_classes' =>
+                        'border-green-200 bg-green-50',
+                    'title_classes' =>
+                        'text-green-900',
+                    'message_classes' =>
+                        'text-green-800',
+                ],
+            ];
 
             $selectedIdentityGuardrails = $selectedPython['best_match']['identity_guardrails'] ?? [];
             $selectedPythonBestMatch = $selectedPython['best_match'] ?? [];
@@ -1294,28 +1428,6 @@
                                         </p>
                                     </div>
                                 @endif
-
-                                @if ($selectedEffectivePythonWarnings !== [])
-                                    <div class="mt-4">
-                                        <div class="text-xs font-medium uppercase tracking-wider text-red-700">
-                                            Warning
-                                        </div>
-
-                                        <div class="mt-2 flex flex-wrap gap-2">
-                                            @foreach ($selectedEffectivePythonWarnings as $warning)
-                                                <span class="rounded-full bg-red-50 px-2 py-1 text-xs text-red-700">
-                                                    {{ $this->formatSignal($warning) }}
-                                                </span>
-                                            @endforeach
-                                        </div>
-                                    </div>
-                                @elseif ($selectedPythonWarnings !== [])
-                                    <div class="mt-4 rounded-md bg-gray-50 p-3">
-                                        <p class="text-sm text-gray-600">
-                                            Alcuni warning storici sono stati nascosti perché non risultano più attivi rispetto alla conoscenza attuale.
-                                        </p>
-                                    </div>
-                                @endif
                             </section>
 
                             @if ($selectedIdentityGuardrails)
@@ -1365,32 +1477,288 @@
                             @endif
 
                             <section class="rounded-lg border border-gray-200 p-4">
-                                <h3 class="text-sm font-semibold text-gray-900">
-                                    Segnali aggregati
-                                </h3>
+                                <div class="flex flex-wrap items-start justify-between gap-3">
+                                    <div>
+                                        <h3 class="text-sm font-semibold text-gray-900">
+                                            Indicazioni di revisione
+                                        </h3>
 
-                                @php
-                                    $selectedAllSignals = collect($selectedPythonSignals)
-                                        ->merge($selectedGlobalSignals)
-                                        ->merge($selectedFeedbackSignals)
-                                        ->merge($selectedAmountConsistencySignals)
-                                        ->unique()
-                                        ->values();
-                                @endphp
-
-                                @if ($selectedAllSignals->isNotEmpty())
-                                    <div class="mt-3 flex flex-wrap gap-2">
-                                        @foreach ($selectedAllSignals as $signal)
-                                            <span class="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-700">
-                                                {{ $this->formatSignal($signal) }}
-                                            </span>
-                                        @endforeach
+                                        <p class="mt-1 text-xs text-gray-600">
+                                            Spiegazioni dei controlli effettuati sui dati del candidato.
+                                        </p>
                                     </div>
-                                @else
-                                    <p class="mt-3 text-sm text-gray-500">
-                                        Nessun segnale aggregato disponibile.
+
+                                    @if (
+                                        (int) data_get(
+                                            $selectedReviewSignalPresentation,
+                                            'counts.primary',
+                                            0
+                                        ) > 0
+                                    )
+                                        <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700">
+                                            {{
+                                                data_get(
+                                                    $selectedReviewSignalPresentation,
+                                                    'counts.primary'
+                                                )
+                                            }}
+                                        </span>
+                                    @endif
+                                </div>
+
+                                <div class="mt-4 space-y-3">
+                                    @php
+                                        $selectedHasPrimaryReviewSignals = false;
+                                    @endphp
+
+                                    @foreach (
+                                        $selectedReviewSignalSections
+                                        as $group => $section
+                                    )
+                                        @php
+                                            $selectedGroupItems =
+                                                $selectedReviewSignalGroups[$group] ?? [];
+
+                                            $selectedGroupItems = is_array(
+                                                $selectedGroupItems
+                                            )
+                                                ? $selectedGroupItems
+                                                : [];
+                                        @endphp
+
+                                        @if ($selectedGroupItems !== [])
+                                            @php
+                                                $selectedHasPrimaryReviewSignals = true;
+                                            @endphp
+
+                                            <section
+                                                class="rounded-md border p-4 {{ $section['container_classes'] }}"
+                                            >
+                                                <div class="flex items-center justify-between gap-3">
+                                                    <div
+                                                        class="text-xs font-medium uppercase tracking-wider {{ $section['title_classes'] }}"
+                                                    >
+                                                        {{ $section['title'] }}
+                                                    </div>
+
+                                                    @if (count($selectedGroupItems) > 1)
+                                                        <span
+                                                            class="text-xs font-medium {{ $section['message_classes'] }}"
+                                                        >
+                                                            {{ count($selectedGroupItems) }}
+                                                        </span>
+                                                    @endif
+                                                </div>
+
+                                                <div class="mt-3 space-y-4">
+                                                    @foreach ($selectedGroupItems as $item)
+                                                        <div>
+                                                            <div
+                                                                class="text-sm font-medium {{ $section['title_classes'] }}"
+                                                            >
+                                                                {{ $item['title'] }}
+                                                            </div>
+
+                                                            <p
+                                                                class="mt-1 text-sm leading-6 {{ $section['message_classes'] }}"
+                                                            >
+                                                                {{ $item['message'] }}
+                                                            </p>
+
+                                                            @if ($item['action'] ?? null)
+                                                                <p
+                                                                    class="mt-1 text-sm font-medium leading-6 {{ $section['message_classes'] }}"
+                                                                >
+                                                                    {{ $item['action'] }}
+                                                                </p>
+                                                            @endif
+                                                        </div>
+                                                    @endforeach
+                                                </div>
+                                            </section>
+                                        @endif
+                                    @endforeach
+
+                                    @unless ($selectedHasPrimaryReviewSignals)
+                                        <div class="rounded-md bg-gray-50 p-3">
+                                            <p class="text-sm text-gray-600">
+                                                Nessuna verifica aggiuntiva richiesta.
+                                            </p>
+                                        </div>
+                                    @endunless
+                                </div>
+                            </section>
+
+                            <section class="rounded-lg border border-gray-200 p-4">
+                                <details>
+                                    <summary class="cursor-pointer text-sm font-semibold text-gray-900">
+                                        Dettagli tecnici dei segnali
+                                    </summary>
+
+                                    <p class="mt-2 text-xs text-gray-600">
+                                        Codici originali, sorgenti e classificazioni conservati
+                                        per diagnostica.
                                     </p>
-                                @endif
+
+                                    @if ($selectedReviewSignalDiagnostics !== [])
+                                        <div class="mt-4 space-y-3">
+                                            @foreach (
+                                                $selectedReviewSignalDiagnostics
+                                                as $diagnosticItem
+                                            )
+                                                <div class="rounded-md bg-gray-50 p-3">
+                                                    <div class="font-mono text-xs text-gray-900">
+                                                        {{
+                                                            $diagnosticItem['technical_code']
+                                                                ?? 'unknown'
+                                                        }}
+                                                    </div>
+
+                                                    <dl class="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                                                        <div>
+                                                            <dt class="text-gray-500">
+                                                                Valore originale
+                                                            </dt>
+
+                                                            <dd class="mt-0.5 break-words text-gray-800">
+                                                                {{
+                                                                    $diagnosticItem['raw_value']
+                                                                        ?? '—'
+                                                                }}
+                                                            </dd>
+                                                        </div>
+
+                                                        <div>
+                                                            <dt class="text-gray-500">
+                                                                Sorgente
+                                                            </dt>
+
+                                                            <dd class="mt-0.5 text-gray-800">
+                                                                {{
+                                                                    $diagnosticItem['source']
+                                                                        ?? '—'
+                                                                }}
+                                                            </dd>
+                                                        </div>
+
+                                                        <div>
+                                                            <dt class="text-gray-500">
+                                                                Tipo
+                                                            </dt>
+
+                                                            <dd class="mt-0.5 text-gray-800">
+                                                                {{
+                                                                    $diagnosticItem['kind']
+                                                                        ?? '—'
+                                                                }}
+                                                            </dd>
+                                                        </div>
+
+                                                        <div>
+                                                            <dt class="text-gray-500">
+                                                                Gruppo
+                                                            </dt>
+
+                                                            <dd class="mt-0.5 text-gray-800">
+                                                                {{
+                                                                    $diagnosticItem['group']
+                                                                        ?? '—'
+                                                                }}
+                                                            </dd>
+                                                        </div>
+
+                                                        <div>
+                                                            <dt class="text-gray-500">
+                                                                Gravità
+                                                            </dt>
+
+                                                            <dd class="mt-0.5 text-gray-800">
+                                                                {{
+                                                                    $diagnosticItem['severity']
+                                                                        ?? '—'
+                                                                }}
+                                                            </dd>
+                                                        </div>
+
+                                                        <div>
+                                                            <dt class="text-gray-500">
+                                                                Chiave deduplica
+                                                            </dt>
+
+                                                            <dd class="mt-0.5 break-words font-mono text-gray-800">
+                                                                {{
+                                                                    $diagnosticItem[
+                                                                        'deduplication_key'
+                                                                    ] ?? '—'
+                                                                }}
+                                                            </dd>
+                                                        </div>
+                                                    </dl>
+                                                </div>
+                                            @endforeach
+                                        </div>
+                                    @else
+                                        <p class="mt-4 text-sm text-gray-500">
+                                            Nessun segnale tecnico registrato.
+                                        </p>
+                                    @endif
+
+                                    @if (
+                                        $selectedSuppressedReviewSignalDuplicates !== []
+                                    )
+                                        <div class="mt-5 border-t border-gray-200 pt-4">
+                                            <h4 class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Duplicati semantici nascosti nella UI
+                                            </h4>
+
+                                            <div class="mt-3 space-y-2">
+                                                @foreach (
+                                                    $selectedSuppressedReviewSignalDuplicates
+                                                    as $duplicate
+                                                )
+                                                    <div class="rounded-md border border-gray-200 p-3 text-xs text-gray-700">
+                                                        <div>
+                                                            Chiave:
+                                                            <span class="font-mono">
+                                                                {{
+                                                                    $duplicate[
+                                                                        'deduplication_key'
+                                                                    ] ?? '—'
+                                                                }}
+                                                            </span>
+                                                        </div>
+
+                                                        <div class="mt-1">
+                                                            Mostrato:
+                                                            <span class="font-mono">
+                                                                {{
+                                                                    data_get(
+                                                                        $duplicate,
+                                                                        'kept.technical_code',
+                                                                        '—'
+                                                                    )
+                                                                }}
+                                                            </span>
+                                                        </div>
+
+                                                        <div class="mt-1">
+                                                            Nascosto:
+                                                            <span class="font-mono">
+                                                                {{
+                                                                    data_get(
+                                                                        $duplicate,
+                                                                        'suppressed.technical_code',
+                                                                        '—'
+                                                                    )
+                                                                }}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                @endforeach
+                                            </div>
+                                        </div>
+                                    @endif
+                                </details>
                             </section>
 
                             <section class="rounded-lg border border-gray-200 p-4">

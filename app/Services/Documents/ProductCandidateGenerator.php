@@ -353,18 +353,83 @@ class ProductCandidateGenerator
      * In questi casi la rigenerazione automatica non deve cancellarlo:
      * - modifica manuale del candidato;
      * - applicazione del nome canonico globale;
-     * - eventuali future azioni di revisione manuale.
+     * - accettazione di un suggerimento Assisted Review;
+     * - inserimento manuale di brand, categoria o modello;
+     * - dichiarazione esplicita di un campo non disponibile.
      */
-    private function candidateWasUserReviewed(ProductIdentificationCandidate $candidate): bool
-    {
-        $metadata = $candidate->metadata ?? [];
+    private function candidateWasUserReviewed(
+        ProductIdentificationCandidate $candidate
+    ): bool {
+        $metadata = is_array($candidate->metadata)
+            ? $candidate->metadata
+            : [];
 
-        if (($metadata['manual_review']['reviewed'] ?? false) === true) {
+        if (
+            ($metadata['manual_review']['reviewed'] ?? false)
+                === true
+        ) {
             return true;
         }
 
-        if (($metadata['global_canonical_name_applied']['applied'] ?? false) === true) {
+        if (
+            (
+                $metadata[
+                    'global_canonical_name_applied'
+                ]['applied'] ?? false
+            ) === true
+        ) {
             return true;
+        }
+
+        $assistedReviewFields = data_get(
+            $metadata,
+            'assisted_review.fields',
+            []
+        );
+
+        if (! is_array($assistedReviewFields)) {
+            return false;
+        }
+
+        /*
+        * Questi stati rappresentano una decisione esplicita dell'utente.
+        *
+        * È sufficiente che un solo campo sia stato deciso per proteggere
+        * l'intero candidato: rigenerarlo eliminerebbe anche le altre
+        * decisioni, il contesto e la provenienza della revisione.
+        */
+        $protectedStates = [
+            'confirmed',
+            'modified',
+            'declined',
+        ];
+
+        $protectedActions = [
+            'accepted_suggestion',
+            'manual_value',
+            'marked_unavailable',
+        ];
+
+        foreach ($assistedReviewFields as $field) {
+            if (! is_array($field)) {
+                continue;
+            }
+
+            $state = is_string($field['state'] ?? null)
+                ? $field['state']
+                : null;
+
+            $action = data_get(
+                $field,
+                'decision.action'
+            );
+
+            if (
+                in_array($state, $protectedStates, true)
+                || in_array($action, $protectedActions, true)
+            ) {
+                return true;
+            }
         }
 
         return false;

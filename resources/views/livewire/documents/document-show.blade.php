@@ -479,6 +479,14 @@
                         $candidateConfirmationBlocked =
                             ($candidateConfirmationState['allowed'] ?? true)
                                 !== true;
+                        $candidateHasOptionalCompletion =
+                            ($candidateConfirmationState['reason'] ?? null)
+                                === 'assisted_review_optional_completion'
+                            && (
+                                $candidateConfirmationState[
+                                    'unresolved_fields'
+                                ] ?? []
+                            ) !== [];
                         $sourceLine = $candidate?->documentLine;
                         $sourceLineMetadata = $sourceLine?->metadata ?? [];
                         $candidateSupportingLines = $sourceLineMetadata['supporting_lines'] ?? [];
@@ -735,6 +743,13 @@
                                                 >
                                                     Rivedi e crea prodotto
                                                 </button>
+
+                                                @if ($candidateHasOptionalCompletion)
+                                                    <p class="text-xs text-blue-700">
+                                                        Alcuni campi opzionali resteranno vuoti se non vengono
+                                                        completati.
+                                                    </p>
+                                                @endif
                                             @endif
                                         @else
                                             <span class="text-sm text-gray-500">
@@ -1026,23 +1041,33 @@
                             >
                                 <div class="space-y-6">
                                     @if ($candidateConfirmationBlocked)
-                                        <div class="rounded-md border border-orange-200 bg-orange-50 p-4">
-                                            <h3 class="text-sm font-semibold text-orange-900">
-                                                Dati prodotto da completare
+                                        <div class="rounded-md border border-red-200 bg-red-50 p-4">
+                                            <h3 class="text-sm font-semibold text-red-900">
+                                                Prodotto non confermabile
                                             </h3>
 
-                                            <p class="mt-1 text-sm text-orange-800">
+                                            <p class="mt-1 text-sm text-red-800">
                                                 {{ $candidateConfirmationState['message']
-                                                    ?? 'Completa i dati prodotto prima della conferma.' }}
+                                                    ?? 'Il candidato non può essere confermato.' }}
+                                            </p>
+                                        </div>
+                                    @elseif ($candidateHasOptionalCompletion)
+                                        <div class="rounded-md border border-blue-200 bg-blue-50 p-4">
+                                            <h3 class="text-sm font-semibold text-blue-900">
+                                                Campi opzionali non completati
+                                            </h3>
+
+                                            <p class="mt-1 text-sm text-blue-800">
+                                                {{ $candidateConfirmationState['message'] }}
                                             </p>
 
                                             <a
                                                 href="{{ route('reviews.index', [
                                                     'filter' => 'needs_completion',
                                                 ]) }}"
-                                                class="mt-3 inline-flex items-center rounded-md border border-orange-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-orange-800 hover:bg-orange-100"
+                                                class="mt-3 inline-flex items-center rounded-md border border-blue-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-blue-800 hover:bg-blue-100"
                                             >
-                                                Vai alle revisioni
+                                                Completa nella revisione guidata
                                             </a>
                                         </div>
                                     @endif
@@ -1197,7 +1222,9 @@
                                                 wire:target="confirmProductCandidate({{ $candidate->id }})"
                                                 class="inline-flex items-center justify-center rounded-md border border-transparent bg-gray-800 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-white hover:bg-gray-700 disabled:opacity-50"
                                             >
-                                                Crea prodotto
+                                                {{ $candidateHasOptionalCompletion
+                                                    ? 'Crea con dati disponibili'
+                                                    : 'Crea prodotto' }}
                                             </button>
                                         @endif
                                     </div>
@@ -1209,7 +1236,7 @@
                             <x-ui.drawer
                                 id="candidate-edit-{{ $candidate->id }}"
                                 title="Modifica candidato prodotto"
-                                description="Correggi i dati prima di creare la scheda prodotto."
+                                description="Correggi nome, prezzo, EAN e seriale prima di creare la scheda prodotto."
                                 width="max-w-xl"
                             >
                                 <form
@@ -1234,16 +1261,28 @@
                                     </div>
 
                                     <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                                        <div>
-                                            <label class="block text-sm font-medium text-gray-700">
+                                        <div class="rounded-md border border-blue-200 bg-blue-50 p-3">
+                                            <div class="text-sm font-medium text-blue-900">
                                                 Modello
-                                            </label>
+                                            </div>
 
-                                            <input
-                                                type="text"
-                                                wire:model.defer="candidateReviewForms.{{ $candidate->id }}.model"
-                                                class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                            <div class="mt-1 text-sm text-blue-800">
+                                                {{ $candidate->model ?? 'Non disponibile' }}
+                                            </div>
+
+                                            <p class="mt-2 text-xs text-blue-700">
+                                                Brand, categoria e modello vengono gestiti dalla revisione
+                                                guidata, così ogni modifica resta tracciata.
+                                            </p>
+
+                                            <a
+                                                href="{{ route('reviews.index', [
+                                                    'filter' => 'needs_completion',
+                                                ]) }}"
+                                                class="mt-3 inline-flex text-xs font-medium text-blue-800 underline hover:text-blue-900"
                                             >
+                                                Apri la revisione guidata
+                                            </a>
                                         </div>
 
                                         <div>

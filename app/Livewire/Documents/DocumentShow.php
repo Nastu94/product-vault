@@ -851,7 +851,6 @@ class DocumentShow extends Component
         foreach ($this->document->productIdentificationCandidates as $candidate) {
             $this->candidateReviewForms[$candidate->id] = [
                 'name' => (string) ($candidate->name ?? ''),
-                'model' => (string) ($candidate->model ?? ''),
                 'serial_number' => (string) ($candidate->serial_number ?? ''),
                 'ean_code' => (string) ($candidate->ean_code ?? ''),
                 'price' => $candidate->price !== null
@@ -980,9 +979,12 @@ class DocumentShow extends Component
 
         $candidate->update([
             'name' => $name,
-            'model' => trim((string) ($form['model'] ?? '')) ?: null,
-            'serial_number' => trim((string) ($form['serial_number'] ?? '')) ?: null,
-            'ean_code' => trim((string) ($form['ean_code'] ?? '')) ?: null,
+            'serial_number' => trim(
+                (string) ($form['serial_number'] ?? '')
+            ) ?: null,
+            'ean_code' => trim(
+                (string) ($form['ean_code'] ?? '')
+            ) ?: null,
             'price' => $price,
             'confidence_score' => 100,
             'metadata' => $metadata,

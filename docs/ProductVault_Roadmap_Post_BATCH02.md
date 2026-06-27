@@ -1,7 +1,7 @@
 # Product Vault — Roadmap operativa post-BATCH02
 
-**Versione:** 1.0  
-**Data:** 2026-06-21  
+**Versione:** 1.1
+**Data:** 2026-06-26
 **Stato di partenza:** BATCH02 completato e integrato in `main`  
 **Ambito:** evoluzione da motore documentale robusto a prodotto MVP utilizzabile e monetizzabile
 
@@ -125,11 +125,14 @@ La roadmap consigliata è:
 2. assisted review backend;
 3. review UI guidata;
 4. hardening della creazione prodotto;
-5. evoluzione della garanzia in copertura contestualizzata;
-6. primo workflow operativo “Ho un problema”;
-7. dashboard orientata alle azioni;
-8. monetizzazione soltanto dopo il completamento di un flusso utile;
-9. eventuale BATCH03 mirato a nuovi rischi reali, non alla conoscenza infinita.
+5. traduzione dei segnali tecnici in indicazioni comprensibili per l’utente;
+6. evoluzione della garanzia in copertura contestualizzata;
+7. primo workflow operativo “Ho un problema”;
+8. dashboard orientata alle azioni;
+9. monetizzazione soltanto dopo il completamento di un flusso utile;
+10. eventuale BATCH03 mirato a nuovi rischi reali, non alla conoscenza infinita.
+
+La fase sul linguaggio dei segnali appartiene logicamente al blocco Assisted Review, ma viene pianificata operativamente dopo il confirmation hardening, così da non interrompere il consolidamento transazionale già avviato.
 
 Le fasi devono essere realizzate tramite branch e micro-patch separate.
 
@@ -420,6 +423,204 @@ Questi dati possono restare disponibili in diagnostica o audit.
 Un utente non tecnico deve poter trasformare un documento elaborato in prodotti confermati senza comprendere il funzionamento del parser.
 
 Il flusso deve richiedere intervento soltanto sui campi realmente mancanti o incerti.
+
+---
+
+## 7.1 Fase 2.1 — Linguaggio comprensibile dei segnali di revisione
+
+### Collocazione operativa
+
+Questa fase appartiene al blocco Assisted Review, ma deve essere sviluppata dopo la conclusione del confirmation hardening.
+
+Il branch consigliato è:
+
+```text
+pv-review-signal-language
+```
+
+### Obiettivo
+
+Trasformare i segnali tecnici prodotti dai motori di riconoscimento, similarità e knowledge matching in indicazioni comprensibili e utili per un utente non tecnico.
+
+La diagnostica interna deve restare disponibile per sviluppo e audit, ma la schermata principale di revisione non deve esporre direttamente codici, soglie o messaggi tecnici generati dai singoli analyzer.
+
+### Problema da risolvere
+
+Alcuni candidati mostrano attualmente segnali come:
+
+* `Unusable similarity match`;
+* `Similarity below min score`;
+* `Insufficient informative token overlap`;
+* `Low informative token overlap ratio`;
+* `Low similarity to global canonical name`.
+
+Questi messaggi descrivono condizioni tecniche reali, ma non spiegano chiaramente all’utente:
+
+* quale informazione potrebbe essere incerta;
+* se il candidato è comunque utilizzabile;
+* se è necessario un controllo manuale;
+* quale azione è consigliata;
+* se il segnale indica un errore oppure soltanto conoscenza insufficiente.
+
+### Principio
+
+La UI deve distinguere tra:
+
+* codice tecnico originale;
+* messaggio leggibile;
+* gravità;
+* campo interessato;
+* azione consigliata;
+* dettaglio diagnostico opzionale.
+
+Il significato tecnico del segnale non deve essere modificato. Deve cambiare soltanto la sua presentazione.
+
+Il codice originale deve restare nei metadata per audit, regressione e debug.
+
+### Esempi di traduzione
+
+| Segnale tecnico                             | Messaggio mostrato all’utente                                                |
+| ------------------------------------------- | ---------------------------------------------------------------------------- |
+| `Unusable similarity match`                 | Nessun riferimento sufficientemente affidabile da applicare                  |
+| `Similarity below min score`                | Il nome trovato non corrisponde con sufficiente sicurezza ai dati conosciuti |
+| `Insufficient informative token overlap`    | Il nome contiene pochi elementi distintivi per un confronto affidabile       |
+| `Low informative token overlap ratio`       | Solo una parte limitata del nome coincide con il riferimento disponibile     |
+| `Low similarity to global canonical name`   | Il nome letto differisce dal nome prodotto conosciuto                        |
+| `Quantity x unit price matches total price` | Quantità e prezzi della riga risultano coerenti                              |
+
+Le traduzioni non devono essere letterali.
+
+Ad esempio:
+
+```text
+Similarity below min score
+```
+
+non deve diventare:
+
+```text
+Similarità sotto il punteggio minimo
+```
+
+ma:
+
+```text
+Il nome trovato non corrisponde con sufficiente sicurezza ai dati conosciuti.
+```
+
+### Presentazione consigliata
+
+La schermata principale deve mostrare al massimo:
+
+* un titolo breve;
+* una spiegazione in linguaggio naturale;
+* il campo interessato, quando noto;
+* un’azione suggerita, quando utile.
+
+Esempio:
+
+```text
+Nome prodotto da verificare
+
+Il nome letto differisce dal riferimento disponibile.
+Controlla il nome soltanto se riconosci un errore evidente.
+```
+
+I dettagli tecnici devono essere collocati in una sezione secondaria, chiusa per impostazione predefinita.
+
+Esempio:
+
+```text
+Dettagli tecnici
+- source: python_similarity
+- signal: low_informative_token_overlap_ratio
+- score: 0.31
+- threshold: 0.55
+```
+
+### Raggruppamento dei segnali
+
+I segnali mostrati nella UI devono essere classificati almeno come:
+
+* informazione positiva;
+* verifica consigliata;
+* dato mancante;
+* possibile incoerenza;
+* errore strutturale;
+* informazione esclusivamente diagnostica.
+
+Non ogni segnale tecnico deve diventare un warning rosso.
+
+Un confronto di similarità non utilizzabile non significa necessariamente che il candidato sia errato. Può significare semplicemente che Product Vault non dispone di conoscenza sufficiente per completarlo automaticamente.
+
+### Organizzazione consigliata della card
+
+La sezione attualmente chiamata `Segnali` dovrebbe distinguere visivamente:
+
+#### Controlli consigliati
+
+Informazioni che potrebbero richiedere una verifica dell’utente.
+
+#### Dati coerenti
+
+Controlli positivi, come la coerenza tra quantità, prezzo unitario e totale.
+
+#### Dettagli tecnici
+
+Codici originali, similarity score, token overlap, soglie, analyzer e altre informazioni utili soltanto per audit o debug.
+
+### Regole di implementazione
+
+* usare un mapping centralizzato tra codice tecnico e presentazione UI;
+* non modificare i messaggi direttamente nei singoli analyzer;
+* mantenere il codice tecnico originale nei metadata;
+* prevedere un fallback leggibile per segnali sconosciuti;
+* evitare testi che trasformino un’incertezza in errore certo;
+* mantenere separati warning strutturali e limiti della knowledge;
+* non usare il colore rosso per semplici limiti di similarità o conoscenza;
+* rendere accessibile la diagnostica completa soltanto nei dettagli;
+* preparare il mapping per una futura localizzazione;
+* non modificare soglie, score o logica di riconoscimento in questa fase.
+
+### Cosa non fare
+
+* non eliminare i segnali tecnici dai metadata;
+* non tradurre letteralmente termini tecnici senza contestualizzarli;
+* non mostrare tutti i segnali con la stessa gravità;
+* non nascondere regressioni strutturali reali;
+* non modificare il parser per migliorare esclusivamente il testo mostrato;
+* non trasformare una mancata corrispondenza con la knowledge in un errore del candidato;
+* non cambiare il risultato del riconoscimento.
+
+### Test richiesti
+
+Coprire almeno:
+
+* segnale tecnico conosciuto;
+* segnale positivo;
+* segnale di verifica;
+* segnale strutturale;
+* segnale sconosciuto con fallback;
+* più segnali equivalenti raggruppati;
+* conservazione del codice tecnico originale;
+* assenza di modifiche ai metadata;
+* messaggi principali privi di codici interni;
+* diagnostica tecnica ancora accessibile;
+* classificazione coerente della gravità;
+* nessuna variazione nei risultati del riconoscimento;
+* BATCH01 e BATCH02 invariati.
+
+### Criterio di uscita
+
+La fase è conclusa quando un utente non tecnico può comprendere:
+
+* perché il sistema segnala un candidato;
+* se il candidato può essere confermato;
+* quale dato merita attenzione;
+* quale azione è consigliata;
+* se il segnale rappresenta un errore reale o soltanto conoscenza insufficiente;
+
+senza conoscere similarity score, token overlap, fuzzy matching, soglie interne o implementazione Python.
 
 ---
 
@@ -882,6 +1083,7 @@ main
 pv-assisted-review-foundation
 pv-assisted-review-ui
 pv-product-confirmation-hardening
+pv-review-signal-language
 pv-product-coverage-context
 pv-product-issue-workflow
 pv-action-dashboard
@@ -984,33 +1186,53 @@ Il prossimo blocco, assisted review, è concluso quando:
 5. i campi opzionali non bloccano la conferma;
 6. conferma e ignore sono idempotenti;
 7. il prodotto conserva la provenienza dei dati;
-8. la UI non espone dettagli tecnici inutili;
+8. la UI traduce i segnali tecnici in messaggi comprensibili e orientati all’azione, mantenendo codici, score e soglie soltanto nella diagnostica;
 9. la creazione prodotto non genera duplicati;
 10. il sistema è pronto per il successivo blocco sulle coperture.
 
 ---
 
-## 20. Prossimo passo operativo raccomandato
+## 20. Prossimi passi operativi raccomandati
 
-Il prossimo branch da aprire è:
+Il branch attualmente in lavorazione è:
 
 ```text
-pv-assisted-review-foundation
+pv-product-confirmation-hardening
+```
+
+Il suo obiettivo è:
+
+> Rendere il passaggio Candidate → Product affidabile, ripetibile e tracciabile, trasferendo soltanto dati estratti o confermati, permettendo la conferma con campi opzionali mancanti ed evitando duplicazioni causate da retry o richieste concorrenti.
+
+Ordine interno consigliato:
+
+1. definire la policy di trasferimento dei campi;
+2. applicare la policy al creator;
+3. rendere non bloccanti i campi opzionali mancanti;
+4. allineare la UI al comportamento effettivo;
+5. proteggere doppio click, retry e richieste concorrenti;
+6. rendere idempotenti prodotto ed effetti collaterali;
+7. conservare uno snapshot della provenienza;
+8. definire il comportamento durante il reprocessing;
+9. verificare BATCH01 e BATCH02.
+
+Dopo la conclusione del confirmation hardening, il branch successivo raccomandato è:
+
+```text
+pv-review-signal-language
 ```
 
 Il suo obiettivo deve essere limitato a:
 
-> Produrre metadata di assisted review versionati per brand, categoria e modello, distinguendo valori estratti, suggeriti, confermati e mancanti, senza modificare automaticamente i dati del candidato e senza introdurre AI obbligatoria.
+> Tradurre i segnali tecnici dei candidati in messaggi comprensibili, raggruppati per significato e gravità, mantenendo invariati metadata, soglie e risultati del riconoscimento.
 
-Ordine interno consigliato:
+Successivamente si potrà aprire:
 
-1. definire il contratto `assisted_review`;
-2. individuare le fonti di suggerimento già disponibili;
-3. implementare un service dedicato;
-4. salvare metadata idempotenti;
-5. aggiungere un comando di test;
-6. verificare BATCH01 e BATCH02;
-7. soltanto dopo costruire la UI.
+```text
+pv-product-coverage-context
+```
+
+per rendere le coperture stimate trasparenti, contestualizzate e verificabili.
 
 ---
 

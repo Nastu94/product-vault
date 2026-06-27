@@ -7,7 +7,10 @@ use App\Models\ProductIdentificationCandidate;
 class AssistedReviewConfirmationGuard
 {
     /**
-     * Stati che richiedono ancora una decisione esplicita dell'utente.
+     * Stati che indicano campi opzionali ancora incompleti.
+     *
+     * Questi stati devono essere comunicati all'utente, ma non impediscono
+     * la conferma perché la Transfer Policy escluderà i valori non approvati.
      *
      * @var array<int, string>
      */
@@ -56,12 +59,19 @@ class AssistedReviewConfirmationGuard
             fields: $fields,
         );
 
+        /*
+        * Brand, categoria e modello sono campi di completamento opzionali.
+        *
+        * Il candidato può essere confermato anche se uno di questi campi
+        * è mancante o contiene un suggerimento non accettato. La policy
+        * Candidate → Product impedirà che il valore incerto venga trasferito.
+        */
         if ($unresolvedFields !== []) {
             return [
-                'allowed' => false,
-                'reason' => 'assisted_review_incomplete',
+                'allowed' => true,
+                'reason' => 'assisted_review_optional_completion',
                 'unresolved_fields' => $unresolvedFields,
-                'message' => $this->buildIncompleteMessage(
+                'message' => $this->buildOptionalCompletionMessage(
                     $unresolvedFields
                 ),
             ];
@@ -82,8 +92,11 @@ class AssistedReviewConfirmationGuard
     }
 
     /**
-     * Impedisce la conferma quando restano campi Assisted Review
-     * senza una decisione esplicita dell'utente.
+     * Impedisce la conferma soltanto in presenza di condizioni realmente
+     * bloccanti.
+     *
+     * I campi opzionali mancanti o suggeriti non rappresentano più un
+     * blocco: verranno esclusi dal prodotto dalla Transfer Policy.
      *
      * @throws AssistedReviewConfirmationBlockedException
      */
@@ -186,7 +199,7 @@ class AssistedReviewConfirmationGuard
      *
      * @param  array<int, string>  $unresolvedFields
      */
-    private function buildIncompleteMessage(
+    private function buildOptionalCompletionMessage(
         array $unresolvedFields
     ): string {
         $labels = array_map(
@@ -201,9 +214,9 @@ class AssistedReviewConfirmationGuard
             $unresolvedFields
         );
 
-        return 'Completa o dichiara non disponibili i seguenti campi prima di confermare il candidato: '
+        return 'Puoi confermare il prodotto anche senza completare i seguenti campi: '
             . implode(', ', $labels)
-            . '.';
+            . '. I valori non confermati non verranno salvati nel prodotto.';
     }
 
     /**

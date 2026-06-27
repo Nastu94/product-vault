@@ -7,6 +7,8 @@ use App\Models\IdentificationStatus;
 use App\Models\Product;
 use App\Models\ProductIdentificationCandidate;
 use App\Services\Documents\AssistedReview\AssistedReviewConfirmationGuard;
+use App\Services\Documents\ProductConfirmation\ProductConfirmationFieldTransferPolicy;
+use App\Services\Documents\ProductConfirmation\ProductConfirmationProvenanceSnapshotBuilder;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use App\Services\Warranties\DefaultWarrantyCreator;
 use App\Services\Products\ProductLifecycleEventRecorder;
@@ -25,6 +27,8 @@ class ProductFromCandidateCreator
         private readonly DefaultWarrantyCreator $defaultWarrantyCreator,
         private readonly ProductLifecycleEventRecorder $eventRecorder,
         private readonly AssistedReviewConfirmationGuard $confirmationGuard,
+        private readonly ProductConfirmationFieldTransferPolicy $fieldTransferPolicy,
+        private readonly ProductConfirmationProvenanceSnapshotBuilder $provenanceSnapshotBuilder,
     ) {
     }
 
@@ -34,15 +38,37 @@ class ProductFromCandidateCreator
      * Questo service rappresenta il passaggio:
      * candidato automatico -> prodotto reale confermato dall'utente.
      */
-    public function create(ProductIdentificationCandidate $candidate, int $userId): Product
-    {
-        return DB::transaction(function () use ($candidate, $userId) {
-            $candidate->load([
-                'document.currency',
-                'document.merchant',
-                'document.documentType',
-                'documentLine',
-            ]);
+    public function create(
+        ProductIdentificationCandidate $candidate,
+        int $userId
+    ): Product {
+        $candidateId = $candidate->getKey();
+
+        if ($candidateId === null) {
+            throw new \RuntimeException(
+                'Il candidato deve essere persistito prima della conferma.'
+            );
+        }
+
+        return DB::transaction(function () use (
+            $candidateId,
+            $userId
+        ) {
+            /*
+            * Il lock serializza le conferme dello stesso candidato.
+            *
+            * Una seconda richiesta attende la prima transazione e, quando può
+            * proseguire, trova il product_id già assegnato.
+            */
+            $candidate = ProductIdentificationCandidate::query()
+                ->with([
+                    'document.currency',
+                    'document.merchant',
+                    'document.documentType',
+                    'documentLine',
+                ])
+                ->lockForUpdate()
+                ->findOrFail($candidateId);
 
             $document = $candidate->document;
 
@@ -50,8 +76,29 @@ class ProductFromCandidateCreator
                 throw new \RuntimeException('Documento non trovato per il candidato prodotto.');
             }
 
-            if ($candidate->product_id) {
-                throw new \RuntimeException('Questo candidato è già stato trasformato in prodotto.');
+            /*
+            * Un retry della conferma restituisce il prodotto già creato.
+            *
+            * Gli effetti collaterali sottostanti non devono essere rieseguiti.
+            */
+            if ($candidate->product_id !== null) {
+                $existingProduct = Product::query()->find(
+                    $candidate->product_id
+                );
+
+                if ($existingProduct === null) {
+                    throw new \RuntimeException(
+                        'Il candidato risulta collegato a un prodotto non disponibile.'
+                    );
+                }
+
+                return $existingProduct;
+            }
+
+            if ($candidate->review_status !== 'pending') {
+                throw new \RuntimeException(
+                    'Il candidato non è disponibile per la conferma.'
+                );
             }
 
             /*
@@ -61,6 +108,30 @@ class ProductFromCandidateCreator
             $this->confirmationGuard->ensureCanConfirm(
                 $candidate
             );
+
+            /*
+            * Brand, categoria e modello non vengono copiati direttamente dal
+            * candidato. La policy decide quali valori sono sufficientemente
+            * affidabili o confermati per entrare nel prodotto definitivo.
+            */
+            $fieldTransfer = $this->fieldTransferPolicy->resolve(
+                $candidate
+            );
+
+            $productValues = $fieldTransfer['values'];
+
+            /*
+            * Lo snapshot viene costruito prima che candidato, prodotto o feedback
+            * vengano modificati dalla conferma.
+            *
+            * In questo modo conserva lo stato storico esatto delle evidenze e
+            * delle decisioni Candidate → Product.
+            */
+            $provenanceSnapshot =
+                $this->provenanceSnapshotBuilder->build(
+                    candidate: $candidate,
+                    fieldTransfer: $fieldTransfer,
+                );
 
             $identificationStatusId = IdentificationStatus::query()
                 ->where('code', 'user_confirmed')
@@ -83,18 +154,21 @@ class ProductFromCandidateCreator
             $product = Product::query()->create([
                 'team_id' => $document->team_id,
                 'created_by_user_id' => $userId,
-                'category_id' => $candidate->category_id,
-                'brand_id' => $candidate->brand_id,
+                'category_id' => $productValues['category_id'],
+                'brand_id' => $productValues['brand_id'],
                 'merchant_id' => $document->merchant_id,
                 'identification_status_id' => $identificationStatusId,
                 'currency_id' => $document->currency_id,
                 'name' => $candidate->name,
-                'model' => $candidate->model,
+                'model' => $productValues['model'],
                 'serial_number' => $candidate->serial_number,
                 'ean_code' => $candidate->ean_code,
                 'purchase_date' => $document->purchase_date,
                 'purchase_price' => $candidate->price,
-                'reliability_score' => $this->estimateReliabilityScore($candidate),
+                'reliability_score' => $this->estimateReliabilityScore(
+                    candidate: $candidate,
+                    productValues: $productValues,
+                ),
                 'notes' => null,
             ]);
 
@@ -132,7 +206,10 @@ class ProductFromCandidateCreator
                     'document_line_id' => $candidate->document_line_id,
                     'candidate_name' => $candidate->name,
                     'candidate_ean_code' => $candidate->ean_code,
-                    'candidate_serial_number' => $candidate->serial_number,
+                    'candidate_serial_number' =>
+                        $candidate->serial_number,
+                    'confirmation_provenance' =>
+                        $provenanceSnapshot,
                 ],
             );
 
@@ -209,12 +286,19 @@ class ProductFromCandidateCreator
     }
 
     /**
-     * Stima iniziale dell'affidabilità prodotto.
+     * Stima l'affidabilità usando i valori effettivamente trasferiti
+     * al prodotto e non quelli grezzi ancora presenti sul candidato.
      *
-     * Non è ancora lo scorer definitivo: serve a dare un valore sensato
-     * al prodotto appena creato da un candidato confermato.
+     * @param  array{
+     *     brand_id: int|null,
+     *     category_id: int|null,
+     *     model: string|null
+     * }  $productValues
      */
-    private function estimateReliabilityScore(ProductIdentificationCandidate $candidate): int
+    private function estimateReliabilityScore(
+        ProductIdentificationCandidate $candidate,
+        array $productValues
+    ): int
     {
         $score = 30;
 
@@ -222,7 +306,7 @@ class ProductFromCandidateCreator
             $score += 20;
         }
 
-        if ($candidate->model) {
+        if ($productValues['model'] !== null) {
             $score += 15;
         }
 

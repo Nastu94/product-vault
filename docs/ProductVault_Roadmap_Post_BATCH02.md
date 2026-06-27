@@ -1,6 +1,6 @@
 # Product Vault — Roadmap operativa post-BATCH02
 
-**Versione:** 1.1  
+**Versione:** 1.1
 **Data:** 2026-06-26
 **Stato di partenza:** BATCH02 completato e integrato in `main`  
 **Ambito:** evoluzione da motore documentale robusto a prodotto MVP utilizzabile e monetizzabile

@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\ProductIdentificationCandidate;
 use App\Services\Documents\AssistedReview\AssistedReviewConfirmationGuard;
 use App\Services\Documents\ProductConfirmation\ProductConfirmationFieldTransferPolicy;
+use App\Services\Documents\ProductConfirmation\ProductConfirmationProvenanceSnapshotBuilder;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
 use App\Services\Warranties\DefaultWarrantyCreator;
 use App\Services\Products\ProductLifecycleEventRecorder;
@@ -27,6 +28,7 @@ class ProductFromCandidateCreator
         private readonly ProductLifecycleEventRecorder $eventRecorder,
         private readonly AssistedReviewConfirmationGuard $confirmationGuard,
         private readonly ProductConfirmationFieldTransferPolicy $fieldTransferPolicy,
+        private readonly ProductConfirmationProvenanceSnapshotBuilder $provenanceSnapshotBuilder,
     ) {
     }
 
@@ -118,6 +120,19 @@ class ProductFromCandidateCreator
 
             $productValues = $fieldTransfer['values'];
 
+            /*
+            * Lo snapshot viene costruito prima che candidato, prodotto o feedback
+            * vengano modificati dalla conferma.
+            *
+            * In questo modo conserva lo stato storico esatto delle evidenze e
+            * delle decisioni Candidate → Product.
+            */
+            $provenanceSnapshot =
+                $this->provenanceSnapshotBuilder->build(
+                    candidate: $candidate,
+                    fieldTransfer: $fieldTransfer,
+                );
+
             $identificationStatusId = IdentificationStatus::query()
                 ->where('code', 'user_confirmed')
                 ->value('id');
@@ -191,7 +206,10 @@ class ProductFromCandidateCreator
                     'document_line_id' => $candidate->document_line_id,
                     'candidate_name' => $candidate->name,
                     'candidate_ean_code' => $candidate->ean_code,
-                    'candidate_serial_number' => $candidate->serial_number,
+                    'candidate_serial_number' =>
+                        $candidate->serial_number,
+                    'confirmation_provenance' =>
+                        $provenanceSnapshot,
                 ],
             );
 

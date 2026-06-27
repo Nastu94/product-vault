@@ -13,6 +13,7 @@ use App\Services\Documents\AssistedReview\AssistedReviewConfirmationBlockedExcep
 use App\Services\Documents\AssistedReview\AssistedReviewConfirmationGuard;
 use App\Services\Documents\DocumentLines\DocumentLineAmountConsistencyChecker;
 use App\Services\Documents\ProductUnderstanding\ProductUnderstandingFeedbackRecorder;
+use App\Services\Documents\ReviewSignals\ReviewSignalAggregator;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
@@ -937,6 +938,28 @@ class ReviewIndex extends Component
     }
 
     /**
+     * Segnali presentati per il candidato aperto nel drawer.
+     *
+     * Usa lo stesso contratto read-only delle card di revisione, senza
+     * modificare candidato, metadata o stato lifecycle.
+     *
+     * @return array<string, mixed>
+     */
+    public function getSelectedCandidateReviewSignalPresentationProperty(): array
+    {
+        $candidate = $this->selectedCandidate;
+
+        if (! $candidate) {
+            return [];
+        }
+
+        return $this->reviewSignalPresentationForCandidate(
+            candidate: $candidate,
+            aggregator: app(ReviewSignalAggregator::class),
+        );
+    }
+
+    /**
      * Normalizza liste metadata che possono arrivare come array, stringa o null.
      */
     public function metadataList(mixed $value): array
@@ -953,6 +976,103 @@ class ReviewIndex extends Component
         }
 
         return [trim((string) $value)];
+    }
+
+    /**
+     * Prepara i segnali presentati nella card di revisione.
+     *
+     * La raccolta è read-only e mantiene separate le diverse sorgenti.
+     * I warning Python storici non vengono mostrati come attivi dopo
+     * la revisione del candidato.
+     *
+     * @return array<string, mixed>
+     */
+    private function reviewSignalPresentationForCandidate(
+        ProductIdentificationCandidate $candidate,
+        ReviewSignalAggregator $aggregator
+    ): array {
+        $pythonWarnings = $this->metadataList(
+            data_get(
+                $candidate->metadata,
+                'product_understanding_python.warnings',
+                []
+            )
+        );
+
+        /*
+        * I warning Python rappresentano lo stato disponibile durante
+        * la revisione. Dopo una decisione restano nei metadata originali,
+        * ma non vengono riproposti come warning attivi nella card.
+        */
+        if ($candidate->review_status !== 'pending') {
+            $pythonWarnings = [];
+        }
+
+        /*
+        * L'assenza di global facts è diagnostica di completezza prodotto,
+        * non un warning strutturale da mostrare nella UI primaria.
+        *
+        * Il presenter conserverebbe comunque il segnale nella diagnostica;
+        * il filtro mantiene inoltre invariato il comportamento della card
+        * precedente.
+        */
+        $pythonWarnings = array_values(array_filter(
+            $pythonWarnings,
+            fn (mixed $warning): bool =>
+                $warning !== 'missing_global_facts'
+        ));
+
+        $amountConsistency = $this->candidateAmountConsistency(
+            $candidate
+        );
+
+        return $aggregator->aggregate([
+            [
+                'source' => 'python',
+                'kind' => 'warning',
+                'values' => $pythonWarnings,
+            ],
+            [
+                'source' => 'python',
+                'kind' => 'signal',
+                'values' => $this->metadataList(
+                    data_get(
+                        $candidate->metadata,
+                        'product_understanding_python.signals',
+                        []
+                    )
+                ),
+            ],
+            [
+                'source' => 'global_facts',
+                'kind' => 'signal',
+                'values' => $this->metadataList(
+                    data_get(
+                        $candidate->metadata,
+                        'product_understanding_global_fact.signals',
+                        []
+                    )
+                ),
+            ],
+            [
+                'source' => 'feedback',
+                'kind' => 'signal',
+                'values' => $this->metadataList(
+                    data_get(
+                        $candidate->metadata,
+                        'product_understanding_feedback.signals',
+                        []
+                    )
+                ),
+            ],
+            [
+                'source' => 'amount_consistency',
+                'kind' => 'signal',
+                'values' => $this->metadataList(
+                    $amountConsistency['signals'] ?? []
+                ),
+            ],
+        ]);
     }
 
     /**
@@ -1083,6 +1203,31 @@ class ReviewIndex extends Component
             )
             ->all();
 
+        /*
+        * Segnali comprensibili e deduplicati per la card di revisione.
+        *
+        * La diagnostica completa resta disponibile nel contratto, ma in questa
+        * micro-patch il Blade utilizzerà solamente l'output primario.
+        */
+        $reviewSignalAggregator = app(
+            ReviewSignalAggregator::class
+        );
+
+        $reviewSignalPresentations = $candidates
+            ->getCollection()
+            ->mapWithKeys(
+                fn (
+                    ProductIdentificationCandidate $candidate
+                ): array => [
+                    $candidate->id =>
+                        $this->reviewSignalPresentationForCandidate(
+                            candidate: $candidate,
+                            aggregator: $reviewSignalAggregator,
+                        ),
+                ]
+            )
+            ->all();
+
         return view('livewire.reviews.review-index', [
             'summary' => $summary,
             'documentsNeedingReview' => $documentsNeedingReview,
@@ -1090,6 +1235,7 @@ class ReviewIndex extends Component
             'assistedReviewPresentations' => $assistedReviewPresentations,
             'assistedReviewCategories' => $assistedReviewCategories,
             'assistedReviewConfirmationStates' => $assistedReviewConfirmationStates,
+            'reviewSignalPresentations' => $reviewSignalPresentations,
         ])->layout('layouts.app');
     }
 }

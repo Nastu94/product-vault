@@ -104,6 +104,48 @@ class DefaultWarrantyCreator
                 'country_code' => $country?->code,
                 'product_category_id' => $product->category_id,
                 'source_note' => $rule->source_note,
+
+                /*
+                * Contesto versionato della copertura.
+                *
+                * La garanzia viene creata come stima: la presenza di date e di
+                * una regola applicabile non equivale alla conferma della validità
+                * legale nel caso concreto.
+                */
+                'coverage_context' => [
+                    'version' => 'v1',
+                    'state' => 'estimated',
+
+                    'purchase' => [
+                        'use' => 'unknown',
+                        'seller_type' => 'unknown',
+                    ],
+
+                    'product' => [
+                        'condition' => 'unknown',
+                    ],
+
+                    'jurisdiction' => [
+                        'country_code' => $country?->code,
+                    ],
+
+                    'dates' => [
+                        'purchased_at' => $startsAt->toDateString(),
+                        'delivered_at' => null,
+                        'starts_at_source' => 'product.purchase_date',
+                    ],
+
+                    'declared_coverage' => [
+                        'present' => null,
+                    ],
+
+                    'confirmation' => [
+                        'applied' => false,
+                        'confirmed_at' => null,
+                        'confirmed_by_user_id' => null,
+                    ],
+                ],
+
                 'calculation' => [
                     'starts_at_source' => 'product.purchase_date',
                     'duration_months_source' => 'warranty_rule',

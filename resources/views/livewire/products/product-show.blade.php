@@ -153,14 +153,26 @@
                                 </h2>
 
                                 <p class="mt-1 text-sm text-gray-600">
-                                    Garanzia stimata in base alla data di acquisto e alle regole configurate.
+                                    Periodo, contesto e provenienza della copertura associata al prodotto.
                                 </p>
                             </div>
 
-                            <div class="flex items-center gap-2">
-                                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->warrantyStatusBadgeClasses }}">
-                                    {{ $this->warrantyStatusLabel }}
-                                </span>
+                            <div class="flex flex-wrap items-center justify-end gap-2">
+                                @if ($this->primaryWarranty)
+                                    <span
+                                        class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->warrantyCoverageStateBadgeClasses }}"
+                                    >
+                                        Copertura:
+                                        {{ $this->warrantyCoverageStateLabel }}
+                                    </span>
+
+                                    <span
+                                        class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->warrantyStatusBadgeClasses }}"
+                                    >
+                                        Periodo:
+                                        {{ $this->warrantyStatusLabel }}
+                                    </span>
+                                @endif
 
                                 @if ($this->primaryWarranty && ! $isEditingWarranty)
                                     <button
@@ -187,6 +199,23 @@
                         @enderror
 
                         @if ($this->primaryWarranty)
+                            @if (data_get(
+                                $this->warrantyCoverageContext,
+                                'coverage_state.is_estimate',
+                                false
+                            ))
+                                <div class="mt-5 rounded-lg border border-yellow-200 bg-yellow-50 p-4">
+                                    <div class="text-sm font-semibold text-yellow-900">
+                                        Stima da verificare
+                                    </div>
+
+                                    <p class="mt-1 text-sm leading-6 text-yellow-800">
+                                        Il periodo è stato calcolato usando i dati disponibili e una
+                                        regola configurata. Non rappresenta automaticamente una
+                                        conferma legale, del venditore o del produttore.
+                                    </p>
+                                </div>
+                            @endif
 
                             <dl class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
                                 <div>
@@ -194,7 +223,11 @@
                                         Tipo
                                     </dt>
                                     <dd class="mt-1 text-sm text-gray-900">
-                                        {{ $this->primaryWarranty->warrantyType?->name ?? '—' }}
+                                        {{ data_get(
+                                            $this->warrantyCoverageContext,
+                                            'coverage_type.label',
+                                            '—'
+                                        ) }}
                                     </dd>
                                 </div>
 
@@ -249,18 +282,11 @@
                                         Fonte
                                     </dt>
                                     <dd class="mt-1 text-sm text-gray-900">
-                                        @switch($this->primaryWarranty->source)
-                                            @case('calculated')
-                                                Calcolata automaticamente
-                                                @break
-
-                                            @case('manual')
-                                                Modificata manualmente
-                                                @break
-
-                                            @default
-                                                {{ $this->primaryWarranty->source }}
-                                        @endswitch
+                                        {{ data_get(
+                                            $this->warrantyCoverageContext,
+                                            'source.label',
+                                            '—'
+                                        ) }}
                                     </dd>
                                 </div>
 
@@ -597,9 +623,117 @@
                                 </form>
                             @else
                                 @php
-                                    $warrantySourceNote = data_get($this->primaryWarranty->metadata, 'source_note');
-                                    $warrantyManualNote = $this->primaryWarranty->notes;
+                                    $resolvedWarrantyCoverage =
+                                        $this->warrantyCoverageContext;
+
+                                    $warrantySourceNote = data_get(
+                                        $resolvedWarrantyCoverage,
+                                        'basis.source_note',
+                                        data_get(
+                                            $this->primaryWarranty->metadata,
+                                            'source_note'
+                                        )
+                                    );
+
+                                    $warrantyManualNote =
+                                        $this->primaryWarranty->notes;
+
+                                    $warrantyCoverageReason = data_get(
+                                        $resolvedWarrantyCoverage,
+                                        'basis.reason'
+                                    );
+
+                                    $warrantyCountryCode = data_get(
+                                        $resolvedWarrantyCoverage,
+                                        'context.country_code'
+                                    );
+
+                                    $warrantyDeliveryDate = data_get(
+                                        $resolvedWarrantyCoverage,
+                                        'context.delivery_date'
+                                    );
                                 @endphp
+
+                                <div class="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                                    <div>
+                                        <h4 class="text-sm font-semibold text-gray-900">
+                                            Contesto della copertura
+                                        </h4>
+
+                                        <p class="mt-1 text-xs leading-5 text-gray-600">
+                                            Informazioni utilizzate per qualificare la copertura nel caso
+                                            concreto.
+                                        </p>
+                                    </div>
+
+                                    <dl class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Uso dell’acquisto
+                                            </dt>
+
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $this->warrantyPurchaseUseLabel }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Tipo di venditore
+                                            </dt>
+
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $this->warrantySellerTypeLabel }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Condizione del prodotto
+                                            </dt>
+
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $this->warrantyProductConditionLabel }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Paese rilevante
+                                            </dt>
+
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $warrantyCountryCode ?: 'Non specificato' }}
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Data di consegna
+                                            </dt>
+
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                @if ($warrantyDeliveryDate)
+                                                    {{ \Illuminate\Support\Carbon::parse(
+                                                        $warrantyDeliveryDate
+                                                    )->format('d/m/Y') }}
+                                                @else
+                                                    Non specificata
+                                                @endif
+                                            </dd>
+                                        </div>
+
+                                        <div>
+                                            <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                                Copertura nel documento
+                                            </dt>
+
+                                            <dd class="mt-1 text-sm text-gray-900">
+                                                {{ $this->warrantyDeclaredCoverageLabel }}
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                </div>
 
                                 @if ($warrantySourceNote)
                                     <div class="mt-6 rounded-md bg-gray-50 p-4">
@@ -891,6 +1025,18 @@
                                             </p>
                                         </div>
                                     </div>
+
+                                    @if ($warrantyCoverageReason)
+                                        <div class="mt-4 rounded-md bg-blue-50 p-4">
+                                            <div class="text-xs font-medium uppercase tracking-wider text-blue-700">
+                                                Criterio applicato
+                                            </div>
+
+                                            <p class="mt-1 text-sm leading-6 text-blue-900">
+                                                {{ $warrantyCoverageReason }}
+                                            </p>
+                                        </div>
+                                    @endif
 
                                     <div>
                                         <label for="warrantyNotes" class="block text-xs font-medium uppercase tracking-wider text-gray-500">

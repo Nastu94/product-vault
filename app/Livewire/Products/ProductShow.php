@@ -136,37 +136,199 @@ class ProductShow extends Component
     }
 
     /**
-     * Etichetta stato garanzia.
+     * Contesto normalizzato della copertura principale.
+     *
+     * Stato della copertura e stato temporale restano concetti
+     * distinti e provengono entrambi dal resolver centralizzato.
+     *
+     * @return array<string, mixed>|null
      */
-    public function getWarrantyStatusLabelProperty(): string
+    public function getWarrantyCoverageContextProperty(): ?array
     {
         $warranty = $this->primaryWarranty;
 
-        if (! $warranty || ! $warranty->starts_at || ! $warranty->ends_at) {
-            return 'Non calcolabile';
+        if (! $warranty) {
+            return null;
         }
 
-        if (now()->startOfDay()->lt($warranty->starts_at)) {
-            return 'Non ancora iniziata';
-        }
-
-        if (now()->startOfDay()->gt($warranty->ends_at)) {
-            return 'Scaduta';
-        }
-
-        return 'Attiva';
+        return app(
+            WarrantyCoverageContextResolver::class
+        )->resolve($warranty);
     }
 
     /**
-     * Classi CSS badge stato garanzia.
+     * Etichetta dello stato temporale.
+     *
+     * Il nome legacy della proprietà viene mantenuto per non rompere
+     * la vista attuale durante la transizione.
+     */
+    public function getWarrantyStatusLabelProperty(): string
+    {
+        return (string) data_get(
+            $this->warrantyCoverageContext,
+            'temporal_status.label',
+            'Non calcolabile'
+        );
+    }
+
+    /**
+     * Classi del badge dello stato temporale.
      */
     public function getWarrantyStatusBadgeClassesProperty(): string
     {
-        return match ($this->warrantyStatusLabel) {
-            'Attiva' => 'bg-green-50 text-green-700 ring-green-600/20',
-            'Non ancora iniziata' => 'bg-blue-50 text-blue-700 ring-blue-600/20',
-            'Scaduta' => 'bg-red-50 text-red-700 ring-red-600/20',
-            default => 'bg-gray-100 text-gray-700 ring-gray-500/20',
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'temporal_status.code'
+            )
+        ) {
+            'active' =>
+                'bg-green-50 text-green-700 ring-green-600/20',
+
+            'expiring' =>
+                'bg-yellow-50 text-yellow-800 ring-yellow-600/20',
+
+            'not_started' =>
+                'bg-blue-50 text-blue-700 ring-blue-600/20',
+
+            'expired' =>
+                'bg-red-50 text-red-700 ring-red-600/20',
+
+            default =>
+                'bg-gray-100 text-gray-700 ring-gray-500/20',
+        };
+    }
+
+    /**
+     * Etichetta dello stato della copertura.
+     */
+    public function getWarrantyCoverageStateLabelProperty(): string
+    {
+        return (string) data_get(
+            $this->warrantyCoverageContext,
+            'coverage_state.label',
+            'Copertura non determinata'
+        );
+    }
+
+    /**
+     * Classi del badge dello stato della copertura.
+     *
+     * I colori non rappresentano lo stato temporale e non devono
+     * comunicare implicitamente che la copertura sia legalmente valida.
+     */
+    public function getWarrantyCoverageStateBadgeClassesProperty(): string
+    {
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'coverage_state.code'
+            )
+        ) {
+            'estimated' =>
+                'bg-yellow-50 text-yellow-800 ring-yellow-600/20',
+
+            'declared' =>
+                'bg-blue-50 text-blue-700 ring-blue-600/20',
+
+            'user_confirmed' =>
+                'bg-indigo-50 text-indigo-700 ring-indigo-600/20',
+
+            'verified' =>
+                'bg-green-50 text-green-700 ring-green-600/20',
+
+            'cancelled' =>
+                'bg-red-50 text-red-700 ring-red-600/20',
+
+            default =>
+                'bg-gray-100 text-gray-700 ring-gray-500/20',
+        };
+    }
+
+    /**
+     * Informazioni mancanti per qualificare meglio la copertura.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getWarrantyMissingInformationProperty(): array
+    {
+        $missingInformation = data_get(
+            $this->warrantyCoverageContext,
+            'missing_information',
+            []
+        );
+
+        return is_array($missingInformation)
+            ? array_values($missingInformation)
+            : [];
+    }
+
+    /**
+     * Etichetta leggibile dell’uso dell’acquisto.
+     */
+    public function getWarrantyPurchaseUseLabelProperty(): string
+    {
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'context.purchase_use'
+            )
+        ) {
+            'personal' => 'Uso personale',
+            'business' => 'Uso professionale o aziendale',
+            default => 'Non specificato',
+        };
+    }
+
+    /**
+     * Etichetta leggibile del tipo di venditore.
+     */
+    public function getWarrantySellerTypeLabelProperty(): string
+    {
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'context.seller_type'
+            )
+        ) {
+            'professional' => 'Venditore professionale',
+            'private' => 'Venditore privato',
+            default => 'Non specificato',
+        };
+    }
+
+    /**
+     * Etichetta leggibile della condizione del prodotto.
+     */
+    public function getWarrantyProductConditionLabelProperty(): string
+    {
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'context.product_condition'
+            )
+        ) {
+            'new' => 'Nuovo',
+            'used' => 'Usato',
+            'refurbished' => 'Ricondizionato',
+            default => 'Non specificata',
+        };
+    }
+
+    /**
+     * Etichetta della copertura dichiarata nel documento.
+     */
+    public function getWarrantyDeclaredCoverageLabelProperty(): string
+    {
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'context.declared_coverage'
+            )
+        ) {
+            true => 'Indicata nel documento',
+            false => 'Non indicata nel documento',
+            default => 'Non specificata',
         };
     }
 

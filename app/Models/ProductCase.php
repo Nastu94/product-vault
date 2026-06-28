@@ -99,7 +99,6 @@ class ProductCase extends Model
         'accidental_damage_declared',
         'accidental_damage_notes',
         'request_draft',
-        'resolution_notes',
     ];
 
     /**

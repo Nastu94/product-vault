@@ -6,6 +6,7 @@ use App\Models\Product;
 use App\Models\ProductCase;
 use App\Models\User;
 use App\Services\ProductCases\ProductCaseCreator;
+use App\Services\ProductCases\ProductCaseStatusTransitionService;
 use App\Policies\ProductCasePolicy;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -42,7 +43,8 @@ class TestProductCaseWorkflowCommand extends Command
      * Esegue il test senza lasciare dati persistiti.
      */
     public function handle(
-        ProductCaseCreator $creator
+        ProductCaseCreator $creator,
+        ProductCaseStatusTransitionService $transitionService
     ): int {
         $rows = [];
         $failures = [];
@@ -383,6 +385,8 @@ class TestProductCaseWorkflowCommand extends Command
                     'Descrizione corrente aggiornata.',
                 'original_description' =>
                     'Tentativo di sovrascrittura.',
+                'resolution_notes' =>
+                    'Tentativo anticipato di risoluzione.',
             ])->save();
 
             $productCase->refresh();
@@ -399,6 +403,13 @@ class TestProductCaseWorkflowCommand extends Command
                 'current description updated',
                 'Descrizione corrente aggiornata.',
                 $productCase->description
+            );
+
+            $assertSame(
+                'state_machine',
+                'resolution notes protected before resolved',
+                null,
+                $productCase->resolution_notes
             );
 
             $caseCountAfterValidCreation =
@@ -524,6 +535,485 @@ class TestProductCaseWorkflowCommand extends Command
             );
 
             /*
+             |--------------------------------------------------------------------------
+             | Macchina a stati
+             |--------------------------------------------------------------------------
+             */
+
+            $assertSame(
+                'state_machine',
+                'draft allowed targets',
+                [
+                    ProductCase::STATUS_READY_TO_CONTACT,
+                    ProductCase::STATUS_CANCELLED,
+                ],
+                $transitionService->allowedTargets(
+                    $productCase
+                )
+            );
+
+            /*
+             * draft non può saltare direttamente a contacted.
+             */
+            $directContactExceptionMessage = null;
+
+            try {
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_CONTACTED,
+                );
+            } catch (RuntimeException $exception) {
+                $directContactExceptionMessage =
+                    $exception->getMessage();
+            }
+
+            $assertSame(
+                'state_machine',
+                'draft to contacted rejected',
+                'Transizione pratica non consentita: draft -> contacted.',
+                $directContactExceptionMessage
+            );
+
+            $productCase->refresh();
+
+            $assertSame(
+                'state_machine',
+                'illegal transition keeps draft',
+                ProductCase::STATUS_DRAFT,
+                $productCase->status
+            );
+
+            /*
+             * draft -> ready_to_contact.
+             */
+            $productCase =
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_READY_TO_CONTACT,
+                );
+
+            $assertSame(
+                'state_machine',
+                'draft becomes ready to contact',
+                ProductCase::STATUS_READY_TO_CONTACT,
+                $productCase->status
+            );
+
+            $assertSame(
+                'state_machine',
+                'ready transition has no operative timestamp',
+                true,
+                $productCase->contacted_at === null
+                    && $productCase->resolved_at === null
+                    && $productCase->closed_at === null
+                    && $productCase->cancelled_at === null
+            );
+
+            /*
+             * La richiesta dello stesso stato non è una transizione valida.
+             */
+            $sameStatusExceptionMessage = null;
+
+            try {
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_READY_TO_CONTACT,
+                );
+            } catch (RuntimeException $exception) {
+                $sameStatusExceptionMessage =
+                    $exception->getMessage();
+            }
+
+            $assertSame(
+                'state_machine',
+                'same status transition rejected',
+                'Transizione pratica non consentita: ready_to_contact -> ready_to_contact.',
+                $sameStatusExceptionMessage
+            );
+
+            /*
+             * ready_to_contact può tornare in draft.
+             */
+            $productCase =
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_DRAFT,
+                );
+
+            $assertSame(
+                'state_machine',
+                'ready can return to draft',
+                ProductCase::STATUS_DRAFT,
+                $productCase->status
+            );
+
+            /*
+             * Percorso principale:
+             * draft -> ready_to_contact -> contacted.
+             */
+            $productCase =
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_READY_TO_CONTACT,
+                );
+
+            $productCase =
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_CONTACTED,
+                );
+
+            $assertSame(
+                'state_machine',
+                'ready becomes contacted',
+                ProductCase::STATUS_CONTACTED,
+                $productCase->status
+            );
+
+            $assertSame(
+                'state_machine',
+                'contact timestamp recorded',
+                true,
+                $productCase->contacted_at !== null
+            );
+
+            $contactedAt =
+                $productCase->contacted_at?->toISOString();
+
+            /*
+             * Non è possibile registrare un esito durante cancellation.
+             */
+            $prematureOutcomeRejected = false;
+
+            try {
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_CANCELLED,
+                    attributes: [
+                        'outcome' =>
+                            ProductCase::OUTCOME_ABANDONED,
+                    ],
+                );
+            } catch (ValidationException $exception) {
+                $prematureOutcomeRejected =
+                    array_key_exists(
+                        'outcome',
+                        $exception->errors()
+                    );
+            }
+
+            $assertSame(
+                'state_machine',
+                'outcome outside resolved rejected',
+                true,
+                $prematureOutcomeRejected
+            );
+
+            $productCase->refresh();
+
+            $assertSame(
+                'state_machine',
+                'rejected outcome keeps contacted',
+                ProductCase::STATUS_CONTACTED,
+                $productCase->status
+            );
+
+            /*
+             * contacted -> resolved richiede un outcome.
+             */
+            $missingOutcomeRejected = false;
+
+            try {
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_RESOLVED,
+                );
+            } catch (ValidationException $exception) {
+                $missingOutcomeRejected =
+                    array_key_exists(
+                        'outcome',
+                        $exception->errors()
+                    );
+            }
+
+            $assertSame(
+                'state_machine',
+                'resolved requires outcome',
+                true,
+                $missingOutcomeRejected
+            );
+
+            $invalidOutcomeRejected = false;
+
+            try {
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_RESOLVED,
+                    attributes: [
+                        'outcome' =>
+                            'automatic_legal_victory',
+                    ],
+                );
+            } catch (ValidationException $exception) {
+                $invalidOutcomeRejected =
+                    array_key_exists(
+                        'outcome',
+                        $exception->errors()
+                    );
+            }
+
+            $assertSame(
+                'state_machine',
+                'invalid outcome rejected',
+                true,
+                $invalidOutcomeRejected
+            );
+
+            /*
+             * Risoluzione valida.
+             */
+            $productCase =
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_RESOLVED,
+                    attributes: [
+                        'outcome' =>
+                            ProductCase::OUTCOME_REPAIRED,
+                        'resolution_notes' =>
+                            '  Pannello sostituito.  ',
+                    ],
+                );
+
+            $assertSame(
+                'state_machine',
+                'contacted becomes resolved',
+                ProductCase::STATUS_RESOLVED,
+                $productCase->status
+            );
+
+            $assertSame(
+                'state_machine',
+                'resolved outcome persisted',
+                ProductCase::OUTCOME_REPAIRED,
+                $productCase->outcome
+            );
+
+            $assertSame(
+                'state_machine',
+                'resolution notes normalized',
+                'Pannello sostituito.',
+                $productCase->resolution_notes
+            );
+
+            $assertSame(
+                'state_machine',
+                'resolved timestamp recorded',
+                true,
+                $productCase->resolved_at !== null
+            );
+
+            $assertSame(
+                'state_machine',
+                'contact timestamp preserved',
+                $contactedAt,
+                $productCase->contacted_at?->toISOString()
+            );
+
+            /*
+             * resolved non può essere annullata.
+             */
+            $resolvedCancellationMessage = null;
+
+            try {
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_CANCELLED,
+                );
+            } catch (RuntimeException $exception) {
+                $resolvedCancellationMessage =
+                    $exception->getMessage();
+            }
+
+            $assertSame(
+                'state_machine',
+                'resolved to cancelled rejected',
+                'Transizione pratica non consentita: resolved -> cancelled.',
+                $resolvedCancellationMessage
+            );
+
+            /*
+             * resolved -> closed.
+             */
+            $productCase =
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_CLOSED,
+                );
+
+            $assertSame(
+                'state_machine',
+                'resolved becomes closed',
+                ProductCase::STATUS_CLOSED,
+                $productCase->status
+            );
+
+            $assertSame(
+                'state_machine',
+                'closed timestamp recorded',
+                true,
+                $productCase->closed_at !== null
+            );
+
+            $assertSame(
+                'state_machine',
+                'closed keeps resolution data',
+                true,
+                $productCase->outcome
+                    === ProductCase::OUTCOME_REPAIRED
+                    && $productCase->resolved_at !== null
+                    && $productCase->contacted_at !== null
+            );
+
+            $assertSame(
+                'state_machine',
+                'closed has no allowed targets',
+                [],
+                $transitionService->allowedTargets(
+                    $productCase
+                )
+            );
+
+            $closedTransitionMessage = null;
+
+            try {
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_DRAFT,
+                );
+            } catch (RuntimeException $exception) {
+                $closedTransitionMessage =
+                    $exception->getMessage();
+            }
+
+            $assertSame(
+                'state_machine',
+                'closed is terminal',
+                'Transizione pratica non consentita: closed -> draft.',
+                $closedTransitionMessage
+            );
+
+            /*
+             * Percorso alternativo di cancellazione.
+             *
+             * La pratica temporanea viene eliminata prima degli scenari
+             * cross-team, così il conteggio resta quello originario.
+             */
+            $cancelledCase = $creator->create(
+                product: $product,
+                openedBy: $user,
+                attributes: [
+                    'title' =>
+                        'Pratica annullata di test',
+                    'description' =>
+                        'Pratica creata per verificare cancellation.',
+                ],
+            );
+
+            $cancelledCase =
+                $transitionService->transition(
+                    productCase: $cancelledCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_CANCELLED,
+                );
+
+            $assertSame(
+                'state_machine',
+                'draft can be cancelled',
+                ProductCase::STATUS_CANCELLED,
+                $cancelledCase->status
+            );
+
+            $assertSame(
+                'state_machine',
+                'cancel timestamp recorded',
+                true,
+                $cancelledCase->cancelled_at !== null
+            );
+
+            $assertSame(
+                'state_machine',
+                'cancelled case has no outcome',
+                null,
+                $cancelledCase->outcome
+            );
+
+            $assertSame(
+                'state_machine',
+                'cancelled has no allowed targets',
+                [],
+                $transitionService->allowedTargets(
+                    $cancelledCase
+                )
+            );
+
+            $cancelledTransitionMessage = null;
+
+            try {
+                $transitionService->transition(
+                    productCase: $cancelledCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_READY_TO_CONTACT,
+                );
+            } catch (RuntimeException $exception) {
+                $cancelledTransitionMessage =
+                    $exception->getMessage();
+            }
+
+            $assertSame(
+                'state_machine',
+                'cancelled is terminal',
+                'Transizione pratica non consentita: cancelled -> ready_to_contact.',
+                $cancelledTransitionMessage
+            );
+
+            $cancelledCase->forceDelete();
+
+            $assertSame(
+                'state_machine',
+                'temporary cancelled case removed',
+                $caseCountAfterValidCreation,
+                ProductCase::query()->count()
+            );
+
+            /*
              * Creiamo temporaneamente un altro workspace posseduto dallo
              * stesso utente e lo rendiamo corrente.
              *
@@ -621,6 +1111,36 @@ class TestProductCaseWorkflowCommand extends Command
                     'delete',
                     $productCase
                 )
+            );
+
+            $crossTeamTransitionMessage = null;
+
+            try {
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_DRAFT,
+                );
+            } catch (RuntimeException $exception) {
+                $crossTeamTransitionMessage =
+                    $exception->getMessage();
+            }
+
+            $assertSame(
+                'team_isolation',
+                'cross-team transition rejected',
+                'L’utente non può modificare una pratica appartenente a un altro team.',
+                $crossTeamTransitionMessage
+            );
+
+            $productCase->refresh();
+
+            $assertSame(
+                'team_isolation',
+                'cross-team transition keeps closed',
+                ProductCase::STATUS_CLOSED,
+                $productCase->status
             );
 
             $crossTeamExceptionMessage = null;

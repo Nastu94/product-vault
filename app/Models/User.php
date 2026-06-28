@@ -75,6 +75,14 @@ class User extends Authenticatable
     }
 
     /**
+     * Pratiche prodotto aperte dall'utente.
+     */
+    public function openedProductCases(): HasMany
+    {
+        return $this->hasMany(ProductCase::class, 'opened_by_user_id');
+    }
+
+    /**
      * Preferenze di notifica dell'utente.
      */
     public function notificationPreferences(): HasMany

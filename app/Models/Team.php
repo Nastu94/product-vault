@@ -74,6 +74,14 @@ class Team extends JetstreamTeam
     }
 
     /**
+     * Pratiche prodotto appartenenti al workspace/team.
+     */
+    public function productCases(): HasMany
+    {
+        return $this->hasMany(ProductCase::class);
+    }
+
+    /**
      * Merchant privati o personalizzati del workspace/team.
      */
     public function merchants(): HasMany

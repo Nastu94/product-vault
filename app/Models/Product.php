@@ -116,6 +116,14 @@ class Product extends Model
     }
 
     /**
+     * Pratiche operative aperte per il prodotto.
+     */
+    public function cases(): HasMany
+    {
+        return $this->hasMany(ProductCase::class);
+    }
+
+    /**
      * Garanzie collegate al prodotto.
      *
      * Il model Warranty verrà creato in uno step successivo.

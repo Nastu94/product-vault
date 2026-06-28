@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class ProductCase extends Model
@@ -133,6 +134,22 @@ class ProductCase extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+
+    /**
+     * Documenti selezionati come evidenze della pratica.
+     */
+    public function documents(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            Document::class,
+            'product_case_documents'
+        )
+            ->withPivot([
+                'selected_by_user_id',
+                'notes',
+            ])
+            ->withTimestamps();
     }
 
     /**

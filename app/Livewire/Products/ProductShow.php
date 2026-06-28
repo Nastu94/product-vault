@@ -6,6 +6,7 @@ use App\Models\Product;
 use App\Models\Warranty;
 use App\Models\WarrantyType;
 use App\Services\Products\ProductLifecycleEventRecorder;
+use App\Services\Warranties\ManualWarrantyCoverageContextBuilder;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Livewire\Component;
@@ -253,6 +254,24 @@ class ProductShow extends Component
                 ->orderByPivot('created_at')
                 ->first();
 
+            $manualTimestamp = now()->toISOString();
+
+            $createdMetadata = [
+                'creator' => 'manual_warranty_creation_v1',
+                'created_from' => 'product_show',
+                'created_at' => $manualTimestamp,
+                'created_by_user_id' => auth()->id(),
+            ];
+
+            $createdMetadata['coverage_context'] = app(
+                ManualWarrantyCoverageContextBuilder::class
+            )->build(
+                product: $this->product,
+                metadata: $createdMetadata,
+                userId: (int) auth()->id(),
+                confirmedAt: $manualTimestamp,
+            );
+
             $createdWarranty = Warranty::query()->create([
                 'product_id' => $this->product->id,
                 'warranty_type_id' => $warrantyType->id,
@@ -265,12 +284,7 @@ class ProductShow extends Component
                 'source' => 'manual',
                 'confidence_score' => 90,
                 'notes' => $this->warrantyNotes ?: null,
-                'metadata' => [
-                    'creator' => 'manual_warranty_creation_v1',
-                    'created_from' => 'product_show',
-                    'created_at' => now()->toISOString(),
-                    'created_by_user_id' => auth()->id(),
-                ],
+                'metadata' => $createdMetadata,
             ]);
 
             app(ProductLifecycleEventRecorder::class)->recordManualWarrantyCreated(
@@ -309,14 +323,34 @@ class ProductShow extends Component
             'notes' => $warranty->notes,
         ];
 
-        $metadata = $warranty->metadata ?? [];
+        $metadata = is_array($warranty->metadata)
+            ? $warranty->metadata
+            : [];
+
+        $previousCoverageContext = data_get(
+            $metadata,
+            'coverage_context'
+        );
+
+        $manualTimestamp = now()->toISOString();
 
         $metadata['manual_override'] = [
             'applied' => true,
             'previous_values' => $previousValues,
-            'updated_at' => now()->toISOString(),
+            'previous_coverage_context' =>
+                $previousCoverageContext,
+            'updated_at' => $manualTimestamp,
             'updated_by_user_id' => auth()->id(),
         ];
+
+        $metadata['coverage_context'] = app(
+            ManualWarrantyCoverageContextBuilder::class
+        )->build(
+            product: $this->product,
+            metadata: $metadata,
+            userId: (int) auth()->id(),
+            confirmedAt: $manualTimestamp,
+        );
 
         $warranty->update([
             'starts_at' => $this->warrantyStartsAt ?: null,

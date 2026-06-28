@@ -1,8 +1,17 @@
 # Product Vault - Warranty lifecycle
 
-Questo documento descrive la prima versione del sistema garanzie e lifecycle prodotto di Product Vault.
+Questo documento descrive il sistema di coperture e lifecycle prodotto di Product Vault, inclusa la contestualizzazione introdotta nella Fase 4.
 
-Il blocco garanzie nasce dopo la conferma di un candidato prodotto: quando l'utente conferma che una riga documento rappresenta davvero un prodotto, il sistema può creare una scheda prodotto, collegarla al documento di acquisto e generare una garanzia stimata quando i dati disponibili lo permettono.
+Il blocco nasce dopo la conferma di un candidato prodotto: quando l'utente conferma che una riga documento rappresenta davvero un prodotto, il sistema può creare una scheda prodotto, collegarla al documento di acquisto e generare una copertura stimata quando i dati disponibili lo permettono.
+
+Una copertura non è descritta soltanto da inizio e fine. Product Vault distingue ora:
+
+* stato e provenienza della copertura;
+* periodo temporale indicato;
+* contesto dell'acquisto;
+* informazioni ancora mancanti;
+* conferma dell'utente;
+* criterio usato per il calcolo iniziale.
 
 ## Principio guida
 
@@ -18,6 +27,97 @@ La garanzia deve quindi essere:
 * accompagnata da confidence score;
 * idempotente nella generazione automatica;
 * distinguibile tra calcolata, manuale o derivata da documento.
+
+## Separazione tra copertura e periodo
+
+Product Vault distingue due dimensioni indipendenti.
+
+### Stato della copertura
+
+Lo stato della copertura descrive quanto sappiamo sulla sua origine e conferma:
+
+* `estimated`: copertura stimata da una regola configurata;
+* `declared`: copertura dichiarata in un documento o da una fonte informativa;
+* `user_confirmed`: dati confermati o modificati dall'utente;
+* `verified`: copertura verificata da una fonte considerata sufficiente;
+* `cancelled`: copertura annullata;
+* `unknown`: stato non determinabile.
+
+Lo stato della copertura non descrive se il periodo è attualmente in corso.
+
+### Stato temporale
+
+Lo stato temporale descrive esclusivamente le date registrate:
+
+* `not_started`: il periodo non è ancora iniziato;
+* `active`: la data di riferimento rientra nel periodo indicato;
+* `expiring`: il periodo termina entro 30 giorni;
+* `expired`: il periodo è terminato;
+* `unknown`: inizio o fine non sono disponibili.
+
+Una copertura può quindi essere contemporaneamente:
+
+* `estimated` come stato della copertura;
+* `active` come stato temporale.
+
+La dicitura “nel periodo indicato” non certifica che la copertura sia giuridicamente applicabile.
+
+## Coverage context versionato
+
+La Fase 4 introduce nei metadata della garanzia il contratto:
+
+```php
+'coverage_context' => [
+    'version' => 'v1',
+    'state' => 'estimated',
+
+    'purchase' => [
+        'use' => 'unknown',
+        'seller_type' => 'unknown',
+    ],
+
+    'product' => [
+        'condition' => 'unknown',
+    ],
+
+    'jurisdiction' => [
+        'country_code' => 'IT',
+    ],
+
+    'dates' => [
+        'purchased_at' => '2026-06-10',
+        'delivered_at' => null,
+        'starts_at_source' => 'product.purchase_date',
+    ],
+
+    'declared_coverage' => [
+        'present' => null,
+    ],
+
+    'confirmation' => [
+        'applied' => false,
+        'confirmed_at' => null,
+        'confirmed_by_user_id' => null,
+    ],
+];
+```
+
+Il contratto è persistito nei metadata per evitare una migrazione prematura e permettere evoluzioni versionate.
+
+Le informazioni contestuali principali sono:
+
+* uso personale, professionale o aziendale;
+* venditore professionale o privato;
+* prodotto nuovo, usato o ricondizionato;
+* paese rilevante;
+* data di acquisto;
+* data di consegna;
+* origine della data iniziale;
+* presenza di una copertura dichiarata;
+* conferma dell'utente.
+
+I valori mancanti restano espliciti come `unknown` o `null`. Il sistema non deve inventare informazioni per completare il contesto.
+
 
 ## Ruolo nel flusso MVP
 
@@ -84,9 +184,16 @@ Campi concettuali rilevanti:
 * fonte;
 * confidence score;
 * note o metadata;
+* coverage context versionato;
+* stato della copertura;
+* conferma utente;
+* contesto dell'acquisto;
+* provenienza delle date;
 * timestamps.
 
 La garanzia può essere generata automaticamente o gestita manualmente.
+
+Il periodo `starts_at` / `ends_at` e lo stato della copertura sono concetti separati. Le date descrivono un intervallo registrato; non certificano da sole l'applicabilità della copertura.
 
 ### WarrantyRule
 
@@ -148,6 +255,46 @@ Comportamento attuale:
 * imposta `confidence_score = 70`;
 * è idempotente;
 * non duplica garanzie già presenti.
+
+### WarrantyCoverageContextResolver
+
+`WarrantyCoverageContextResolver` è la fonte centralizzata e read-only per presentare una copertura.
+
+Responsabilità:
+
+* risolvere lo stato della copertura;
+* risolvere lo stato temporale;
+* normalizzare il contesto persistito;
+* supportare garanzie legacy senza `coverage_context`;
+* esporre tipo, provenienza e periodo;
+* indicare le informazioni mancanti;
+* indicare le azioni disponibili;
+* non modificare garanzia o metadata.
+
+Il contratto restituito usa la versione:
+
+warranty_coverage_context_v1
+
+Le principali superfici applicative usano il resolver:
+
+dettaglio prodotto;
+lista prodotti;
+pagina garanzie;
+dashboard.
+ManualWarrantyCoverageContextBuilder
+
+ManualWarrantyCoverageContextBuilder costruisce il contesto persistito quando l'utente crea o modifica una copertura.
+
+Responsabilità:
+
+preservare metadata e provenienza già presenti;
+normalizzare enum, paese, date e booleani;
+registrare la conferma dell'utente;
+impostare lo stato user_confirmed;
+consentire la cancellazione esplicita di valori;
+mantenere compatibilità con metadata legacy.
+
+Una modifica manuale non trasforma automaticamente la copertura in verified.
 
 ### ProductFromCandidateCreator
 
@@ -285,53 +432,96 @@ In futuro il confidence score potrà variare in base a:
 
 ## UI prodotto
 
-La pagina prodotto mostra la sezione garanzia.
+La pagina prodotto mostra separatamente:
 
-Comportamenti principali:
+* stato della copertura;
+* stato temporale;
+* tipo di copertura;
+* inizio, fine e durata;
+* provenienza;
+* confidence score tecnico;
+* contesto dell'acquisto;
+* criterio applicato;
+* informazioni mancanti;
+* documento sorgente;
+* note.
 
-* se esiste una garanzia, viene mostrata;
-* l'utente può modificarla manualmente;
-* se non esiste, l'utente può crearla manualmente;
-* lo storico mostra eventi collegati alla garanzia.
+L'utente può:
 
-La modifica manuale deve registrare un evento lifecycle, perché cambia una scadenza rilevante del prodotto.
+* creare una copertura manualmente;
+* modificare una copertura esistente;
+* compilare uso dell'acquisto, venditore, condizione, paese e consegna;
+* indicare se la copertura è dichiarata nel documento;
+* confermare i dati salvati.
+
+La modifica manuale:
+
+* imposta lo stato `user_confirmed`;
+* registra utente e timestamp;
+* conserva i valori precedenti in `manual_override`;
+* registra un evento lifecycle;
+* non equivale a una verifica legale o del venditore.
 
 ## Lista prodotti
 
-La lista prodotti mostra lo stato garanzia in tabella.
+La lista prodotti mostra in modo sintetico:
 
-Obiettivo UX:
+* stato della copertura;
+* stato temporale;
+* tipo;
+* periodo indicato;
+* provenienza;
+* informazioni mancanti;
+* indicazione esplicita delle stime.
 
-* far capire rapidamente quali prodotti hanno garanzia;
-* evidenziare scadenze;
-* permettere accesso veloce alla scheda prodotto;
-* evitare che l'utente debba aprire ogni prodotto per sapere se è coperto.
+La lista non usa più formule come “giorni residui di garanzia” per una copertura non verificata. Mostra invece la distanza dalla fine del periodo indicato.
 
 ## Pagina garanzie
 
-La rotta `/warranties` contiene una pagina dedicata alle garanzie.
+La rotta `/warranties` è il centro operativo delle coperture.
 
 Funzionalità presenti:
 
-* riepilogo;
-* filtri;
-* tabella;
+* riepilogo dei periodi;
+* filtri temporali;
+* filtro per provenienza;
+* stato della copertura distinto dal periodo;
+* indicazione delle stime;
+* numero di informazioni mancanti;
+* confidence score presentato come dato tecnico;
 * link al prodotto;
-* link al documento quando disponibile.
+* link al documento sorgente.
 
-Questa pagina serve come centro operativo per controllare scadenze e coperture.
+I conteggi temporali sono mutuamente esclusivi:
+
+* nel periodo;
+* in scadenza;
+* non ancora iniziato;
+* scaduto;
+* non determinabile.
 
 ## Dashboard
 
-La dashboard include elementi legati alle garanzie.
+La dashboard evidenzia le coperture con periodi che terminano entro 30 giorni.
 
-Elementi attuali:
+Il conteggio e la lista usano la stessa finestra temporale:
 
-* card garanzie in scadenza;
-* box "Garanzie da controllare";
-* link verso la pagina garanzie o verso elementi da revisionare.
+* periodo già iniziato;
+* data finale uguale o successiva alla data corrente;
+* data finale entro 30 giorni.
 
-La dashboard non deve sostituire la pagina garanzie. Deve solo evidenziare ciò che richiede attenzione.
+Ogni elemento mostra separatamente:
+
+* stato della copertura;
+* stato temporale;
+* tipo;
+* data finale del periodo;
+* provenienza;
+* stima da verificare;
+* conferma dell'utente;
+* informazioni mancanti.
+
+La dashboard non certifica una copertura e non sostituisce la pagina garanzie.
 
 ## Storico prodotto
 
@@ -356,10 +546,12 @@ Lo storico è importante perché un prodotto può accumulare nel tempo:
 
 ## Comando di test
 
-Il comando principale è:
+I comandi principali sono:
 
 ```
 php artisan product-vault:test-warranty-lifecycle
+php artisan product-vault:test-warranty-coverage-context
+php artisan product-vault:test-manual-warranty-coverage-context
 ```
 
 Il test copre:
@@ -379,6 +571,27 @@ Questo comando deve restare verde dopo modifiche a:
 * regole garanzia;
 * eventi lifecycle;
 * UI che modifica garanzie.
+
+`product-vault:test-warranty-coverage-context` verifica:
+
+* compatibilità con garanzie legacy;
+* stati della copertura;
+* stati temporali;
+* normalizzazione del contesto;
+* informazioni mancanti;
+* azioni disponibili;
+* comportamento read-only.
+
+`product-vault:test-manual-warranty-coverage-context` verifica:
+
+* creazione manuale;
+* aggiornamento di contesti esistenti;
+* preservazione della provenienza;
+* normalizzazione degli input;
+* cancellazione esplicita dei valori;
+* date non valide;
+* booleani provenienti dal form;
+* assenza di mutazioni sui metadata in ingresso.
 
 ## Relazione con Product Understanding
 
@@ -422,8 +635,8 @@ Nel MVP attuale il caso più importante è:
 Per evitare complessità premature, non automatizzare ancora:
 
 * calcolo garanzia da condizioni testuali complesse;
-* distinzione legale completa tra prodotti nuovi, usati, ricondizionati e B2B;
-* gestione paesi multipli avanzata;
+* determinazione legale automatica basata su prodotto nuovo, usato, ricondizionato o acquisto B2B;
+* applicazione automatica di normative nazionali complete;
 * garanzie commerciali produttore da fonti esterne;
 * estensioni garanzia lette da ogni possibile documento;
 * reclami automatici;
@@ -474,35 +687,49 @@ Mitigazione:
 * non costruire subito un motore legale completo;
 * aggiungere complessità solo quando i casi reali lo richiedono.
 
+## Stato della Fase 4
+
+La Fase 4 — Product Coverage Context è completata.
+
+Risultati:
+
+* persistenza versionata di `coverage_context`;
+* stato della copertura separato dallo stato temporale;
+* compatibilità con garanzie legacy;
+* contesto automatico iniziale;
+* contesto manuale confermato dall'utente;
+* preservazione della provenienza;
+* resolver centralizzato read-only;
+* raccolta contestuale nel dettaglio prodotto;
+* presentazione coerente in prodotto, lista prodotti, garanzie e dashboard;
+* filtri temporali non sovrapposti;
+* test dedicati;
+* wording che non presenta i 24 mesi come certezza universale.
+
 ## Backlog specifico garanzie
 
-### P0 - Consolidamento MVP
+### P1 - Miglioramenti successivi
 
-* Verificare wording UI: usare sempre "garanzia stimata" quando la fonte è `calculated`.
-* Assicurare idempotenza in ogni percorso di conferma candidato.
-* Mantenere verde `product-vault:test-warranty-lifecycle`.
-* Evitare creazione automatica senza `purchase_date`.
-
-### P1 - Miglioramenti utili
-
-* Migliorare badge garanzia in lista prodotti.
-* Aggiungere filtri più utili nella pagina `/warranties`.
-* Migliorare messaggi per prodotti senza garanzia.
-* Distinguere meglio data acquisto e data consegna.
-* Aggiungere note manuali sulla garanzia.
-* Mostrare fonte e confidence in modo più chiaro.
+* Introdurre una vera azione di verifica con fonte e operatore.
+* Gestire lo stato `declared` da certificati o testo documento.
+* Gestire lo stato `cancelled` tramite workflow utente.
+* Distinguere in modo più avanzato acquisto, ordine, consegna e attivazione.
+* Aggiungere notifiche sui periodi in scadenza.
+* Ridurre la duplicazione delle classi visuali dei badge.
+* Aggiungere test specifici per controller e componenti Livewire.
+* Valutare una migrazione strutturata quando il contratto metadata sarà stabile.
 
 ### P2 - Evoluzione futura
 
-* Parsing certificati garanzia.
+* Parsing certificati di garanzia.
 * Supporto garanzie estese.
-* Supporto garanzie commerciali produttore.
-* Notifiche scadenza garanzia.
-* Scheduler reminder.
-* Regole per paese/categoria più granulari.
+* Supporto garanzie commerciali del produttore.
+* Regole per paese e categoria più granulari.
 * Eventi di riparazione e assistenza.
-* Allegati multipli per garanzia.
-* Export riepilogo prodotto/garanzia.
+* Estensioni conseguenti a riparazione.
+* Allegati multipli per copertura.
+* Export riepilogo prodotto, documenti e coperture.
+* Motore legale opzionale basato su fonti aggiornate e verificabili.
 
 ## Decisione strategica
 

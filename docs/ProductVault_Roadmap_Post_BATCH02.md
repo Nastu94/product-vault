@@ -687,104 +687,366 @@ La creazione prodotto è pronta quando può essere considerata una transazione a
 
 # PARTE IV — COPERTURE E GARANZIE
 
-## 9. Stato attuale del blocco garanzie
+## 9. Stato attuale del blocco coperture
 
-Product Vault possiede già una base migliore di una semplice colonna `warranty_expires_at`:
+Product Vault possiede un modello di copertura separato dal prodotto e dai documenti.
 
-- model `Warranty` separato;
-- tipo di garanzia;
-- documento sorgente;
-- data inizio e fine;
-- durata;
-- `source`;
-- `confidence_score`;
-- metadata;
-- regole configurabili;
-- creazione idempotente;
-- lifecycle events;
-- modifica manuale.
+La base applicativa comprende:
 
-Il problema principale non è quindi buttare via l’implementazione esistente.
+* model `Warranty`;
+* tipo di copertura;
+* documento sorgente;
+* data iniziale e finale;
+* durata;
+* `source`;
+* `confidence_score`;
+* metadata;
+* regole configurabili;
+* creazione automatica idempotente;
+* creazione e modifica manuale;
+* lifecycle events;
+* pagina dedicata `/warranties`;
+* presentazione nel dettaglio prodotto;
+* presentazione nella lista prodotti;
+* riepilogo nella dashboard.
 
-Il problema è evitare che una regola italiana predefinita di 24 mesi venga percepita come certezza applicabile a ogni acquisto.
+La Fase 4 ha aggiunto:
 
-Il backend la tratta già come stima calcolata. La prossima fase deve rendere esplicito il contesto e migliorare la comunicazione UI.
+* `coverage_context` versionato nei metadata;
+* stato della copertura;
+* stato temporale separato;
+* contesto dell’acquisto;
+* conferma dell’utente;
+* informazioni mancanti;
+* provenienza delle date;
+* resolver centralizzato read-only;
+* compatibilità con coperture legacy;
+* test dedicati;
+* wording non assertivo nelle principali superfici UI.
+
+La regola italiana generale di 24 mesi rimane una stima tecnica iniziale.
+
+Non deve essere interpretata come:
+
+* certezza universale;
+* verifica legale;
+* dichiarazione del venditore;
+* conferma del produttore;
+* applicabilità automatica a ogni acquisto.
 
 ---
 
 ## 10. Fase 4 — Product Coverage Context
 
-### Obiettivo
+### Stato
 
-Evolvere la garanzia stimata in una copertura contestualizzata, verificabile e modificabile.
-
-### Branch consigliato
+La Fase 4 è stata implementata sul branch:
 
 ```text
 pv-product-coverage-context
 ```
 
-### Principio
+Al momento della chiusura documentale:
+
+* l’implementazione applicativa è completata;
+* i test dedicati sono risultati verdi nelle verifiche intermedie;
+* la documentazione è stata aggiornata;
+* la regressione finale del branch deve ancora essere eseguita;
+* il branch non è ancora stato integrato in `main`.
+
+La fase sarà considerata completamente integrata soltanto dopo:
+
+1. regressione finale verde;
+2. verifica del diff;
+3. commit documentale;
+4. push del branch;
+5. merge in `main`;
+6. controlli essenziali successivi al merge.
+
+### Obiettivo
+
+Evolvere la garanzia stimata in una copertura:
+
+* contestualizzata;
+* verificabile;
+* modificabile;
+* tracciabile;
+* compatibile con dati legacy;
+* presentata senza affermazioni legali automatiche.
+
+### Principio applicativo
 
 Product Vault non deve dichiarare automaticamente:
 
 > Garanzia valida fino al 12 giugno 2028.
 
-Deve poter dichiarare:
+Deve invece poter dichiarare:
 
-> Possibile copertura legale stimata fino al 12 giugno 2028, calcolata usando la data di acquisto e una regola italiana generale. Verifica il tipo di acquisto e la data di consegna.
+> Possibile copertura stimata fino al 12 giugno 2028, calcolata usando la data di acquisto e una regola generale. Verifica il contesto dell’acquisto e la data di consegna.
 
-### Contesto minimo da raccogliere
+La presenza di una data finale non certifica l’applicabilità della copertura.
 
-- acquisto personale o aziendale;
-- venditore professionale o privato;
-- prodotto nuovo, usato o ricondizionato;
-- paese rilevante;
-- data acquisto;
-- data consegna, se disponibile;
-- fonte della data iniziale;
-- copertura dichiarata in un documento;
-- conferma dell’utente.
+### Separazione tra copertura e periodo
 
-### Stati consigliati
+La Fase 4 distingue due dimensioni indipendenti.
 
-- `estimated`;
-- `declared`;
-- `user_confirmed`;
-- `verified`;
-- `expired`;
-- `cancelled`;
-- `unknown`.
+#### Stato della copertura
 
-Nella prima iterazione questi stati possono essere salvati nei metadata se una migrazione completa sarebbe prematura. Se diventano oggetto di query frequenti, dovranno essere normalizzati in colonne dedicate.
+Descrive provenienza e livello di conferma:
 
-### Tipi di copertura
+* `estimated`;
+* `declared`;
+* `user_confirmed`;
+* `verified`;
+* `cancelled`;
+* `unknown`.
 
-- legale;
-- commerciale del produttore;
-- estesa;
-- assicurativa;
-- copertura derivata da riparazione;
-- sconosciuta.
+#### Stato temporale
 
-### Modifica consigliata alla UI
+Descrive esclusivamente il periodo registrato:
 
-Mostrare sempre:
+* `not_started`;
+* `active`;
+* `expiring`;
+* `expired`;
+* `unknown`.
 
-- tipo;
-- stato;
-- data iniziale;
-- data finale;
-- fonte;
-- motivo del calcolo;
-- informazioni mancanti;
-- pulsante di conferma o modifica.
+Una copertura può quindi essere contemporaneamente:
 
-### Criterio di uscita
+* `estimated` come stato della copertura;
+* `active` come stato temporale.
 
-La UI non deve più far sembrare la regola dei 24 mesi una certezza universale.
+La dicitura “nel periodo indicato” non equivale a “copertura legalmente valida”.
 
-Il sistema deve distinguere chiaramente stima, dato documentale e conferma utente.
+### Contesto raccolto
+
+Il contesto minimo supportato comprende:
+
+* acquisto personale, professionale o aziendale;
+* venditore professionale o privato;
+* prodotto nuovo, usato o ricondizionato;
+* paese rilevante;
+* data di acquisto;
+* data di consegna;
+* fonte della data iniziale;
+* copertura dichiarata in un documento;
+* conferma dell’utente.
+
+I valori mancanti restano espliciti come `unknown` o `null`.
+
+Il sistema non deve inventare informazioni per completare il contesto.
+
+### Persistenza
+
+La prima iterazione usa metadata versionati:
+
+```text
+warranty_coverage_context_v1
+```
+
+Questa scelta consente di:
+
+* evitare una migrazione prematura;
+* supportare garanzie legacy;
+* preservare metadata preesistenti;
+* evolvere il contratto in modo controllato;
+* verificare il modello prima di introdurre colonne dedicate.
+
+Se gli stati diventeranno oggetto di query frequenti, dovranno essere valutate colonne strutturate e indicizzate.
+
+### Coperture automatiche
+
+`DefaultWarrantyCreator`:
+
+* applica una `WarrantyRule`;
+* usa la data di acquisto quando disponibile;
+* crea una copertura stimata;
+* persiste il contesto iniziale;
+* imposta lo stato `estimated`;
+* conserva la provenienza;
+* evita duplicazioni;
+* registra gli eventi lifecycle previsti.
+
+La regola generale italiana a 24 mesi resta configurabile e non viene trattata come certezza universale.
+
+### Coperture manuali
+
+`ManualWarrantyCoverageContextBuilder`:
+
+* crea o aggiorna il contesto manuale;
+* preserva metadata e provenienza;
+* normalizza enum, paese, date e booleani;
+* permette la cancellazione esplicita dei valori;
+* registra utente e timestamp;
+* imposta lo stato `user_confirmed`;
+* ripara metadata legacy o malformati;
+* non imposta automaticamente `verified`.
+
+La conferma dell’utente significa che i dati sono stati controllati o modificati dall’utente.
+
+Non significa che siano stati verificati legalmente, dal venditore o dal produttore.
+
+### Resolver centralizzato
+
+`WarrantyCoverageContextResolver` è la fonte read-only per la presentazione del contesto.
+
+Responsabilità:
+
+* leggere il contesto persistito;
+* supportare coperture nuove e legacy;
+* normalizzare i valori;
+* risolvere lo stato della copertura;
+* risolvere lo stato temporale;
+* esporre tipo e provenienza;
+* esporre periodo e criterio;
+* individuare informazioni mancanti;
+* esporre azioni disponibili;
+* non modificare la garanzia o i metadata.
+
+### Superfici applicative aggiornate
+
+#### Dettaglio prodotto
+
+Mostra separatamente:
+
+* stato della copertura;
+* stato temporale;
+* tipo;
+* periodo indicato;
+* provenienza;
+* confidence score tecnico;
+* contesto dell’acquisto;
+* criterio applicato;
+* informazioni mancanti;
+* documento sorgente;
+* note.
+
+Permette la creazione e modifica manuale del contesto.
+
+#### Lista prodotti
+
+Mostra in forma sintetica:
+
+* stato della copertura;
+* periodo;
+* tipo;
+* provenienza;
+* stima da verificare;
+* conferma utente;
+* informazioni mancanti.
+
+Non usa “giorni residui di garanzia” per coperture non verificate.
+
+Descrive invece la distanza dalla fine del periodo indicato.
+
+#### Pagina garanzie
+
+La pagina `/warranties` distingue:
+
+* stato della copertura;
+* stato temporale;
+* provenienza;
+* tipo;
+* informazioni mancanti;
+* confidence score tecnico.
+
+I filtri temporali sono mutuamente esclusivi:
+
+* nel periodo;
+* in scadenza;
+* non ancora iniziato;
+* scaduto;
+* non determinabile.
+
+#### Dashboard
+
+La dashboard mostra le coperture con periodi che terminano entro 30 giorni.
+
+Il conteggio e la lista usano la stessa finestra temporale:
+
+* periodo già iniziato;
+* data finale non precedente alla data corrente;
+* data finale entro 30 giorni.
+
+Ogni elemento distingue copertura e periodo.
+
+### Test dedicati
+
+La Fase 4 introduce o estende i seguenti comandi:
+
+```bash
+php artisan product-vault:test-warranty-lifecycle
+php artisan product-vault:test-warranty-coverage-context
+php artisan product-vault:test-manual-warranty-coverage-context
+php artisan product-vault:test-product-confirmation-idempotency
+```
+
+Le verifiche coprono:
+
+* creazione automatica;
+* persistenza del contesto stimato;
+* idempotenza;
+* coperture manuali;
+* aggiornamento del contesto;
+* normalizzazione degli input;
+* cancellazione esplicita;
+* compatibilità legacy;
+* stati della copertura;
+* stati temporali;
+* informazioni mancanti;
+* azioni disponibili;
+* comportamento read-only;
+* preservazione dei metadata;
+* protezione della conferma prodotto.
+
+### Criteri di uscita
+
+I criteri funzionali della Fase 4 sono soddisfatti quando:
+
+* la regola dei 24 mesi non appare come certezza universale;
+* copertura e periodo sono distinti;
+* le stime sono marcate come tali;
+* la conferma utente è distinta dalla verifica;
+* il contesto dell’acquisto è modificabile;
+* i valori mancanti restano espliciti;
+* le superfici applicative usano il resolver;
+* le coperture legacy restano leggibili;
+* i test dedicati sono verdi.
+
+Il criterio di integrazione sarà soddisfatto dopo regressione finale e merge in `main`.
+
+### Limiti intenzionali
+
+La Fase 4 non introduce ancora:
+
+* un motore legale automatico;
+* applicazione completa delle normative nazionali;
+* decisioni automatiche B2C o B2B;
+* verifica formale della copertura;
+* parsing completo dei certificati;
+* workflow completo per `declared`;
+* workflow completo per `verified`;
+* workflow completo per `cancelled`;
+* notifiche schedulate;
+* colonne database dedicate agli stati.
+
+### Evoluzioni successive
+
+Miglioramenti possibili:
+
+* verifica con fonte e operatore;
+* acquisizione di coperture dichiarate da documenti;
+* annullamento tramite workflow utente;
+* migrazione strutturata del coverage context;
+* regole per paese e categoria più granulari;
+* supporto garanzie commerciali;
+* supporto garanzie estese;
+* supporto coperture assicurative;
+* estensioni conseguenti a riparazioni;
+* notifiche sui periodi;
+* riduzione della duplicazione visuale dei badge;
+* test specifici per controller e componenti Livewire;
+* motore legale opzionale basato su fonti aggiornate e verificabili.
 
 ---
 

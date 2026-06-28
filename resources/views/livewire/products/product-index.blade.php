@@ -30,10 +30,10 @@
                                     Acquisto
                                 </th>
                                 <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                                    Garanzia
+                                    Copertura e periodo
                                 </th>
                                 <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                                    Affidabilità
+                                    Affidabilità prodotto
                                 </th>
                                 <th class="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
                                     Azioni
@@ -83,41 +83,119 @@
 
                                     <td class="px-6 py-4 text-sm text-gray-700">
                                         @php
-                                            $warranty = $this->primaryWarranty($product);
-                                            $remainingDays = $this->warrantyRemainingDays($warranty);
+                                            $warranty =
+                                                $this->primaryWarranty($product);
+
+                                            $coverageContext =
+                                                $this->warrantyCoverageContext($warranty);
+
+                                            $remainingDays =
+                                                $this->warrantyRemainingDays($warranty);
+
+                                            $coverageIsEstimate =
+                                                $this->warrantyCoverageIsEstimate($warranty);
+
+                                            $missingInformationCount =
+                                                $this->warrantyMissingInformationCount($warranty);
+
+                                            $temporalStatusCode = data_get(
+                                                $coverageContext,
+                                                'temporal_status.code'
+                                            );
+
+                                            $coverageIsConfirmed = (bool) data_get(
+                                                $coverageContext,
+                                                'confirmation.is_confirmed',
+                                                false
+                                            );
                                         @endphp
 
-                                        <div>
-                                            <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->warrantyStatusBadgeClasses($warranty) }}">
-                                                {{ $this->warrantyStatusLabel($warranty) }}
-                                            </span>
-                                        </div>
-
                                         @if ($warranty)
-                                            <div class="mt-2 text-xs text-gray-500">
-                                                @if ($warranty->ends_at)
-                                                    Scade il {{ $warranty->ends_at->format('d/m/Y') }}
-                                                @else
-                                                    Scadenza non disponibile
-                                                @endif
+                                            <div class="flex flex-col items-start gap-2">
+                                                <span
+                                                    class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->warrantyCoverageStateBadgeClasses($warranty) }}"
+                                                >
+                                                    {{ $this->warrantyCoverageStateLabel($warranty) }}
+                                                </span>
+
+                                                <span
+                                                    class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->warrantyStatusBadgeClasses($warranty) }}"
+                                                >
+                                                    Periodo:
+                                                    {{ $this->warrantyStatusLabel($warranty) }}
+                                                </span>
                                             </div>
 
-                                            <div class="mt-1 text-xs text-gray-500">
-                                                Fonte: {{ $this->warrantySourceLabel($warranty) }}
+                                            <div class="mt-2 text-xs text-gray-600">
+                                                {{ $this->warrantyCoverageTypeLabel($warranty) }}
+                                            </div>
+
+                                            @if ($coverageIsEstimate)
+                                                <div class="mt-1 text-xs font-medium text-yellow-700">
+                                                    Stima da verificare
+                                                </div>
+                                            @endif
+
+                                            @if ($coverageIsConfirmed)
+                                                <div class="mt-1 text-xs text-gray-500">
+                                                    Dati confermati dall’utente
+                                                </div>
+                                            @endif
+
+                                            @if ($missingInformationCount > 0)
+                                                <div class="mt-1 text-xs text-gray-500">
+                                                    {{ $missingInformationCount }}
+                                                    {{ $missingInformationCount === 1
+                                                        ? 'informazione da completare'
+                                                        : 'informazioni da completare' }}
+                                                </div>
+                                            @endif
+
+                                            <div class="mt-2 text-xs text-gray-500">
+                                                @if ($warranty->starts_at || $warranty->ends_at)
+                                                    Periodo indicato:
+
+                                                    {{ $warranty->starts_at?->format('d/m/Y') ?? '—' }}
+
+                                                    →
+
+                                                    {{ $warranty->ends_at?->format('d/m/Y') ?? '—' }}
+                                                @else
+                                                    Periodo non disponibile
+                                                @endif
                                             </div>
 
                                             @if ($remainingDays !== null)
                                                 <div class="mt-1 text-xs text-gray-500">
                                                     @if ($remainingDays < 0)
-                                                        Scaduta da {{ abs($remainingDays) }} giorni
+                                                        Periodo terminato da
+                                                        {{ abs($remainingDays) }}
+                                                        giorni
+                                                    @elseif ($temporalStatusCode === 'not_started')
+                                                        Il periodo termina tra
+                                                        {{ $remainingDays }}
+                                                        giorni
                                                     @else
-                                                        {{ $remainingDays }} giorni residui
+                                                        Il periodo termina tra
+                                                        {{ $remainingDays }}
+                                                        giorni
                                                     @endif
                                                 </div>
                                             @endif
+
+                                            <div class="mt-1 text-xs text-gray-500">
+                                                Provenienza:
+                                                {{ $this->warrantySourceLabel($warranty) }}
+                                            </div>
                                         @else
+                                            <span
+                                                class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20"
+                                            >
+                                                Nessuna copertura
+                                            </span>
+
                                             <div class="mt-2 text-xs text-gray-500">
-                                                Nessuna garanzia
+                                                Nessun periodo registrato
                                             </div>
                                         @endif
                                     </td>

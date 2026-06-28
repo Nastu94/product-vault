@@ -108,6 +108,146 @@ class TestWarrantyLifecycleCommand extends Command
         $assertEquals('generic_legal_warranty', 'source', 'calculated', $genericWarranty?->source);
         $assertEquals('generic_legal_warranty', 'confidence_score', 70, $genericWarranty?->confidence_score);
         $assertEquals('generic_legal_warranty', 'rule_type', 'legal_estimate', data_get($genericWarranty?->metadata, 'rule_type'));
+        $assertEquals(
+            'generic_legal_warranty',
+            'coverage context version',
+            'v1',
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.version'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'coverage state is estimated',
+            'estimated',
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.state'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'purchase use starts unknown',
+            'unknown',
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.purchase.use'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'seller type starts unknown',
+            'unknown',
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.purchase.seller_type'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'product condition starts unknown',
+            'unknown',
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.product.condition'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'coverage country',
+            'IT',
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.jurisdiction.country_code'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'coverage purchase date',
+            '2026-06-10',
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.dates.purchased_at'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'coverage start date source',
+            'product.purchase_date',
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.dates.starts_at_source'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'delivery date starts unknown',
+            null,
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.dates.delivered_at'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'declared coverage starts unknown',
+            null,
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.declared_coverage.present'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'user confirmation not applied',
+            false,
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.confirmation.applied'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'confirmation timestamp absent',
+            null,
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.confirmation.confirmed_at'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'confirming user absent',
+            null,
+            data_get(
+                $genericWarranty?->metadata,
+                'coverage_context.confirmation.confirmed_by_user_id'
+            )
+        );
+
+        $assertEquals(
+            'generic_legal_warranty',
+            'idempotent metadata unchanged',
+            $this->canonicalizeForComparison(
+                $genericWarranty?->metadata
+            ),
+            $this->canonicalizeForComparison(
+                $genericWarrantyAgain?->metadata
+            )
+        );
         $assertEquals('generic_legal_warranty', 'warranty count remains 1', 1, $genericProduct->warranties()->count());
 
         /*
@@ -325,6 +465,38 @@ class TestWarrantyLifecycleCommand extends Command
         $this->info('Warranty lifecycle checks passed.');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Normalizza ricorsivamente gli array associativi per confrontare
+     * metadata JSON senza dipendere dall'ordine delle chiavi restituito
+     * dal database.
+     *
+     * L'ordine degli array sequenziali viene invece preservato.
+     */
+    private function canonicalizeForComparison(
+        mixed $value
+    ): mixed {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        if (array_is_list($value)) {
+            return array_map(
+                fn (mixed $item): mixed =>
+                    $this->canonicalizeForComparison($item),
+                $value,
+            );
+        }
+
+        ksort($value);
+
+        foreach ($value as $key => $item) {
+            $value[$key] =
+                $this->canonicalizeForComparison($item);
+        }
+
+        return $value;
     }
 
     private function testUser(): User

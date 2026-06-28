@@ -6,6 +6,8 @@ use App\Models\Product;
 use App\Models\Warranty;
 use App\Models\WarrantyType;
 use App\Services\Products\ProductLifecycleEventRecorder;
+use App\Services\Warranties\ManualWarrantyCoverageContextBuilder;
+use App\Services\Warranties\WarrantyCoverageContextResolver;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Livewire\Component;
@@ -39,6 +41,27 @@ class ProductShow extends Component
     public ?string $warrantyDurationMonths = null;
 
     public ?string $warrantyNotes = null;
+
+    /**
+     * Contesto usato per qualificare la copertura.
+     */
+    public string $warrantyPurchaseUse = 'unknown';
+
+    public string $warrantySellerType = 'unknown';
+
+    public string $warrantyProductCondition = 'unknown';
+
+    public ?string $warrantyCountryCode = null;
+
+    public ?string $warrantyDeliveredAt = null;
+
+    /**
+     * Valori ammessi:
+     * - null: informazione non specificata;
+     * - "1": copertura dichiarata nel documento;
+     * - "0": copertura non dichiarata nel documento.
+     */
+    public ?string $warrantyDeclaredCoverage = null;
 
     /**
      * Inizializza il componente con route model binding.
@@ -113,37 +136,199 @@ class ProductShow extends Component
     }
 
     /**
-     * Etichetta stato garanzia.
+     * Contesto normalizzato della copertura principale.
+     *
+     * Stato della copertura e stato temporale restano concetti
+     * distinti e provengono entrambi dal resolver centralizzato.
+     *
+     * @return array<string, mixed>|null
      */
-    public function getWarrantyStatusLabelProperty(): string
+    public function getWarrantyCoverageContextProperty(): ?array
     {
         $warranty = $this->primaryWarranty;
 
-        if (! $warranty || ! $warranty->starts_at || ! $warranty->ends_at) {
-            return 'Non calcolabile';
+        if (! $warranty) {
+            return null;
         }
 
-        if (now()->startOfDay()->lt($warranty->starts_at)) {
-            return 'Non ancora iniziata';
-        }
-
-        if (now()->startOfDay()->gt($warranty->ends_at)) {
-            return 'Scaduta';
-        }
-
-        return 'Attiva';
+        return app(
+            WarrantyCoverageContextResolver::class
+        )->resolve($warranty);
     }
 
     /**
-     * Classi CSS badge stato garanzia.
+     * Etichetta dello stato temporale.
+     *
+     * Il nome legacy della proprietà viene mantenuto per non rompere
+     * la vista attuale durante la transizione.
+     */
+    public function getWarrantyStatusLabelProperty(): string
+    {
+        return (string) data_get(
+            $this->warrantyCoverageContext,
+            'temporal_status.label',
+            'Non calcolabile'
+        );
+    }
+
+    /**
+     * Classi del badge dello stato temporale.
      */
     public function getWarrantyStatusBadgeClassesProperty(): string
     {
-        return match ($this->warrantyStatusLabel) {
-            'Attiva' => 'bg-green-50 text-green-700 ring-green-600/20',
-            'Non ancora iniziata' => 'bg-blue-50 text-blue-700 ring-blue-600/20',
-            'Scaduta' => 'bg-red-50 text-red-700 ring-red-600/20',
-            default => 'bg-gray-100 text-gray-700 ring-gray-500/20',
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'temporal_status.code'
+            )
+        ) {
+            'active' =>
+                'bg-green-50 text-green-700 ring-green-600/20',
+
+            'expiring' =>
+                'bg-yellow-50 text-yellow-800 ring-yellow-600/20',
+
+            'not_started' =>
+                'bg-blue-50 text-blue-700 ring-blue-600/20',
+
+            'expired' =>
+                'bg-red-50 text-red-700 ring-red-600/20',
+
+            default =>
+                'bg-gray-100 text-gray-700 ring-gray-500/20',
+        };
+    }
+
+    /**
+     * Etichetta dello stato della copertura.
+     */
+    public function getWarrantyCoverageStateLabelProperty(): string
+    {
+        return (string) data_get(
+            $this->warrantyCoverageContext,
+            'coverage_state.label',
+            'Copertura non determinata'
+        );
+    }
+
+    /**
+     * Classi del badge dello stato della copertura.
+     *
+     * I colori non rappresentano lo stato temporale e non devono
+     * comunicare implicitamente che la copertura sia legalmente valida.
+     */
+    public function getWarrantyCoverageStateBadgeClassesProperty(): string
+    {
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'coverage_state.code'
+            )
+        ) {
+            'estimated' =>
+                'bg-yellow-50 text-yellow-800 ring-yellow-600/20',
+
+            'declared' =>
+                'bg-blue-50 text-blue-700 ring-blue-600/20',
+
+            'user_confirmed' =>
+                'bg-indigo-50 text-indigo-700 ring-indigo-600/20',
+
+            'verified' =>
+                'bg-green-50 text-green-700 ring-green-600/20',
+
+            'cancelled' =>
+                'bg-red-50 text-red-700 ring-red-600/20',
+
+            default =>
+                'bg-gray-100 text-gray-700 ring-gray-500/20',
+        };
+    }
+
+    /**
+     * Informazioni mancanti per qualificare meglio la copertura.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getWarrantyMissingInformationProperty(): array
+    {
+        $missingInformation = data_get(
+            $this->warrantyCoverageContext,
+            'missing_information',
+            []
+        );
+
+        return is_array($missingInformation)
+            ? array_values($missingInformation)
+            : [];
+    }
+
+    /**
+     * Etichetta leggibile dell’uso dell’acquisto.
+     */
+    public function getWarrantyPurchaseUseLabelProperty(): string
+    {
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'context.purchase_use'
+            )
+        ) {
+            'personal' => 'Uso personale',
+            'business' => 'Uso professionale o aziendale',
+            default => 'Non specificato',
+        };
+    }
+
+    /**
+     * Etichetta leggibile del tipo di venditore.
+     */
+    public function getWarrantySellerTypeLabelProperty(): string
+    {
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'context.seller_type'
+            )
+        ) {
+            'professional' => 'Venditore professionale',
+            'private' => 'Venditore privato',
+            default => 'Non specificato',
+        };
+    }
+
+    /**
+     * Etichetta leggibile della condizione del prodotto.
+     */
+    public function getWarrantyProductConditionLabelProperty(): string
+    {
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'context.product_condition'
+            )
+        ) {
+            'new' => 'Nuovo',
+            'used' => 'Usato',
+            'refurbished' => 'Ricondizionato',
+            default => 'Non specificata',
+        };
+    }
+
+    /**
+     * Etichetta della copertura dichiarata nel documento.
+     */
+    public function getWarrantyDeclaredCoverageLabelProperty(): string
+    {
+        return match (
+            data_get(
+                $this->warrantyCoverageContext,
+                'context.declared_coverage'
+            )
+        ) {
+            true => 'Indicata nel documento',
+            false => 'Non indicata nel documento',
+            default => 'Non specificata',
         };
     }
 
@@ -183,6 +368,10 @@ class ProductShow extends Component
             : null;
         $this->warrantyNotes = $warranty->notes;
 
+        $this->fillWarrantyCoverageFormFrom(
+            warranty: $warranty,
+        );
+
         $this->isEditingWarranty = true;
     }
 
@@ -199,6 +388,7 @@ class ProductShow extends Component
         $this->warrantyEndsAt = null;
         $this->warrantyDurationMonths = null;
         $this->warrantyNotes = null;
+        $this->resetWarrantyCoverageForm();
     }
 
     /**
@@ -211,15 +401,85 @@ class ProductShow extends Component
         $this->authorize('update', $this->product);
 
         $this->validate([
-            'warrantyStartsAt' => ['nullable', 'date'],
-            'warrantyEndsAt' => ['nullable', 'date', 'after_or_equal:warrantyStartsAt'],
-            'warrantyDurationMonths' => ['nullable', 'integer', 'min:1', 'max:600'],
-            'warrantyNotes' => ['nullable', 'string', 'max:5000'],
+            'warrantyStartsAt' => [
+                'nullable',
+                'date',
+            ],
+
+            'warrantyEndsAt' => [
+                'nullable',
+                'date',
+                'after_or_equal:warrantyStartsAt',
+            ],
+
+            'warrantyDurationMonths' => [
+                'nullable',
+                'integer',
+                'min:1',
+                'max:600',
+            ],
+
+            'warrantyNotes' => [
+                'nullable',
+                'string',
+                'max:5000',
+            ],
+
+            'warrantyPurchaseUse' => [
+                'required',
+                'in:personal,business,unknown',
+            ],
+
+            'warrantySellerType' => [
+                'required',
+                'in:professional,private,unknown',
+            ],
+
+            'warrantyProductCondition' => [
+                'required',
+                'in:new,used,refurbished,unknown',
+            ],
+
+            'warrantyCountryCode' => [
+                'nullable',
+                'string',
+                'size:2',
+                'alpha',
+            ],
+
+            'warrantyDeliveredAt' => [
+                'nullable',
+                'date',
+            ],
+
+            'warrantyDeclaredCoverage' => [
+                'nullable',
+                'in:1,0',
+            ],
         ], [
-            'warrantyEndsAt.after_or_equal' => 'La data di scadenza deve essere successiva o uguale alla data di inizio.',
-            'warrantyDurationMonths.integer' => 'La durata deve essere un numero intero di mesi.',
-            'warrantyDurationMonths.min' => 'La durata deve essere almeno di 1 mese.',
-            'warrantyDurationMonths.max' => 'La durata non può superare 600 mesi.',
+            'warrantyEndsAt.after_or_equal' =>
+                'La data di scadenza deve essere successiva o uguale alla data di inizio.',
+
+            'warrantyDurationMonths.integer' =>
+                'La durata deve essere un numero intero di mesi.',
+
+            'warrantyDurationMonths.min' =>
+                'La durata deve essere almeno di 1 mese.',
+
+            'warrantyDurationMonths.max' =>
+                'La durata non può superare 600 mesi.',
+
+            'warrantyCountryCode.size' =>
+                'Il paese deve essere indicato con un codice di 2 lettere.',
+
+            'warrantyCountryCode.alpha' =>
+                'Il codice paese può contenere soltanto lettere.',
+
+            'warrantyDeliveredAt.date' =>
+                'La data di consegna non è valida.',
+
+            'warrantyDeclaredCoverage.in' =>
+                'Il valore della copertura dichiarata non è valido.',
         ]);
 
         /*
@@ -253,6 +513,25 @@ class ProductShow extends Component
                 ->orderByPivot('created_at')
                 ->first();
 
+            $manualTimestamp = now()->toISOString();
+
+            $createdMetadata = [
+                'creator' => 'manual_warranty_creation_v1',
+                'created_from' => 'product_show',
+                'created_at' => $manualTimestamp,
+                'created_by_user_id' => auth()->id(),
+            ];
+
+            $createdMetadata['coverage_context'] = app(
+                ManualWarrantyCoverageContextBuilder::class
+            )->build(
+                product: $this->product,
+                metadata: $createdMetadata,
+                userId: (int) auth()->id(),
+                confirmedAt: $manualTimestamp,
+                input: $this->warrantyCoverageInput(),
+            );
+
             $createdWarranty = Warranty::query()->create([
                 'product_id' => $this->product->id,
                 'warranty_type_id' => $warrantyType->id,
@@ -265,12 +544,7 @@ class ProductShow extends Component
                 'source' => 'manual',
                 'confidence_score' => 90,
                 'notes' => $this->warrantyNotes ?: null,
-                'metadata' => [
-                    'creator' => 'manual_warranty_creation_v1',
-                    'created_from' => 'product_show',
-                    'created_at' => now()->toISOString(),
-                    'created_by_user_id' => auth()->id(),
-                ],
+                'metadata' => $createdMetadata,
             ]);
 
             app(ProductLifecycleEventRecorder::class)->recordManualWarrantyCreated(
@@ -309,14 +583,35 @@ class ProductShow extends Component
             'notes' => $warranty->notes,
         ];
 
-        $metadata = $warranty->metadata ?? [];
+        $metadata = is_array($warranty->metadata)
+            ? $warranty->metadata
+            : [];
+
+        $previousCoverageContext = data_get(
+            $metadata,
+            'coverage_context'
+        );
+
+        $manualTimestamp = now()->toISOString();
 
         $metadata['manual_override'] = [
             'applied' => true,
             'previous_values' => $previousValues,
-            'updated_at' => now()->toISOString(),
+            'previous_coverage_context' =>
+                $previousCoverageContext,
+            'updated_at' => $manualTimestamp,
             'updated_by_user_id' => auth()->id(),
         ];
+
+        $metadata['coverage_context'] = app(
+            ManualWarrantyCoverageContextBuilder::class
+        )->build(
+            product: $this->product,
+            metadata: $metadata,
+            userId: (int) auth()->id(),
+            confirmedAt: $manualTimestamp,
+            input: $this->warrantyCoverageInput(),
+        );
 
         $warranty->update([
             'starts_at' => $this->warrantyStartsAt ?: null,
@@ -368,9 +663,110 @@ class ProductShow extends Component
             : null;
 
         $this->warrantyNotes = null;
+        $this->resetWarrantyCoverageForm();
 
         $this->isCreatingWarranty = true;
         $this->isEditingWarranty = false;
+    }
+
+    /**
+     * Carica nel form il contesto normalizzato della garanzia.
+     */
+    private function fillWarrantyCoverageFormFrom(
+        Warranty $warranty
+    ): void {
+        $resolvedContext = app(
+            WarrantyCoverageContextResolver::class
+        )->resolve($warranty);
+
+        $this->warrantyPurchaseUse = (string) data_get(
+            $resolvedContext,
+            'context.purchase_use',
+            'unknown'
+        );
+
+        $this->warrantySellerType = (string) data_get(
+            $resolvedContext,
+            'context.seller_type',
+            'unknown'
+        );
+
+        $this->warrantyProductCondition = (string) data_get(
+            $resolvedContext,
+            'context.product_condition',
+            'unknown'
+        );
+
+        $countryCode = data_get(
+            $resolvedContext,
+            'context.country_code'
+        );
+
+        $this->warrantyCountryCode =
+            is_string($countryCode)
+                ? $countryCode
+                : null;
+
+        $deliveryDate = data_get(
+            $resolvedContext,
+            'context.delivery_date'
+        );
+
+        $this->warrantyDeliveredAt =
+            is_string($deliveryDate)
+                ? $deliveryDate
+                : null;
+
+        $declaredCoverage = data_get(
+            $resolvedContext,
+            'context.declared_coverage'
+        );
+
+        $this->warrantyDeclaredCoverage =
+            is_bool($declaredCoverage)
+                ? ($declaredCoverage ? '1' : '0')
+                : null;
+    }
+
+    /**
+     * Ripristina i campi contestuali del form.
+     */
+    private function resetWarrantyCoverageForm(): void
+    {
+        $this->warrantyPurchaseUse = 'unknown';
+        $this->warrantySellerType = 'unknown';
+        $this->warrantyProductCondition = 'unknown';
+        $this->warrantyCountryCode = null;
+        $this->warrantyDeliveredAt = null;
+        $this->warrantyDeclaredCoverage = null;
+    }
+
+    /**
+     * Restituisce l’input contestuale nel formato atteso dal builder.
+     *
+     * @return array<string, mixed>
+     */
+    private function warrantyCoverageInput(): array
+    {
+        return [
+            'purchase_use' =>
+                $this->warrantyPurchaseUse,
+
+            'seller_type' =>
+                $this->warrantySellerType,
+
+            'product_condition' =>
+                $this->warrantyProductCondition,
+
+            'country_code' =>
+                $this->warrantyCountryCode,
+
+            'delivered_at' =>
+                $this->warrantyDeliveredAt,
+
+            'declared_coverage' =>
+                $this->warrantyDeclaredCoverage,
+        ];
     }
 
     /**

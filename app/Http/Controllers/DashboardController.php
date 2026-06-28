@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Document;
 use App\Models\Product;
 use App\Models\Warranty;
+use App\Services\Warranties\WarrantyCoverageContextResolver;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
 use Laravel\Jetstream\Jetstream;
@@ -79,6 +80,24 @@ class DashboardController extends Controller
 
         /*
         |--------------------------------------------------------------------------
+        | Finestra temporale delle coperture in scadenza
+        |--------------------------------------------------------------------------
+        |
+        | La dashboard usa gli stessi confini temporali del resolver:
+        | periodo già iniziato e data finale compresa nei prossimi 30 giorni.
+        |
+        */
+        $today = now()
+            ->startOfDay()
+            ->toDateString();
+
+        $soon = now()
+            ->startOfDay()
+            ->addDays(30)
+            ->toDateString();
+
+        /*
+        |--------------------------------------------------------------------------
         | Garanzie in scadenza
         |--------------------------------------------------------------------------
         |
@@ -94,8 +113,11 @@ class DashboardController extends Controller
                         ->select('id')
                         ->where('team_id', $activeTeamId)
                 )
+                ->whereNotNull('starts_at')
                 ->whereNotNull('ends_at')
-                ->whereBetween('ends_at', [now(), now()->addDays(30)])
+                ->whereDate('starts_at', '<=', $today)
+                ->whereDate('ends_at', '>=', $today)
+                ->whereDate('ends_at', '<=', $soon)
                 ->count()
             : 0;
 
@@ -178,15 +200,37 @@ class DashboardController extends Controller
                         ->select('id')
                         ->where('team_id', $activeTeamId)
                 )
+                ->whereNotNull('starts_at')
                 ->whereNotNull('ends_at')
-                ->whereBetween('ends_at', [
-                    now()->toDateString(),
-                    now()->addDays(30)->toDateString(),
-                ])
+                ->whereDate('starts_at', '<=', $today)
+                ->whereDate('ends_at', '>=', $today)
+                ->whereDate('ends_at', '<=', $soon)
                 ->orderBy('ends_at')
                 ->limit(3)
                 ->get()
             : collect();
+
+        /*
+        |--------------------------------------------------------------------------
+        | Contesti normalizzati delle coperture mostrate
+        |--------------------------------------------------------------------------
+        |
+        | La vista non deve dedurre autonomamente stato, provenienza o tipo.
+        | I risultati sono indicizzati per id della garanzia.
+        |
+        */
+        $coverageResolver = app(
+            WarrantyCoverageContextResolver::class
+        );
+
+        $expiringWarrantyContexts = $expiringWarranties
+            ->mapWithKeys(
+                fn (Warranty $warranty): array => [
+                    (int) $warranty->getKey() =>
+                        $coverageResolver->resolve($warranty),
+                ]
+            )
+            ->all();
 
         return view('dashboard', [
             'userName' => $user->name,
@@ -197,6 +241,7 @@ class DashboardController extends Controller
             'recentDocuments' => $recentDocuments,
             'recentProducts' => $recentProducts,
             'expiringWarranties' => $expiringWarranties,
+            'expiringWarrantyContexts' => $expiringWarrantyContexts,
         ]);
     }
 }

@@ -347,6 +347,221 @@
                                         </div>
                                     </div>
 
+                                    <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                                        <div>
+                                            <h4 class="text-sm font-semibold text-gray-900">
+                                                Contesto della copertura
+                                            </h4>
+
+                                            <p class="mt-1 text-xs leading-5 text-gray-600">
+                                                Queste informazioni aiutano a distinguere una stima generale
+                                                dalla copertura applicabile al caso concreto. I campi possono
+                                                restare non specificati quando l’informazione non è disponibile.
+                                            </p>
+                                        </div>
+
+                                        <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                            <div>
+                                                <label
+                                                    for="warrantyPurchaseUse"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Uso dell’acquisto
+                                                </label>
+
+                                                <select
+                                                    id="warrantyPurchaseUse"
+                                                    wire:model="warrantyPurchaseUse"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+                                                    <option value="unknown">
+                                                        Non specificato
+                                                    </option>
+
+                                                    <option value="personal">
+                                                        Uso personale
+                                                    </option>
+
+                                                    <option value="business">
+                                                        Uso professionale o aziendale
+                                                    </option>
+                                                </select>
+
+                                                @error('warrantyPurchaseUse')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label
+                                                    for="warrantySellerType"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Tipo di venditore
+                                                </label>
+
+                                                <select
+                                                    id="warrantySellerType"
+                                                    wire:model="warrantySellerType"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+                                                    <option value="unknown">
+                                                        Non specificato
+                                                    </option>
+
+                                                    <option value="professional">
+                                                        Venditore professionale
+                                                    </option>
+
+                                                    <option value="private">
+                                                        Venditore privato
+                                                    </option>
+                                                </select>
+
+                                                @error('warrantySellerType')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label
+                                                    for="warrantyProductCondition"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Condizione del prodotto
+                                                </label>
+
+                                                <select
+                                                    id="warrantyProductCondition"
+                                                    wire:model="warrantyProductCondition"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+                                                    <option value="unknown">
+                                                        Non specificata
+                                                    </option>
+
+                                                    <option value="new">
+                                                        Nuovo
+                                                    </option>
+
+                                                    <option value="used">
+                                                        Usato
+                                                    </option>
+
+                                                    <option value="refurbished">
+                                                        Ricondizionato
+                                                    </option>
+                                                </select>
+
+                                                @error('warrantyProductCondition')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label
+                                                    for="warrantyCountryCode"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Paese rilevante
+                                                </label>
+
+                                                <input
+                                                    id="warrantyCountryCode"
+                                                    type="text"
+                                                    maxlength="2"
+                                                    autocomplete="country"
+                                                    wire:model.blur="warrantyCountryCode"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm uppercase shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                    placeholder="IT"
+                                                >
+
+                                                <p class="mt-1 text-xs text-gray-500">
+                                                    Codice di due lettere, ad esempio IT.
+                                                </p>
+
+                                                @error('warrantyCountryCode')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label
+                                                    for="warrantyDeliveredAt"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Data di consegna
+                                                </label>
+
+                                                <input
+                                                    id="warrantyDeliveredAt"
+                                                    type="date"
+                                                    wire:model="warrantyDeliveredAt"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+
+                                                <p class="mt-1 text-xs text-gray-500">
+                                                    Indicala solo quando è conosciuta.
+                                                </p>
+
+                                                @error('warrantyDeliveredAt')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label
+                                                    for="warrantyDeclaredCoverage"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Copertura dichiarata
+                                                </label>
+
+                                                <select
+                                                    id="warrantyDeclaredCoverage"
+                                                    wire:model="warrantyDeclaredCoverage"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+                                                    <option value="">
+                                                        Non specificata
+                                                    </option>
+
+                                                    <option value="1">
+                                                        Sì, indicata nel documento
+                                                    </option>
+
+                                                    <option value="0">
+                                                        No, non indicata nel documento
+                                                    </option>
+                                                </select>
+
+                                                @error('warrantyDeclaredCoverage')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+                                        </div>
+
+                                        <div class="mt-4 rounded-md bg-white px-3 py-2 ring-1 ring-inset ring-gray-200">
+                                            <p class="text-xs leading-5 text-gray-600">
+                                                Salvando, confermi le date e le informazioni inserite.
+                                                La conferma non trasforma automaticamente la copertura in una
+                                                verifica legale o del venditore.
+                                            </p>
+                                        </div>
+                                    </div>
+
                                     <div>
                                         <label for="warrantyNotes" class="block text-xs font-medium uppercase tracking-wider text-gray-500">
                                             Note
@@ -459,6 +674,221 @@
                                             @error('warrantyDurationMonths')
                                                 <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
                                             @enderror
+                                        </div>
+                                    </div>
+
+                                    <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                                        <div>
+                                            <h4 class="text-sm font-semibold text-gray-900">
+                                                Contesto della copertura
+                                            </h4>
+
+                                            <p class="mt-1 text-xs leading-5 text-gray-600">
+                                                Queste informazioni aiutano a distinguere una stima generale
+                                                dalla copertura applicabile al caso concreto. I campi possono
+                                                restare non specificati quando l’informazione non è disponibile.
+                                            </p>
+                                        </div>
+
+                                        <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                                            <div>
+                                                <label
+                                                    for="warrantyPurchaseUse"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Uso dell’acquisto
+                                                </label>
+
+                                                <select
+                                                    id="warrantyPurchaseUse"
+                                                    wire:model="warrantyPurchaseUse"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+                                                    <option value="unknown">
+                                                        Non specificato
+                                                    </option>
+
+                                                    <option value="personal">
+                                                        Uso personale
+                                                    </option>
+
+                                                    <option value="business">
+                                                        Uso professionale o aziendale
+                                                    </option>
+                                                </select>
+
+                                                @error('warrantyPurchaseUse')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label
+                                                    for="warrantySellerType"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Tipo di venditore
+                                                </label>
+
+                                                <select
+                                                    id="warrantySellerType"
+                                                    wire:model="warrantySellerType"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+                                                    <option value="unknown">
+                                                        Non specificato
+                                                    </option>
+
+                                                    <option value="professional">
+                                                        Venditore professionale
+                                                    </option>
+
+                                                    <option value="private">
+                                                        Venditore privato
+                                                    </option>
+                                                </select>
+
+                                                @error('warrantySellerType')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label
+                                                    for="warrantyProductCondition"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Condizione del prodotto
+                                                </label>
+
+                                                <select
+                                                    id="warrantyProductCondition"
+                                                    wire:model="warrantyProductCondition"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+                                                    <option value="unknown">
+                                                        Non specificata
+                                                    </option>
+
+                                                    <option value="new">
+                                                        Nuovo
+                                                    </option>
+
+                                                    <option value="used">
+                                                        Usato
+                                                    </option>
+
+                                                    <option value="refurbished">
+                                                        Ricondizionato
+                                                    </option>
+                                                </select>
+
+                                                @error('warrantyProductCondition')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label
+                                                    for="warrantyCountryCode"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Paese rilevante
+                                                </label>
+
+                                                <input
+                                                    id="warrantyCountryCode"
+                                                    type="text"
+                                                    maxlength="2"
+                                                    autocomplete="country"
+                                                    wire:model.blur="warrantyCountryCode"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm uppercase shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                    placeholder="IT"
+                                                >
+
+                                                <p class="mt-1 text-xs text-gray-500">
+                                                    Codice di due lettere, ad esempio IT.
+                                                </p>
+
+                                                @error('warrantyCountryCode')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label
+                                                    for="warrantyDeliveredAt"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Data di consegna
+                                                </label>
+
+                                                <input
+                                                    id="warrantyDeliveredAt"
+                                                    type="date"
+                                                    wire:model="warrantyDeliveredAt"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+
+                                                <p class="mt-1 text-xs text-gray-500">
+                                                    Indicala solo quando è conosciuta.
+                                                </p>
+
+                                                @error('warrantyDeliveredAt')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+
+                                            <div>
+                                                <label
+                                                    for="warrantyDeclaredCoverage"
+                                                    class="block text-xs font-medium uppercase tracking-wider text-gray-500"
+                                                >
+                                                    Copertura dichiarata
+                                                </label>
+
+                                                <select
+                                                    id="warrantyDeclaredCoverage"
+                                                    wire:model="warrantyDeclaredCoverage"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                >
+                                                    <option value="">
+                                                        Non specificata
+                                                    </option>
+
+                                                    <option value="1">
+                                                        Sì, indicata nel documento
+                                                    </option>
+
+                                                    <option value="0">
+                                                        No, non indicata nel documento
+                                                    </option>
+                                                </select>
+
+                                                @error('warrantyDeclaredCoverage')
+                                                    <p class="mt-1 text-xs text-red-600">
+                                                        {{ $message }}
+                                                    </p>
+                                                @enderror
+                                            </div>
+                                        </div>
+
+                                        <div class="mt-4 rounded-md bg-white px-3 py-2 ring-1 ring-inset ring-gray-200">
+                                            <p class="text-xs leading-5 text-gray-600">
+                                                Salvando, confermi le date e le informazioni inserite.
+                                                La conferma non trasforma automaticamente la copertura in una
+                                                verifica legale o del venditore.
+                                            </p>
                                         </div>
                                     </div>
 

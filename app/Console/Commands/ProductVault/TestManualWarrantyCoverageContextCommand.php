@@ -578,6 +578,453 @@ final class TestManualWarrantyCoverageContextCommand extends Command
 
         /*
         |--------------------------------------------------------------------------
+        | Scenario 5: input contestuale esplicito
+        |--------------------------------------------------------------------------
+        */
+        $explicitProduct = $this->makeProduct(
+            purchaseDate: '2026-04-10'
+        );
+
+        $explicitMetadata = [
+            'country_code' => 'IT',
+
+            'coverage_context' => [
+                'version' => 'v1',
+                'state' => 'estimated',
+
+                'purchase' => [
+                    'use' => 'business',
+                    'seller_type' => 'private',
+                ],
+
+                'product' => [
+                    'condition' => 'used',
+                ],
+
+                'jurisdiction' => [
+                    'country_code' => 'IT',
+                ],
+
+                'dates' => [
+                    'purchased_at' => '2026-04-10',
+                    'delivered_at' => null,
+                    'starts_at_source' =>
+                        'product.purchase_date',
+                ],
+
+                'declared_coverage' => [
+                    'present' => null,
+                ],
+
+                'confirmation' => [
+                    'applied' => false,
+                    'confirmed_at' => null,
+                    'confirmed_by_user_id' => null,
+                ],
+
+                'custom_provenance' => [
+                    'source' => 'automatic_rule',
+                ],
+            ],
+        ];
+
+        $explicitMetadataBefore = $explicitMetadata;
+
+        $explicitContext = $builder->build(
+            product: $explicitProduct,
+            metadata: $explicitMetadata,
+            userId: 31,
+            confirmedAt: '2026-06-28T14:00:00+02:00',
+            input: [
+                'purchase_use' => ' personal ',
+                'seller_type' => ' PROFESSIONAL ',
+                'product_condition' => ' NEW ',
+                'country_code' => ' de ',
+                'delivered_at' => '2026-04-12',
+                'declared_coverage' => '1',
+            ],
+        );
+
+        $assertSame(
+            'explicit_input',
+            'purchase use normalized',
+            'personal',
+            data_get(
+                $explicitContext,
+                'purchase.use'
+            ),
+        );
+
+        $assertSame(
+            'explicit_input',
+            'seller type normalized',
+            'professional',
+            data_get(
+                $explicitContext,
+                'purchase.seller_type'
+            ),
+        );
+
+        $assertSame(
+            'explicit_input',
+            'product condition normalized',
+            'new',
+            data_get(
+                $explicitContext,
+                'product.condition'
+            ),
+        );
+
+        $assertSame(
+            'explicit_input',
+            'country overridden and normalized',
+            'DE',
+            data_get(
+                $explicitContext,
+                'jurisdiction.country_code'
+            ),
+        );
+
+        $assertSame(
+            'explicit_input',
+            'delivery date persisted',
+            '2026-04-12',
+            data_get(
+                $explicitContext,
+                'dates.delivered_at'
+            ),
+        );
+
+        $assertSame(
+            'explicit_input',
+            'declared coverage normalized true',
+            true,
+            data_get(
+                $explicitContext,
+                'declared_coverage.present'
+            ),
+        );
+
+        $assertSame(
+            'explicit_input',
+            'purchase date preserved',
+            '2026-04-10',
+            data_get(
+                $explicitContext,
+                'dates.purchased_at'
+            ),
+        );
+
+        $assertSame(
+            'explicit_input',
+            'custom provenance preserved',
+            'automatic_rule',
+            data_get(
+                $explicitContext,
+                'custom_provenance.source'
+            ),
+        );
+
+        $assertSame(
+            'explicit_input',
+            'state becomes user confirmed',
+            'user_confirmed',
+            data_get(
+                $explicitContext,
+                'state'
+            ),
+        );
+
+        $assertSame(
+            'explicit_input',
+            'confirmation records current user',
+            31,
+            data_get(
+                $explicitContext,
+                'confirmation.confirmed_by_user_id'
+            ),
+        );
+
+        $assertSame(
+            'explicit_input',
+            'input metadata unchanged',
+            $explicitMetadataBefore,
+            $explicitMetadata,
+        );
+
+        $assertSame(
+            'explicit_input',
+            'product remains clean',
+            [],
+            $explicitProduct->getDirty(),
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scenario 6: cancellazione esplicita dei valori
+        |--------------------------------------------------------------------------
+        */
+        $clearedProduct = $this->makeProduct(
+            purchaseDate: '2026-05-01'
+        );
+
+        $clearedMetadata = [
+            'country_code' => 'IT',
+
+            'coverage_context' => [
+                'version' => 'v1',
+                'state' => 'estimated',
+
+                'purchase' => [
+                    'use' => 'personal',
+                    'seller_type' => 'professional',
+                ],
+
+                'product' => [
+                    'condition' => 'new',
+                ],
+
+                'jurisdiction' => [
+                    'country_code' => 'IT',
+                ],
+
+                'dates' => [
+                    'purchased_at' => '2026-05-01',
+                    'delivered_at' => '2026-05-03',
+                    'starts_at_source' =>
+                        'product.purchase_date',
+                ],
+
+                'declared_coverage' => [
+                    'present' => true,
+                ],
+
+                'confirmation' => [
+                    'applied' => false,
+                    'confirmed_at' => null,
+                    'confirmed_by_user_id' => null,
+                ],
+            ],
+        ];
+
+        $clearedContext = $builder->build(
+            product: $clearedProduct,
+            metadata: $clearedMetadata,
+            userId: 32,
+            confirmedAt: '2026-06-28T15:00:00+02:00',
+            input: [
+                'purchase_use' => 'unknown',
+                'seller_type' => 'unknown',
+                'product_condition' => 'unknown',
+                'country_code' => null,
+                'delivered_at' => null,
+                'declared_coverage' => null,
+            ],
+        );
+
+        $assertSame(
+            'explicit_clear',
+            'purchase use cleared',
+            'unknown',
+            data_get(
+                $clearedContext,
+                'purchase.use'
+            ),
+        );
+
+        $assertSame(
+            'explicit_clear',
+            'seller type cleared',
+            'unknown',
+            data_get(
+                $clearedContext,
+                'purchase.seller_type'
+            ),
+        );
+
+        $assertSame(
+            'explicit_clear',
+            'product condition cleared',
+            'unknown',
+            data_get(
+                $clearedContext,
+                'product.condition'
+            ),
+        );
+
+        $assertSame(
+            'explicit_clear',
+            'country cleared',
+            null,
+            data_get(
+                $clearedContext,
+                'jurisdiction.country_code'
+            ),
+        );
+
+        $assertSame(
+            'explicit_clear',
+            'delivery date cleared',
+            null,
+            data_get(
+                $clearedContext,
+                'dates.delivered_at'
+            ),
+        );
+
+        $assertSame(
+            'explicit_clear',
+            'declared coverage cleared',
+            null,
+            data_get(
+                $clearedContext,
+                'declared_coverage.present'
+            ),
+        );
+
+        $assertSame(
+            'explicit_clear',
+            'purchase date remains preserved',
+            '2026-05-01',
+            data_get(
+                $clearedContext,
+                'dates.purchased_at'
+            ),
+        );
+
+        $assertSame(
+            'explicit_clear',
+            'confirmation still applied',
+            true,
+            data_get(
+                $clearedContext,
+                'confirmation.applied'
+            ),
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scenario 7: input non validi
+        |--------------------------------------------------------------------------
+        */
+        $invalidInputProduct = $this->makeProduct(
+            purchaseDate: '2026-02-01'
+        );
+
+        $invalidInputContext = $builder->build(
+            product: $invalidInputProduct,
+            metadata: [],
+            userId: 33,
+            confirmedAt: '2026-06-28T16:00:00+02:00',
+            input: [
+                'purchase_use' => 'consumer',
+                'seller_type' => 'shop',
+                'product_condition' => 'almost-new',
+                'country_code' => '   ',
+                'delivered_at' => '2026-02-30',
+                'declared_coverage' => 'maybe',
+            ],
+        );
+
+        $assertSame(
+            'invalid_input',
+            'invalid purchase use becomes unknown',
+            'unknown',
+            data_get(
+                $invalidInputContext,
+                'purchase.use'
+            ),
+        );
+
+        $assertSame(
+            'invalid_input',
+            'invalid seller type becomes unknown',
+            'unknown',
+            data_get(
+                $invalidInputContext,
+                'purchase.seller_type'
+            ),
+        );
+
+        $assertSame(
+            'invalid_input',
+            'invalid product condition becomes unknown',
+            'unknown',
+            data_get(
+                $invalidInputContext,
+                'product.condition'
+            ),
+        );
+
+        $assertSame(
+            'invalid_input',
+            'blank country becomes null',
+            null,
+            data_get(
+                $invalidInputContext,
+                'jurisdiction.country_code'
+            ),
+        );
+
+        $assertSame(
+            'invalid_input',
+            'invalid calendar date becomes null',
+            null,
+            data_get(
+                $invalidInputContext,
+                'dates.delivered_at'
+            ),
+        );
+
+        $assertSame(
+            'invalid_input',
+            'invalid boolean becomes null',
+            null,
+            data_get(
+                $invalidInputContext,
+                'declared_coverage.present'
+            ),
+        );
+
+        $assertSame(
+            'invalid_input',
+            'purchase date still comes from product',
+            '2026-02-01',
+            data_get(
+                $invalidInputContext,
+                'dates.purchased_at'
+            ),
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Scenario 8: falso dichiarato dal form
+        |--------------------------------------------------------------------------
+        */
+        $falseDeclaredContext = $builder->build(
+            product: $this->makeProduct(
+                purchaseDate: '2026-06-01'
+            ),
+            metadata: [],
+            userId: 34,
+            confirmedAt: '2026-06-28T17:00:00+02:00',
+            input: [
+                'declared_coverage' => '0',
+            ],
+        );
+
+        $assertSame(
+            'false_declared_coverage',
+            'string zero becomes false',
+            false,
+            data_get(
+                $falseDeclaredContext,
+                'declared_coverage.present'
+            ),
+        );
+
+        /*
+        |--------------------------------------------------------------------------
         | Risultato
         |--------------------------------------------------------------------------
         */

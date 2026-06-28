@@ -6,10 +6,14 @@ use App\Models\Product;
 use App\Models\ProductCase;
 use App\Models\User;
 use App\Services\ProductCases\ProductCaseCreator;
+use App\Policies\ProductCasePolicy;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Gate;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\PermissionRegistrar;
 use RuntimeException;
 use Throwable;
 
@@ -47,6 +51,9 @@ class TestProductCaseWorkflowCommand extends Command
 
         $casesBefore = ProductCase::query()->count();
         $teamsBefore = DB::table('teams')->count();
+
+        $permissionRegistrar =
+            app(PermissionRegistrar::class);
 
         $assertSame = function (
             string $scenario,
@@ -114,6 +121,78 @@ class TestProductCaseWorkflowCommand extends Command
             $user->refresh();
 
             /*
+             * Nei comandi CLI non viene eseguito il middleware web che imposta
+             * il team corrente per Spatie Permission. Replichiamo quindi
+             * esplicitamente quel contesto.
+             */
+            $permissionRegistrar->setPermissionsTeamId(
+                $product->team_id
+            );
+
+            $user->unsetRelation('roles');
+            $user->unsetRelation('permissions');
+
+            $requiredPermissions = [
+                'product_cases.view',
+                'product_cases.create',
+                'product_cases.update',
+                'product_cases.close',
+                'product_cases.delete',
+            ];
+
+            $registeredPermissions = Permission::query()
+                ->where('guard_name', 'web')
+                ->whereIn('name', $requiredPermissions)
+                ->pluck('name')
+                ->all();
+
+            sort($requiredPermissions);
+            sort($registeredPermissions);
+
+            $assertSame(
+                'authorization',
+                'permission catalog registered',
+                $requiredPermissions,
+                $registeredPermissions
+            );
+
+            $policy = Gate::getPolicyFor(
+                ProductCase::class
+            );
+
+            $assertSame(
+                'authorization',
+                'policy auto-discovered',
+                true,
+                $policy instanceof ProductCasePolicy
+            );
+
+            $gate = Gate::forUser($user);
+
+            $assertSame(
+                'authorization',
+                'owner can view case list',
+                true,
+                $gate->allows(
+                    'viewAny',
+                    ProductCase::class
+                )
+            );
+
+            $assertSame(
+                'authorization',
+                'owner can create for current product',
+                true,
+                $gate->allows(
+                    'create',
+                    [
+                        ProductCase::class,
+                        $product,
+                    ]
+                )
+            );
+
+            /*
              * Creazione valida.
              *
              * Inseriamo anche campi di sistema contraffatti per verificare
@@ -144,6 +223,48 @@ class TestProductCaseWorkflowCommand extends Command
             );
 
             $createdCaseId = (int) $productCase->id;
+
+            $gate = Gate::forUser($user);
+
+            $assertSame(
+                'authorization',
+                'owner can view case',
+                true,
+                $gate->allows(
+                    'view',
+                    $productCase
+                )
+            );
+
+            $assertSame(
+                'authorization',
+                'owner can update case',
+                true,
+                $gate->allows(
+                    'update',
+                    $productCase
+                )
+            );
+
+            $assertSame(
+                'authorization',
+                'owner can close case',
+                true,
+                $gate->allows(
+                    'close',
+                    $productCase
+                )
+            );
+
+            $assertSame(
+                'authorization',
+                'owner can delete case',
+                true,
+                $gate->allows(
+                    'delete',
+                    $productCase
+                )
+            );
 
             $assertSame(
                 'valid_creation',
@@ -427,6 +548,81 @@ class TestProductCaseWorkflowCommand extends Command
 
             $user->refresh();
 
+            /*
+             * Simula il middleware dopo il cambio di workspace.
+             */
+            $permissionRegistrar->setPermissionsTeamId(
+                $otherTeamId
+            );
+
+            $user->unsetRelation('roles');
+            $user->unsetRelation('permissions');
+
+            $crossTeamGate = Gate::forUser($user);
+
+            $assertSame(
+                'authorization',
+                'other team cannot view case list',
+                false,
+                $crossTeamGate->allows(
+                    'viewAny',
+                    ProductCase::class
+                )
+            );
+
+            $assertSame(
+                'authorization',
+                'other team cannot create for product',
+                false,
+                $crossTeamGate->allows(
+                    'create',
+                    [
+                        ProductCase::class,
+                        $product,
+                    ]
+                )
+            );
+
+            $assertSame(
+                'authorization',
+                'other team cannot view case',
+                false,
+                $crossTeamGate->allows(
+                    'view',
+                    $productCase
+                )
+            );
+
+            $assertSame(
+                'authorization',
+                'other team cannot update case',
+                false,
+                $crossTeamGate->allows(
+                    'update',
+                    $productCase
+                )
+            );
+
+            $assertSame(
+                'authorization',
+                'other team cannot close case',
+                false,
+                $crossTeamGate->allows(
+                    'close',
+                    $productCase
+                )
+            );
+
+            $assertSame(
+                'authorization',
+                'other team cannot delete case',
+                false,
+                $crossTeamGate->allows(
+                    'delete',
+                    $productCase
+                )
+            );
+
             $crossTeamExceptionMessage = null;
 
             try {
@@ -476,6 +672,13 @@ class TestProductCaseWorkflowCommand extends Command
             ];
         } finally {
             DB::rollBack();
+
+            $permissionRegistrar->setPermissionsTeamId(
+                null
+            );
+
+            $permissionRegistrar
+                ->forgetCachedPermissions();
         }
 
         /*

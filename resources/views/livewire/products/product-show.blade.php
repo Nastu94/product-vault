@@ -1038,6 +1038,40 @@
                                         </div>
                                     @endif
 
+                                    @if ($this->warrantyMissingInformation !== [])
+                                        <div class="mt-4 rounded-md border border-yellow-200 bg-yellow-50 p-4">
+                                            <div class="text-sm font-semibold text-yellow-900">
+                                                Informazioni ancora da completare
+                                            </div>
+
+                                            <p class="mt-1 text-xs leading-5 text-yellow-800">
+                                                Questi dati non impediscono di salvare la copertura, ma possono
+                                                essere utili per valutarla meglio.
+                                            </p>
+
+                                            <ul class="mt-3 space-y-1 text-sm text-yellow-900">
+                                                @foreach (
+                                                    $this->warrantyMissingInformation
+                                                    as $missingInformation
+                                                )
+                                                    <li class="flex items-start gap-2">
+                                                        <span aria-hidden="true">
+                                                            •
+                                                        </span>
+
+                                                        <span>
+                                                            {{ data_get(
+                                                                $missingInformation,
+                                                                'label',
+                                                                'Informazione non specificata'
+                                                            ) }}
+                                                        </span>
+                                                    </li>
+                                                @endforeach
+                                            </ul>
+                                        </div>
+                                    @endif
+
                                     <div>
                                         <label for="warrantyNotes" class="block text-xs font-medium uppercase tracking-wider text-gray-500">
                                             Note

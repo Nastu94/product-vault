@@ -108,10 +108,10 @@
                 />
 
                 <x-dashboard.stat-card
-                    title="Garanzie"
+                    title="Coperture"
                     :value="$stats['expiring_warranties_count'] ?? 0"
                     tone="warning"
-                    description="In scadenza entro 30 giorni"
+                    description="Periodi in scadenza entro 30 giorni"
                 />
             </section>
 
@@ -161,31 +161,181 @@
                 </x-dashboard.section-panel>
 
                 <x-dashboard.section-panel
-                    title="Garanzie da controllare"
-                    description="Scadenze nei prossimi 30 giorni."
+                    title="Coperture da controllare"
+                    description="Periodi indicati che terminano nei prossimi 30 giorni."
                     :href="route('warranties.index')"
                     link-label="Apri"
-                    empty-title="Nessuna garanzia in scadenza"
-                    empty-message="Le scadenze appariranno qui quando saranno vicine."
+                    empty-title="Nessun periodo in scadenza"
+                    empty-message="Nessun periodo indicato termina nei prossimi 30 giorni."
                 >
                     @if (($expiringWarranties ?? collect())->isNotEmpty())
                         <div class="space-y-3">
                             @foreach ($expiringWarranties as $warranty)
+                                @php
+                                    $coverageContext = (
+                                        $expiringWarrantyContexts
+                                            ?? []
+                                    )[
+                                        (int) $warranty->getKey()
+                                    ] ?? [];
+
+                                    $coverageStateCode = data_get(
+                                        $coverageContext,
+                                        'coverage_state.code',
+                                        'unknown'
+                                    );
+
+                                    $coverageStateLabel = data_get(
+                                        $coverageContext,
+                                        'coverage_state.label',
+                                        'Copertura non determinata'
+                                    );
+
+                                    $temporalStatusCode = data_get(
+                                        $coverageContext,
+                                        'temporal_status.code',
+                                        'unknown'
+                                    );
+
+                                    $temporalStatusLabel = data_get(
+                                        $coverageContext,
+                                        'temporal_status.label',
+                                        'Periodo non determinabile'
+                                    );
+
+                                    $coverageTypeLabel = data_get(
+                                        $coverageContext,
+                                        'coverage_type.label',
+                                        'Tipo non disponibile'
+                                    );
+
+                                    $coverageSourceLabel = data_get(
+                                        $coverageContext,
+                                        'source.label',
+                                        'Provenienza non disponibile'
+                                    );
+
+                                    $coverageIsEstimate = (bool) data_get(
+                                        $coverageContext,
+                                        'coverage_state.is_estimate',
+                                        false
+                                    );
+
+                                    $coverageIsConfirmed = (bool) data_get(
+                                        $coverageContext,
+                                        'confirmation.is_confirmed',
+                                        false
+                                    );
+
+                                    $missingInformation = data_get(
+                                        $coverageContext,
+                                        'missing_information',
+                                        []
+                                    );
+
+                                    $missingInformationCount =
+                                        is_array($missingInformation)
+                                            ? count($missingInformation)
+                                            : 0;
+
+                                    $coverageBadgeClasses = match (
+                                        $coverageStateCode
+                                    ) {
+                                        'estimated' =>
+                                            'bg-yellow-100 text-yellow-800 ring-yellow-600/20',
+
+                                        'declared' =>
+                                            'bg-blue-100 text-blue-700 ring-blue-600/20',
+
+                                        'user_confirmed' =>
+                                            'bg-indigo-100 text-indigo-700 ring-indigo-600/20',
+
+                                        'verified' =>
+                                            'bg-green-100 text-green-700 ring-green-600/20',
+
+                                        'cancelled' =>
+                                            'bg-red-100 text-red-700 ring-red-600/20',
+
+                                        default =>
+                                            'bg-slate-100 text-slate-700 ring-slate-500/20',
+                                    };
+
+                                    $temporalBadgeClasses = match (
+                                        $temporalStatusCode
+                                    ) {
+                                        'active' =>
+                                            'bg-green-100 text-green-700 ring-green-600/20',
+
+                                        'expiring' =>
+                                            'bg-yellow-100 text-yellow-800 ring-yellow-600/20',
+
+                                        'not_started' =>
+                                            'bg-blue-100 text-blue-700 ring-blue-600/20',
+
+                                        'expired' =>
+                                            'bg-red-100 text-red-700 ring-red-600/20',
+
+                                        default =>
+                                            'bg-slate-100 text-slate-700 ring-slate-500/20',
+                                    };
+                                @endphp
+
                                 <div class="rounded-2xl border border-yellow-200 bg-yellow-50 p-4">
                                     <div class="flex items-start justify-between gap-3">
-                                        <div>
+                                        <div class="min-w-0 flex-1">
                                             <p class="line-clamp-1 text-sm font-semibold text-slate-950">
                                                 {{ $warranty->product?->name ?? 'Prodotto senza nome' }}
                                             </p>
 
-                                            <p class="mt-1 text-xs text-yellow-700">
-                                                Scade il {{ $warranty->ends_at?->format('d/m/Y') ?? '—' }}
+                                            <div class="mt-2 flex flex-wrap gap-2">
+                                                <span
+                                                    class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset {{ $coverageBadgeClasses }}"
+                                                >
+                                                    {{ $coverageStateLabel }}
+                                                </span>
+
+                                                <span
+                                                    class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset {{ $temporalBadgeClasses }}"
+                                                >
+                                                    Periodo:
+                                                    {{ $temporalStatusLabel }}
+                                                </span>
+                                            </div>
+
+                                            <p class="mt-2 text-xs font-medium text-yellow-800">
+                                                Il periodo indicato termina il
+                                                {{ $warranty->ends_at?->format('d/m/Y') ?? '—' }}
+                                            </p>
+
+                                            <p class="mt-1 text-xs text-slate-600">
+                                                {{ $coverageTypeLabel }}
                                             </p>
 
                                             <p class="mt-1 text-xs text-slate-500">
-                                                {{ $warranty->warrantyType?->name ?? 'Garanzia' }}
-                                                · {{ $warranty->source === 'manual' ? 'Manuale' : 'Calcolata' }}
+                                                Provenienza:
+                                                {{ $coverageSourceLabel }}
                                             </p>
+
+                                            @if ($coverageIsEstimate)
+                                                <p class="mt-1 text-xs font-medium text-yellow-800">
+                                                    Stima da verificare
+                                                </p>
+                                            @endif
+
+                                            @if ($coverageIsConfirmed)
+                                                <p class="mt-1 text-xs text-slate-500">
+                                                    Dati confermati dall’utente
+                                                </p>
+                                            @endif
+
+                                            @if ($missingInformationCount > 0)
+                                                <p class="mt-1 text-xs text-slate-500">
+                                                    {{ $missingInformationCount }}
+                                                    {{ $missingInformationCount === 1
+                                                        ? 'informazione da completare'
+                                                        : 'informazioni da completare' }}
+                                                </p>
+                                            @endif
                                         </div>
 
                                         @if ($warranty->product)

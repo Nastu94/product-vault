@@ -12,6 +12,7 @@ use App\Services\ProductCases\ProductCasePhotoManager;
 use App\Services\ProductCases\ProductCaseRequestDraftBuilder;
 use App\Services\ProductCases\ProductCaseRequestDraftGenerator;
 use App\Services\ProductCases\ProductCaseStatusTransitionService;
+use App\Services\ProductCases\ProductCaseRequestDraftEditor;
 use Illuminate\Console\Command;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -39,6 +40,7 @@ class TestProductCaseRequestDraftCommand extends Command
         ProductCaseDocumentSelector $documentSelector,
         ProductCasePhotoManager $photoManager,
         ProductCaseRequestDraftBuilder $builder,
+        ProductCaseRequestDraftEditor $editor,
         ProductCaseRequestDraftGenerator $generator,
         ProductCaseStatusTransitionService $transitionService
     ): int {
@@ -460,6 +462,34 @@ class TestProductCaseRequestDraftCommand extends Command
                 )
             );
 
+            $assertSame(
+                'generation',
+                'current draft source is generated',
+                ProductCase
+                    ::REQUEST_DRAFT_SOURCE_GENERATED,
+                data_get(
+                    $productCase->metadata,
+                    ProductCase
+                        ::REQUEST_DRAFT_CURRENT_METADATA_KEY
+                        . '.source'
+                )
+            );
+
+            $assertSame(
+                'generation',
+                'current draft hash stored',
+                hash(
+                    'sha256',
+                    $productCase->request_draft
+                ),
+                data_get(
+                    $productCase->metadata,
+                    ProductCase
+                        ::REQUEST_DRAFT_CURRENT_METADATA_KEY
+                        . '.sha256'
+                )
+            );
+
             /*
              |--------------------------------------------------------------------------
              | Retry idempotente
@@ -559,7 +589,11 @@ class TestProductCaseRequestDraftCommand extends Command
              */
 
             $generationMetadataBeforeManualEdit =
-                $productCase->metadata;
+                data_get(
+                    $productCase->metadata,
+                    ProductCaseRequestDraftGenerator
+                        ::METADATA_KEY
+                );
 
             $generatedAtBeforeManualEdit =
                 $productCase
@@ -569,10 +603,12 @@ class TestProductCaseRequestDraftCommand extends Command
             $manualDraft =
                 'Testo personalizzato manualmente dall’utente.';
 
-            $productCase->fill([
-                'request_draft' =>
-                    $manualDraft,
-            ])->save();
+            $productCase =
+                $editor->saveManualDraft(
+                    productCase: $productCase,
+                    editedBy: $user,
+                    draft: $manualDraft,
+                );
 
             $manualProtectionMessage = null;
 
@@ -618,7 +654,36 @@ class TestProductCaseRequestDraftCommand extends Command
                 'manual_protection',
                 'generation metadata preserved',
                 $generationMetadataBeforeManualEdit,
-                $productCase->metadata
+                data_get(
+                    $productCase->metadata,
+                    ProductCaseRequestDraftGenerator
+                        ::METADATA_KEY
+                )
+            );
+
+            $assertSame(
+                'manual_protection',
+                'current draft source becomes manual',
+                ProductCase
+                    ::REQUEST_DRAFT_SOURCE_MANUAL,
+                data_get(
+                    $productCase->metadata,
+                    ProductCase
+                        ::REQUEST_DRAFT_CURRENT_METADATA_KEY
+                        . '.source'
+                )
+            );
+
+            $assertSame(
+                'manual_protection',
+                'manual editor stored',
+                (int) $user->id,
+                (int) data_get(
+                    $productCase->metadata,
+                    ProductCaseRequestDraftEditor
+                        ::METADATA_KEY
+                        . '.edited_by_user_id'
+                )
             );
 
             /*
@@ -642,10 +707,13 @@ class TestProductCaseRequestDraftCommand extends Command
             $createdCaseIds[] =
                 (int) $manualCase->id;
 
-            $manualCase->fill([
-                'request_draft' =>
-                    'Bozza già inserita manualmente.',
-            ])->save();
+            $manualCase =
+                $editor->saveManualDraft(
+                    productCase: $manualCase,
+                    editedBy: $user,
+                    draft:
+                        'Bozza già inserita manualmente.',
+                );
 
             $preexistingManualRejected = false;
 

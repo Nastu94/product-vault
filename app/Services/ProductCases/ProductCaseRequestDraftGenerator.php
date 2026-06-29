@@ -99,6 +99,17 @@ final class ProductCaseRequestDraftGenerator
                     ? $generationMetadata
                     : [];
 
+            $currentMetadata =
+                $metadata[
+                    ProductCase
+                        ::REQUEST_DRAFT_CURRENT_METADATA_KEY
+                ] ?? null;
+
+            $currentMetadata =
+                is_array($currentMetadata)
+                    ? $currentMetadata
+                    : [];
+
             $currentDraft =
                 is_string(
                     $productCase->request_draft
@@ -156,13 +167,39 @@ final class ProductCaseRequestDraftGenerator
              * Stesse sorgenti e stesso testo: nessuna scrittura.
              * Il timestamp originale viene preservato.
              */
+            $currentStateHash =
+                $currentMetadata['sha256']
+                ?? null;
+
             if (
                 $hasCurrentDraft
                 && $currentDraft === $draft
+                && isset(
+                    $generationMetadata[
+                        'generated_sha256'
+                    ]
+                )
+                && is_string(
+                    $generationMetadata[
+                        'generated_sha256'
+                    ]
+                )
                 && hash_equals(
                     $generationMetadata[
                         'generated_sha256'
                     ],
+                    $draftHash
+                )
+                && (
+                    $currentMetadata['source']
+                    ?? null
+                ) === ProductCase
+                    ::REQUEST_DRAFT_SOURCE_GENERATED
+                && is_string(
+                    $currentStateHash
+                )
+                && hash_equals(
+                    $currentStateHash,
                     $draftHash
                 )
             ) {
@@ -189,6 +226,28 @@ final class ProductCaseRequestDraftGenerator
                     (int) $generatedBy->id,
 
                 'generated_at' =>
+                    $now->toISOString(),
+            ];
+
+            $metadata[
+                ProductCase
+                    ::REQUEST_DRAFT_CURRENT_METADATA_KEY
+            ] = [
+                'version' =>
+                    ProductCase
+                        ::REQUEST_DRAFT_CURRENT_METADATA_VERSION,
+
+                'source' =>
+                    ProductCase
+                        ::REQUEST_DRAFT_SOURCE_GENERATED,
+
+                'sha256' =>
+                    $draftHash,
+
+                'updated_by_user_id' =>
+                    (int) $generatedBy->id,
+
+                'updated_at' =>
                     $now->toISOString(),
             ];
 

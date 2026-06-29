@@ -28,6 +28,24 @@ class ProductCase extends Model implements HasMedia
 
     /*
     |--------------------------------------------------------------------------
+    | Provenance della bozza di richiesta
+    |--------------------------------------------------------------------------
+    */
+
+    public const REQUEST_DRAFT_CURRENT_METADATA_KEY =
+        'request_draft_current';
+
+    public const REQUEST_DRAFT_CURRENT_METADATA_VERSION =
+        'product_case_request_draft_current_v1';
+
+    public const REQUEST_DRAFT_SOURCE_GENERATED =
+        'generated';
+
+    public const REQUEST_DRAFT_SOURCE_MANUAL =
+        'manual';
+
+    /*
+    |--------------------------------------------------------------------------
     | Stati della pratica
     |--------------------------------------------------------------------------
     */
@@ -104,8 +122,9 @@ class ProductCase extends Model implements HasMedia
     /**
      * Campi modificabili come contenuto ordinario della pratica.
      *
-     * Proprietà, descrizione originale, stato, esito, date operative
-     * e metadata vengono gestiti esplicitamente dai service di dominio.
+     * Proprietà, descrizione originale, stato, bozza di richiesta,
+     * esito, date operative e metadata vengono gestiti esplicitamente
+     * dai service di dominio.
      */
     protected $fillable = [
         'title',
@@ -114,7 +133,6 @@ class ProductCase extends Model implements HasMedia
         'usability_status',
         'accidental_damage_declared',
         'accidental_damage_notes',
-        'request_draft',
     ];
 
     /**

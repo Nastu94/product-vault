@@ -2,6 +2,7 @@
 
 namespace App\Services\ProductCases;
 
+use App\Exceptions\ProductCases\ProductCaseNotReadyException;
 use App\Models\ProductCase;
 use App\Models\User;
 use Illuminate\Support\Arr;
@@ -13,6 +14,14 @@ use RuntimeException;
 
 class ProductCaseStatusTransitionService
 {
+    /**
+     * @param  ProductCaseReadinessResolver  $readinessResolver
+     */
+    public function __construct(
+        private readonly ProductCaseReadinessResolver $readinessResolver
+    ) {
+    }
+
     /**
      * Transizioni ammesse per ogni stato.
      *
@@ -245,6 +254,39 @@ class ProductCaseStatusTransitionService
                 attributes: $attributes,
             );
 
+            /*
+             * La matrice delle transizioni resta strutturale.
+             *
+             * La readiness viene invece calcolata sui dati correnti della
+             * pratica nei due passaggi che precedono il contatto effettivo:
+             *
+             * - draft -> ready_to_contact;
+             * - ready_to_contact -> contacted.
+             */
+            if (
+                $this->requiresReadinessCheck(
+                    currentStatus: $currentStatus,
+                    targetStatus: $targetStatus,
+                )
+            ) {
+                $readiness =
+                    $this->readinessResolver->resolve(
+                        $productCase
+                    );
+
+                if (
+                    (
+                        $readiness[
+                            'is_ready_to_contact'
+                        ] ?? false
+                    ) !== true
+                ) {
+                    throw new ProductCaseNotReadyException(
+                        $readiness
+                    );
+                }
+            }
+
             $now = now();
 
             $values = [
@@ -285,6 +327,25 @@ class ProductCaseStatusTransitionService
 
             return $productCase->refresh();
         });
+    }
+
+    /**
+     * Stabilisce se la transizione richiede una readiness aggiornata.
+     */
+    private function requiresReadinessCheck(
+        string $currentStatus,
+        string $targetStatus
+    ): bool {
+        return (
+            $currentStatus === ProductCase::STATUS_DRAFT
+            && $targetStatus
+                === ProductCase::STATUS_READY_TO_CONTACT
+        ) || (
+            $currentStatus
+                === ProductCase::STATUS_READY_TO_CONTACT
+            && $targetStatus
+                === ProductCase::STATUS_CONTACTED
+        );
     }
 
     /**

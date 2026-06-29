@@ -5,6 +5,8 @@ namespace App\Console\Commands\ProductVault;
 use App\Models\Product;
 use App\Models\ProductCase;
 use App\Models\User;
+use App\Exceptions\ProductCases\ProductCaseNotReadyException;
+use App\Services\ProductCases\ProductCaseDocumentSelector;
 use App\Services\ProductCases\ProductCaseCreator;
 use App\Services\ProductCases\ProductCaseStatusTransitionService;
 use App\Policies\ProductCasePolicy;
@@ -44,6 +46,7 @@ class TestProductCaseWorkflowCommand extends Command
      */
     public function handle(
         ProductCaseCreator $creator,
+        ProductCaseDocumentSelector $documentSelector,
         ProductCaseStatusTransitionService $transitionService
     ): int {
         $rows = [];
@@ -53,6 +56,10 @@ class TestProductCaseWorkflowCommand extends Command
 
         $casesBefore = ProductCase::query()->count();
         $teamsBefore = DB::table('teams')->count();
+
+        $caseDocumentLinksBefore = DB::table(
+            'product_case_documents'
+        )->count();
 
         $permissionRegistrar =
             app(PermissionRegistrar::class);
@@ -85,17 +92,29 @@ class TestProductCaseWorkflowCommand extends Command
 
         try {
             $product = Product::query()
-                ->with('team')
+                ->with([
+                    'team',
+                    'documents',
+                    'warranties',
+                ])
                 ->whereNotNull('team_id')
+                ->whereHas('documents')
+                ->whereHas(
+                    'warranties',
+                    fn ($query) => $query
+                        ->whereNotNull('starts_at')
+                        ->whereNotNull('ends_at')
+                )
                 ->orderBy('id')
                 ->first();
 
             if (
                 $product === null
                 || $product->team === null
+                || $product->documents->isEmpty()
             ) {
                 throw new RuntimeException(
-                    'Nessun prodotto con team utilizzabile per il test.'
+                    'Nessun prodotto con team, documenti e garanzia completa utilizzabile per il test.'
                 );
             }
 
@@ -121,6 +140,15 @@ class TestProductCaseWorkflowCommand extends Command
                 ]);
 
             $user->refresh();
+
+            $document =
+                $product->documents->first();
+
+            if ($document === null) {
+                throw new RuntimeException(
+                    'Documento prodotto non disponibile.'
+                );
+            }
 
             /*
              * Nei comandi CLI non viene eseguito il middleware web che imposta
@@ -553,7 +581,79 @@ class TestProductCaseWorkflowCommand extends Command
             );
 
             /*
-             * draft non può saltare direttamente a contacted.
+             * La pratica è completa sul problema e sulla garanzia,
+             * ma non ha ancora un documento selezionato.
+             */
+            $initialReadinessException = null;
+
+            try {
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_READY_TO_CONTACT,
+                );
+            } catch (
+                ProductCaseNotReadyException $exception
+            ) {
+                $initialReadinessException =
+                    $exception;
+            }
+
+            $assertSame(
+                'readiness_transition',
+                'incomplete draft rejected',
+                true,
+                $initialReadinessException
+                    instanceof ProductCaseNotReadyException
+            );
+
+            $assertSame(
+                'readiness_transition',
+                'stable initial blocker codes',
+                [
+                    'selected_document',
+                ],
+                $initialReadinessException
+                    ?->blockingCodes()
+            );
+
+            $assertSame(
+                'readiness_transition',
+                'stable readiness message',
+                'La pratica non è pronta per il contatto. Informazioni bloccanti: selected_document.',
+                $initialReadinessException
+                    ?->getMessage()
+            );
+
+            $productCase->refresh();
+
+            $assertSame(
+                'readiness_transition',
+                'rejected readiness keeps draft',
+                ProductCase::STATUS_DRAFT,
+                $productCase->status
+            );
+
+            /*
+             * Selezioniamo un documento valido.
+             */
+            $documentSelected =
+                $documentSelector->select(
+                    productCase: $productCase,
+                    document: $document,
+                    selectedBy: $user,
+                );
+
+            $assertSame(
+                'readiness_transition',
+                'document selected for readiness',
+                true,
+                $documentSelected
+            );
+
+            /*
+             * draft non può comunque saltare direttamente a contacted.
              */
             $directContactExceptionMessage = null;
 
@@ -586,7 +686,7 @@ class TestProductCaseWorkflowCommand extends Command
             );
 
             /*
-             * draft -> ready_to_contact.
+             * draft -> ready_to_contact con readiness completa.
              */
             $productCase =
                 $transitionService->transition(
@@ -597,8 +697,8 @@ class TestProductCaseWorkflowCommand extends Command
                 );
 
             $assertSame(
-                'state_machine',
-                'draft becomes ready to contact',
+                'readiness_transition',
+                'complete draft becomes ready',
                 ProductCase::STATUS_READY_TO_CONTACT,
                 $productCase->status
             );
@@ -614,7 +714,7 @@ class TestProductCaseWorkflowCommand extends Command
             );
 
             /*
-             * La richiesta dello stesso stato non è una transizione valida.
+             * La richiesta dello stesso stato non è valida.
              */
             $sameStatusExceptionMessage = null;
 
@@ -638,7 +738,7 @@ class TestProductCaseWorkflowCommand extends Command
             );
 
             /*
-             * ready_to_contact può tornare in draft.
+             * ready_to_contact può sempre tornare in draft.
              */
             $productCase =
                 $transitionService->transition(
@@ -656,9 +756,75 @@ class TestProductCaseWorkflowCommand extends Command
             );
 
             /*
-             * Percorso principale:
-             * draft -> ready_to_contact -> contacted.
+             * La readiness viene ricalcolata: rimuovendo il documento,
+             * un nuovo ingresso in ready_to_contact deve essere bloccato.
              */
+            $documentRemovedInDraft =
+                $documentSelector->deselect(
+                    productCase: $productCase,
+                    document: $document,
+                    deselectedBy: $user,
+                );
+
+            $assertSame(
+                'readiness_transition',
+                'document removed in draft',
+                true,
+                $documentRemovedInDraft
+            );
+
+            $draftRetryException = null;
+
+            try {
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_READY_TO_CONTACT,
+                );
+            } catch (
+                ProductCaseNotReadyException $exception
+            ) {
+                $draftRetryException =
+                    $exception;
+            }
+
+            $assertSame(
+                'readiness_transition',
+                'derived blocker rejects draft retry',
+                [
+                    'selected_document',
+                ],
+                $draftRetryException
+                    ?->blockingCodes()
+            );
+
+            $productCase->refresh();
+
+            $assertSame(
+                'readiness_transition',
+                'draft retry leaves status unchanged',
+                ProductCase::STATUS_DRAFT,
+                $productCase->status
+            );
+
+            /*
+             * Ripristiniamo l'evidenza e torniamo in ready_to_contact.
+             */
+            $documentReselected =
+                $documentSelector->select(
+                    productCase: $productCase,
+                    document: $document,
+                    selectedBy: $user,
+                );
+
+            $assertSame(
+                'readiness_transition',
+                'document reselected',
+                true,
+                $documentReselected
+            );
+
             $productCase =
                 $transitionService->transition(
                     productCase: $productCase,
@@ -666,6 +832,76 @@ class TestProductCaseWorkflowCommand extends Command
                     targetStatus:
                         ProductCase::STATUS_READY_TO_CONTACT,
                 );
+
+            /*
+             * Se la pratica perde completezza mentre è ready_to_contact,
+             * non può essere marcata come contacted.
+             */
+            $documentRemovedBeforeContact =
+                $documentSelector->deselect(
+                    productCase: $productCase,
+                    document: $document,
+                    deselectedBy: $user,
+                );
+
+            $assertSame(
+                'readiness_transition',
+                'document removed before contact',
+                true,
+                $documentRemovedBeforeContact
+            );
+
+            $contactReadinessException = null;
+
+            try {
+                $transitionService->transition(
+                    productCase: $productCase,
+                    performedBy: $user,
+                    targetStatus:
+                        ProductCase::STATUS_CONTACTED,
+                );
+            } catch (
+                ProductCaseNotReadyException $exception
+            ) {
+                $contactReadinessException =
+                    $exception;
+            }
+
+            $assertSame(
+                'readiness_transition',
+                'incomplete ready case cannot be contacted',
+                [
+                    'selected_document',
+                ],
+                $contactReadinessException
+                    ?->blockingCodes()
+            );
+
+            $productCase->refresh();
+
+            $assertSame(
+                'readiness_transition',
+                'failed contact keeps ready status',
+                ProductCase::STATUS_READY_TO_CONTACT,
+                $productCase->status
+            );
+
+            /*
+             * Ripristinando il documento il contatto può essere registrato.
+             */
+            $documentReselectedForContact =
+                $documentSelector->select(
+                    productCase: $productCase,
+                    document: $document,
+                    selectedBy: $user,
+                );
+
+            $assertSame(
+                'readiness_transition',
+                'document restored before contact',
+                true,
+                $documentReselectedForContact
+            );
 
             $productCase =
                 $transitionService->transition(
@@ -687,6 +923,31 @@ class TestProductCaseWorkflowCommand extends Command
                 'contact timestamp recorded',
                 true,
                 $productCase->contacted_at !== null
+            );
+
+            /*
+             * Dopo contacted non applichiamo controlli retroattivi:
+             * l'evidenza può cambiare senza riscrivere la storia operativa.
+             */
+            $documentRemovedAfterContact =
+                $documentSelector->deselect(
+                    productCase: $productCase,
+                    document: $document,
+                    deselectedBy: $user,
+                );
+
+            $assertSame(
+                'readiness_transition',
+                'document can change after contact',
+                true,
+                $documentRemovedAfterContact
+            );
+
+            $assertSame(
+                'readiness_transition',
+                'contacted status remains recorded',
+                ProductCase::STATUS_CONTACTED,
+                $productCase->status
             );
 
             $contactedAt =
@@ -1227,6 +1488,15 @@ class TestProductCaseWorkflowCommand extends Command
             'team count restored',
             $teamsBefore,
             DB::table('teams')->count()
+        );
+
+        $assertSame(
+            'rollback',
+            'case document links restored',
+            $caseDocumentLinksBefore,
+            DB::table(
+                'product_case_documents'
+            )->count()
         );
 
         $this->table(

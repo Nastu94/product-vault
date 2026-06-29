@@ -9,11 +9,20 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use RuntimeException;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use RuntimeException;
+use Throwable;
 
 final class ProductCasePhotoManager
 {
+    /**
+     * @throws Throwable
+     */
+    public function __construct(
+        private readonly ProductCaseEventRecorder $eventRecorder
+    ) {
+    }
+
     public const VERSION =
         'product_case_photo_manager_v1';
 
@@ -174,19 +183,26 @@ final class ProductCasePhotoManager
                 . '.'
                 . $extension;
 
-            return $productCase
+            $storedMedia = $productCase
                 ->addMedia($photo)
                 ->usingName($displayName)
                 ->usingFileName($storedFilename)
                 ->withCustomProperties([
-                    'version' => self::VERSION,
+                    'version' =>
+                        self::VERSION,
+
                     'uploaded_by_user_id' =>
                         (int) $uploadedBy->id,
+
                     'team_id' =>
                         (int) $productCase->team_id,
+
                     'original_filename' =>
                         $originalFilename,
-                    'sha256' => $sha256,
+
+                    'sha256' =>
+                        $sha256,
+
                     'uploaded_at' =>
                         now()->toISOString(),
                 ])
@@ -194,6 +210,30 @@ final class ProductCasePhotoManager
                     ProductCase::MEDIA_COLLECTION_ISSUE_PHOTOS,
                     'local'
                 );
+
+            try {
+                $this->eventRecorder
+                    ->recordPhotoAdded(
+                        productCase:
+                            $productCase,
+
+                        actor:
+                            $uploadedBy,
+
+                        media:
+                            $storedMedia,
+                    );
+            } catch (Throwable $exception) {
+                /*
+                 * Il rollback SQL non rimuove automaticamente il file fisico.
+                 * Se la timeline fallisce, eliminiamo quindi anche il media.
+                 */
+                $storedMedia->delete();
+
+                throw $exception;
+            }
+
+            return $storedMedia;
         });
     }
 
@@ -269,9 +309,23 @@ final class ProductCasePhotoManager
             }
 
             /*
-             * Dopo delete non vengono eseguite altre operazioni fallibili:
-             * Media Library elimina sia il record sia il file privato.
+             * Registriamo lo snapshot prima della cancellazione del media.
+             *
+             * Evento e record media sono nella stessa transazione database.
+             * I dati tecnici della fotografia restano così nella timeline.
              */
+            $this->eventRecorder
+                ->recordPhotoRemoved(
+                    productCase:
+                        $productCase,
+
+                    actor:
+                        $removedBy,
+
+                    media:
+                        $storedMedia,
+                );
+
             $storedMedia->delete();
 
             return true;

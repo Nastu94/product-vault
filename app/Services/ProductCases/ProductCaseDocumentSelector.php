@@ -12,6 +12,14 @@ use RuntimeException;
 class ProductCaseDocumentSelector
 {
     /**
+     * @param ProductCaseEventRecorder $eventRecorder
+     */
+    public function __construct(
+        private readonly ProductCaseEventRecorder $eventRecorder
+    ) {
+    }
+
+    /**
      * Seleziona un documento come evidenza della pratica.
      *
      * Restituisce true quando viene creato un nuovo collegamento.
@@ -122,9 +130,29 @@ class ProductCaseDocumentSelector
                 [
                     'selected_by_user_id' =>
                         $selectedBy->id,
-                    'notes' => $notes,
+
+                    'notes' =>
+                        $notes,
                 ]
             );
+
+            /*
+             * Pivot ed evento fanno parte della stessa transazione.
+             */
+            $this->eventRecorder
+                ->recordDocumentSelected(
+                    productCase:
+                        $productCase,
+
+                    actor:
+                        $selectedBy,
+
+                    document:
+                        $document,
+
+                    notes:
+                        $notes,
+                );
 
             return true;
         });
@@ -177,10 +205,43 @@ class ProductCaseDocumentSelector
             );
 
             /*
-             * La rimozione non richiede che il documento sia ancora collegato
-             * al prodotto. In questo modo è possibile ripulire un riferimento
-             * diventato obsoleto.
+             * Recuperiamo la provenance prima di eliminare la pivot.
              */
+            $selection = DB::table(
+                'product_case_documents'
+            )
+                ->where(
+                    'product_case_id',
+                    $productCase->id
+                )
+                ->where(
+                    'document_id',
+                    $document->id
+                )
+                ->first([
+                    'selected_by_user_id',
+                    'notes',
+                ]);
+
+            if ($selection === null) {
+                return false;
+            }
+
+            $originalSelectedByUserId =
+                $selection
+                    ->selected_by_user_id
+                    !== null
+                    ? (int) $selection
+                        ->selected_by_user_id
+                    : null;
+
+            $selectionNotes =
+                is_string(
+                    $selection->notes
+                )
+                    ? $selection->notes
+                    : null;
+
             $deleted = DB::table(
                 'product_case_documents'
             )
@@ -194,7 +255,35 @@ class ProductCaseDocumentSelector
                 )
                 ->delete();
 
-            return $deleted > 0;
+            if ($deleted !== 1) {
+                throw new RuntimeException(
+                    'Non è stato possibile rimuovere il documento dalla pratica.'
+                );
+            }
+
+            /*
+             * La riga pivot è stata rimossa, ma il relativo snapshot
+             * resta disponibile nella timeline.
+             */
+            $this->eventRecorder
+                ->recordDocumentDeselected(
+                    productCase:
+                        $productCase,
+
+                    actor:
+                        $deselectedBy,
+
+                    document:
+                        $document,
+
+                    originalSelectedByUserId:
+                        $originalSelectedByUserId,
+
+                    notes:
+                        $selectionNotes,
+                );
+
+            return true;
         });
     }
 

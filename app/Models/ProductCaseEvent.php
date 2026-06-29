@@ -20,9 +20,25 @@ final class ProductCaseEvent extends Model
     public const TYPE_STATUS_CHANGED =
         'status_changed';
 
+    public const TYPE_DOCUMENT_SELECTED =
+        'document_selected';
+
+    public const TYPE_DOCUMENT_DESELECTED =
+        'document_deselected';
+
+    public const TYPE_PHOTO_ADDED =
+        'photo_added';
+
+    public const TYPE_PHOTO_REMOVED =
+        'photo_removed';
+
     public const EVENT_TYPES = [
         self::TYPE_CASE_OPENED,
         self::TYPE_STATUS_CHANGED,
+        self::TYPE_DOCUMENT_SELECTED,
+        self::TYPE_DOCUMENT_DESELECTED,
+        self::TYPE_PHOTO_ADDED,
+        self::TYPE_PHOTO_REMOVED,
     ];
 
     /**

@@ -5,6 +5,8 @@ namespace App\Services\ProductCases;
 use App\Models\ProductCase;
 use App\Models\ProductCaseEvent;
 use App\Models\User;
+use App\Models\Document;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Carbon\CarbonInterface;
 use RuntimeException;
 
@@ -138,6 +140,281 @@ final class ProductCaseEventRecorder
             metadata:
                 $eventMetadata,
         );
+    }
+
+    /**
+     * Registra la selezione di un documento come evidenza.
+     */
+    public function recordDocumentSelected(
+        ProductCase $productCase,
+        User $actor,
+        Document $document,
+        ?string $notes
+    ): ProductCaseEvent {
+        $this->ensureDocumentBelongsToCase(
+            productCase: $productCase,
+            document: $document,
+        );
+
+        return $this->record(
+            productCase: $productCase,
+            actor: $actor,
+            eventType:
+                ProductCaseEvent::TYPE_DOCUMENT_SELECTED,
+            title:
+                'Documento selezionato',
+            description:
+                'Un documento è stato selezionato come evidenza della pratica.',
+            source:
+                'product_case_document_selector',
+            occurredAt:
+                now(),
+            metadata: [
+                'document_id' =>
+                    (int) $document->id,
+
+                'original_filename' =>
+                    $document->original_filename,
+
+                'mime_type' =>
+                    $document->mime_type,
+
+                'notes' =>
+                    $notes,
+
+                'selected_by_user_id' =>
+                    (int) $actor->id,
+            ],
+        );
+    }
+
+    /**
+     * Registra la rimozione di un documento dalle evidenze.
+     */
+    public function recordDocumentDeselected(
+        ProductCase $productCase,
+        User $actor,
+        Document $document,
+        ?int $originalSelectedByUserId,
+        ?string $notes
+    ): ProductCaseEvent {
+        $this->ensureDocumentBelongsToCase(
+            productCase: $productCase,
+            document: $document,
+        );
+
+        return $this->record(
+            productCase: $productCase,
+            actor: $actor,
+            eventType:
+                ProductCaseEvent::TYPE_DOCUMENT_DESELECTED,
+            title:
+                'Documento rimosso',
+            description:
+                'Un documento è stato rimosso dalle evidenze della pratica.',
+            source:
+                'product_case_document_selector',
+            occurredAt:
+                now(),
+            metadata: [
+                'document_id' =>
+                    (int) $document->id,
+
+                'original_filename' =>
+                    $document->original_filename,
+
+                'mime_type' =>
+                    $document->mime_type,
+
+                /*
+                 * Snapshot della precedente selezione, conservato anche
+                 * dopo l'eliminazione della riga pivot.
+                 */
+                'original_selected_by_user_id' =>
+                    $originalSelectedByUserId,
+
+                'notes' =>
+                    $notes,
+
+                'deselected_by_user_id' =>
+                    (int) $actor->id,
+            ],
+        );
+    }
+
+    /**
+     * Registra l'aggiunta di una fotografia privata.
+     */
+    public function recordPhotoAdded(
+        ProductCase $productCase,
+        User $actor,
+        Media $media
+    ): ProductCaseEvent {
+        $this->ensureIssuePhotoBelongsToCase(
+            productCase: $productCase,
+            media: $media,
+        );
+
+        return $this->record(
+            productCase: $productCase,
+            actor: $actor,
+            eventType:
+                ProductCaseEvent::TYPE_PHOTO_ADDED,
+            title:
+                'Fotografia aggiunta',
+            description:
+                'Una fotografia è stata aggiunta alle evidenze della pratica.',
+            source:
+                'product_case_photo_manager',
+            occurredAt:
+                $media->created_at
+                ?? now(),
+            metadata:
+                $this->photoMetadata(
+                    media: $media,
+                    actorField:
+                        'uploaded_by_user_id',
+                    actorId:
+                        (int) $actor->id,
+                ),
+        );
+    }
+
+    /**
+     * Registra la rimozione di una fotografia privata.
+     *
+     * L'evento deve essere creato prima di eliminare il media, così i suoi
+     * dati restano disponibili nello snapshot della timeline.
+     */
+    public function recordPhotoRemoved(
+        ProductCase $productCase,
+        User $actor,
+        Media $media
+    ): ProductCaseEvent {
+        $this->ensureIssuePhotoBelongsToCase(
+            productCase: $productCase,
+            media: $media,
+        );
+
+        return $this->record(
+            productCase: $productCase,
+            actor: $actor,
+            eventType:
+                ProductCaseEvent::TYPE_PHOTO_REMOVED,
+            title:
+                'Fotografia rimossa',
+            description:
+                'Una fotografia è stata rimossa dalle evidenze della pratica.',
+            source:
+                'product_case_photo_manager',
+            occurredAt:
+                now(),
+            metadata:
+                $this->photoMetadata(
+                    media: $media,
+                    actorField:
+                        'removed_by_user_id',
+                    actorId:
+                        (int) $actor->id,
+                ),
+        );
+    }
+
+    /**
+     * Verifica che il documento appartenga allo stesso team della pratica.
+     */
+    private function ensureDocumentBelongsToCase(
+        ProductCase $productCase,
+        Document $document
+    ): void {
+        if (! $document->exists) {
+            throw new RuntimeException(
+                'Il documento deve essere persistito prima di registrare l’evento.'
+            );
+        }
+
+        if (
+            (int) $document->team_id
+                !== (int) $productCase->team_id
+        ) {
+            throw new RuntimeException(
+                'Il documento dell’evento appartiene a un team diverso dalla pratica.'
+            );
+        }
+    }
+
+    /**
+     * Verifica proprietà e collection della fotografia.
+     */
+    private function ensureIssuePhotoBelongsToCase(
+        ProductCase $productCase,
+        Media $media
+    ): void {
+        if (! $media->exists) {
+            throw new RuntimeException(
+                'La fotografia deve essere persistita prima di registrare l’evento.'
+            );
+        }
+
+        if (
+            $media->model_type
+                !== $productCase->getMorphClass()
+            || (int) $media->model_id
+                !== (int) $productCase->id
+            || $media->collection_name
+                !== ProductCase::MEDIA_COLLECTION_ISSUE_PHOTOS
+        ) {
+            throw new RuntimeException(
+                'La fotografia dell’evento non appartiene alla pratica.'
+            );
+        }
+    }
+
+    /**
+     * Crea lo snapshot tecnico della fotografia.
+     *
+     * @return array<string, mixed>
+     */
+    private function photoMetadata(
+        Media $media,
+        string $actorField,
+        int $actorId
+    ): array {
+        return [
+            'media_id' =>
+                (int) $media->id,
+
+            'collection_name' =>
+                $media->collection_name,
+
+            'disk' =>
+                $media->disk,
+
+            'name' =>
+                $media->name,
+
+            'file_name' =>
+                $media->file_name,
+
+            'mime_type' =>
+                $media->mime_type,
+
+            'size' =>
+                (int) $media->size,
+
+            'original_filename' =>
+                $media->getCustomProperty(
+                    'original_filename'
+                ),
+
+            'sha256' =>
+                $media->getCustomProperty(
+                    'sha256'
+                ),
+
+            $actorField =>
+                $actorId,
+        ];
     }
 
     /**

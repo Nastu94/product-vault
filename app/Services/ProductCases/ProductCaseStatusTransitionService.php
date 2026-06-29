@@ -18,7 +18,8 @@ class ProductCaseStatusTransitionService
      * @param  ProductCaseReadinessResolver  $readinessResolver
      */
     public function __construct(
-        private readonly ProductCaseReadinessResolver $readinessResolver
+        private readonly ProductCaseReadinessResolver $readinessResolver,
+        private readonly ProductCaseEventRecorder $eventRecorder
     ) {
     }
 
@@ -322,8 +323,36 @@ class ProductCaseStatusTransitionService
              * Stato, esito e timestamp sono protetti dal mass assignment
              * e vengono scritti esclusivamente dal service.
              */
-            $productCase->forceFill($values);
+            $productCase->forceFill(
+                $values
+            );
+
             $productCase->save();
+
+            /*
+             * La timeline viene scritta soltanto dopo che la transizione
+             * è stata validata e applicata.
+             *
+             * Poiché siamo nella stessa transazione, stato ed evento
+             * vengono confermati o annullati insieme.
+             */
+            $this->eventRecorder
+                ->recordStatusChanged(
+                    productCase:
+                        $productCase,
+
+                    actor:
+                        $performedBy,
+
+                    fromStatus:
+                        $currentStatus,
+
+                    toStatus:
+                        $targetStatus,
+
+                    occurredAt:
+                        $now,
+                );
 
             return $productCase->refresh();
         });

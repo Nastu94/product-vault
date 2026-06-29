@@ -14,6 +14,14 @@ use RuntimeException;
 class ProductCaseCreator
 {
     /**
+     * @param  ProductCaseEventRecorder  $eventRecorder
+     */
+    public function __construct(
+        private readonly ProductCaseEventRecorder $eventRecorder
+    ) {
+    }
+
+    /**
      * Crea una nuova pratica operativa per un prodotto.
      *
      * Proprietà, utente, stato e descrizione originale vengono determinati
@@ -176,6 +184,20 @@ class ProductCaseCreator
             ]);
 
             $productCase->save();
+
+            /*
+             * L'evento fa parte della stessa transazione.
+             *
+             * Un errore nella registrazione impedisce di creare una pratica
+             * priva del relativo evento di apertura.
+             */
+            $this->eventRecorder
+                ->recordCaseOpened(
+                    productCase:
+                        $productCase,
+                    actor:
+                        $openedBy,
+                );
 
             return $productCase->refresh();
         });

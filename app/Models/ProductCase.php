@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
@@ -198,6 +199,19 @@ class ProductCase extends Model implements HasMedia
                 'notes',
             ])
             ->withTimestamps();
+    }
+
+    /**
+     * Timeline operativa append-only della pratica.
+     */
+    public function events(): HasMany
+    {
+        return $this
+            ->hasMany(
+                ProductCaseEvent::class
+            )
+            ->orderBy('occurred_at')
+            ->orderBy('id');
     }
 
     /**

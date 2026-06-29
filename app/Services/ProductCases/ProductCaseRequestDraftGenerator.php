@@ -14,8 +14,8 @@ final class ProductCaseRequestDraftGenerator
         'request_draft_generation';
 
     public function __construct(
-        private readonly ProductCaseRequestDraftBuilder
-            $builder
+        private readonly ProductCaseRequestDraftBuilder $builder,
+        private readonly ProductCaseEventRecorder $eventRecorder
     ) {
     }
 
@@ -120,6 +120,29 @@ final class ProductCaseRequestDraftGenerator
             $hasCurrentDraft =
                 $currentDraft !== null
                 && trim($currentDraft) !== '';
+
+            /*
+             * Snapshot precedente usato dall'evento lifecycle.
+             *
+             * Se una bozza esiste e supera il controllo di protezione
+             * successivo, è necessariamente una bozza generata.
+             */
+            $previousHash =
+                $hasCurrentDraft
+                    ? hash(
+                        'sha256',
+                        $currentDraft
+                    )
+                    : null;
+
+            $previousSource =
+                $hasCurrentDraft
+                    ? ProductCase
+                        ::REQUEST_DRAFT_SOURCE_GENERATED
+                    : 'empty';
+
+            $isRegeneration =
+                $hasCurrentDraft;
 
             if ($hasCurrentDraft) {
                 $storedGeneratedHash =
@@ -267,6 +290,41 @@ final class ProductCaseRequestDraftGenerator
             ]);
 
             $productCase->save();
+
+            /*
+             * Bozza ed evento vengono confermati o annullati insieme.
+             *
+             * Il ramo idempotente è già terminato prima di questo punto,
+             * quindi ogni passaggio qui rappresenta una modifica reale.
+             */
+            $this->eventRecorder
+                ->recordRequestDraftGenerated(
+                    productCase:
+                        $productCase,
+
+                    actor:
+                        $generatedBy,
+
+                    previousHash:
+                        $previousHash,
+
+                    newHash:
+                        $draftHash,
+
+                    previousSource:
+                        $previousSource,
+
+                    sourceFingerprint:
+                        $build[
+                            'source_fingerprint'
+                        ],
+
+                    occurredAt:
+                        $now,
+
+                    isRegeneration:
+                        $isRegeneration,
+                );
 
             return $productCase->refresh();
         });

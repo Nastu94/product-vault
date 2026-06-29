@@ -321,6 +321,315 @@ final class ProductCaseEventRecorder
     }
 
     /**
+     * Registra la prima generazione o la rigenerazione automatica
+     * della bozza di richiesta.
+     */
+    public function recordRequestDraftGenerated(
+        ProductCase $productCase,
+        User $actor,
+        ?string $previousHash,
+        string $newHash,
+        string $previousSource,
+        string $sourceFingerprint,
+        CarbonInterface $occurredAt,
+        bool $isRegeneration
+    ): ProductCaseEvent {
+        $this->ensureValidPreviousDraftSource(
+            $previousSource
+        );
+
+        $this->ensureValidSha256(
+            hash: $previousHash,
+            field: 'previous_sha256',
+            nullable: true,
+        );
+
+        $this->ensureValidSha256(
+            hash: $newHash,
+            field: 'new_sha256',
+        );
+
+        $this->ensureValidSha256(
+            hash: $sourceFingerprint,
+            field: 'source_fingerprint',
+        );
+
+        $this->ensureCurrentDraftState(
+            productCase: $productCase,
+            expectedSource:
+                ProductCase::REQUEST_DRAFT_SOURCE_GENERATED,
+            expectedHash: $newHash,
+        );
+
+        if (
+            $isRegeneration
+            && $previousHash === null
+        ) {
+            throw new RuntimeException(
+                'Una rigenerazione della bozza deve contenere l’hash precedente.'
+            );
+        }
+
+        if (
+            ! $isRegeneration
+            && $previousHash !== null
+        ) {
+            throw new RuntimeException(
+                'La prima generazione della bozza non può contenere un hash precedente.'
+            );
+        }
+
+        $eventType = $isRegeneration
+            ? ProductCaseEvent
+                ::TYPE_REQUEST_DRAFT_REGENERATED
+            : ProductCaseEvent
+                ::TYPE_REQUEST_DRAFT_GENERATED;
+
+        $title = $isRegeneration
+            ? 'Bozza rigenerata'
+            : 'Bozza generata';
+
+        $description = $isRegeneration
+            ? 'La bozza di richiesta è stata rigenerata automaticamente.'
+            : 'La bozza di richiesta è stata generata automaticamente.';
+
+        return $this->record(
+            productCase: $productCase,
+            actor: $actor,
+            eventType: $eventType,
+            title: $title,
+            description: $description,
+            source:
+                'product_case_request_draft_generator',
+            occurredAt: $occurredAt,
+            metadata: [
+                'generation_kind' =>
+                    $isRegeneration
+                        ? 'regeneration'
+                        : 'initial',
+
+                'previous_source' =>
+                    $previousSource,
+
+                'current_source' =>
+                    ProductCase
+                        ::REQUEST_DRAFT_SOURCE_GENERATED,
+
+                'previous_sha256' =>
+                    $previousHash,
+
+                'new_sha256' =>
+                    $newHash,
+
+                'source_fingerprint' =>
+                    $sourceFingerprint,
+
+                'generated_by_user_id' =>
+                    (int) $actor->id,
+            ],
+        );
+    }
+
+    /**
+     * Registra una modifica manuale effettiva della bozza.
+     */
+    public function recordRequestDraftEdited(
+        ProductCase $productCase,
+        User $actor,
+        ?string $previousHash,
+        string $newHash,
+        string $previousSource,
+        CarbonInterface $occurredAt
+    ): ProductCaseEvent {
+        $this->ensureValidPreviousDraftSource(
+            $previousSource
+        );
+
+        $this->ensureValidSha256(
+            hash: $previousHash,
+            field: 'previous_sha256',
+            nullable: true,
+        );
+
+        $this->ensureValidSha256(
+            hash: $newHash,
+            field: 'new_sha256',
+        );
+
+        $this->ensureCurrentDraftState(
+            productCase: $productCase,
+            expectedSource:
+                ProductCase::REQUEST_DRAFT_SOURCE_MANUAL,
+            expectedHash: $newHash,
+        );
+
+        if (
+            $previousSource === 'empty'
+            && $previousHash !== null
+        ) {
+            throw new RuntimeException(
+                'Una bozza precedentemente vuota non può avere un hash precedente.'
+            );
+        }
+
+        return $this->record(
+            productCase: $productCase,
+            actor: $actor,
+            eventType:
+                ProductCaseEvent::TYPE_REQUEST_DRAFT_EDITED,
+            title:
+                'Bozza modificata',
+            description:
+                'La bozza di richiesta è stata modificata manualmente dall’utente.',
+            source:
+                'product_case_request_draft_editor',
+            occurredAt:
+                $occurredAt,
+            metadata: [
+                'previous_source' =>
+                    $previousSource,
+
+                'current_source' =>
+                    ProductCase
+                        ::REQUEST_DRAFT_SOURCE_MANUAL,
+
+                'previous_sha256' =>
+                    $previousHash,
+
+                'new_sha256' =>
+                    $newHash,
+
+                'edited_by_user_id' =>
+                    (int) $actor->id,
+            ],
+        );
+    }
+
+    /**
+     * Verifica che la bozza persistita corrisponda all'evento.
+     */
+    private function ensureCurrentDraftState(
+        ProductCase $productCase,
+        string $expectedSource,
+        string $expectedHash
+    ): void {
+        $currentDraft =
+            is_string(
+                $productCase->request_draft
+            )
+                ? $productCase->request_draft
+                : null;
+
+        if (
+            $currentDraft === null
+            || trim($currentDraft) === ''
+        ) {
+            throw new RuntimeException(
+                'La pratica non contiene una bozza valida da registrare nella timeline.'
+            );
+        }
+
+        $actualHash = hash(
+            'sha256',
+            $currentDraft
+        );
+
+        if (
+            ! hash_equals(
+                $expectedHash,
+                $actualHash
+            )
+        ) {
+            throw new RuntimeException(
+                'L’hash della bozza non corrisponde al contenuto persistito.'
+            );
+        }
+
+        $metadata = is_array(
+            $productCase->metadata
+        )
+            ? $productCase->metadata
+            : [];
+
+        $storedSource = data_get(
+            $metadata,
+            ProductCase
+                ::REQUEST_DRAFT_CURRENT_METADATA_KEY
+                . '.source'
+        );
+
+        $storedHash = data_get(
+            $metadata,
+            ProductCase
+                ::REQUEST_DRAFT_CURRENT_METADATA_KEY
+                . '.sha256'
+        );
+
+        if (
+            $storedSource !== $expectedSource
+            || ! is_string($storedHash)
+            || ! hash_equals(
+                $expectedHash,
+                $storedHash
+            )
+        ) {
+            throw new RuntimeException(
+                'La provenance corrente della bozza non corrisponde all’evento.'
+            );
+        }
+    }
+
+    private function ensureValidPreviousDraftSource(
+        string $source
+    ): void {
+        if (
+            ! in_array(
+                $source,
+                [
+                    'empty',
+                    'untracked',
+                    ProductCase
+                        ::REQUEST_DRAFT_SOURCE_GENERATED,
+                    ProductCase
+                        ::REQUEST_DRAFT_SOURCE_MANUAL,
+                ],
+                true
+            )
+        ) {
+            throw new RuntimeException(
+                'La provenienza precedente della bozza non è valida.'
+            );
+        }
+    }
+
+    private function ensureValidSha256(
+        ?string $hash,
+        string $field,
+        bool $nullable = false
+    ): void {
+        if (
+            $nullable
+            && $hash === null
+        ) {
+            return;
+        }
+
+        if (
+            ! is_string($hash)
+            || preg_match(
+                '/^[a-f0-9]{64}$/',
+                $hash
+            ) !== 1
+        ) {
+            throw new RuntimeException(
+                'Il campo '
+                . $field
+                . ' non contiene un hash SHA-256 valido.'
+            );
+        }
+    }
+
+    /**
      * Verifica che il documento appartenga allo stesso team della pratica.
      */
     private function ensureDocumentBelongsToCase(

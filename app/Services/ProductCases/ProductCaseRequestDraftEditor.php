@@ -10,6 +10,14 @@ use RuntimeException;
 
 final class ProductCaseRequestDraftEditor
 {
+    /**
+     * @param ProductCaseEventRecorder $eventRecorder
+     */
+    public function __construct(
+        private readonly ProductCaseEventRecorder $eventRecorder
+    ) {
+    }
+
     public const VERSION =
         'product_case_request_draft_editor_v1';
 
@@ -231,6 +239,33 @@ final class ProductCaseRequestDraftEditor
              * non l'ultima modifica manuale.
              */
             $productCase->save();
+
+            /*
+             * Il ramo no-op è già terminato prima di questo punto.
+             *
+             * La modifica e il relativo evento appartengono alla stessa
+             * transazione database.
+             */
+            $this->eventRecorder
+                ->recordRequestDraftEdited(
+                    productCase:
+                        $productCase,
+
+                    actor:
+                        $editedBy,
+
+                    previousHash:
+                        $previousHash,
+
+                    newHash:
+                        $newHash,
+
+                    previousSource:
+                        $previousSource,
+
+                    occurredAt:
+                        $now,
+                );
 
             return $productCase->refresh();
         });

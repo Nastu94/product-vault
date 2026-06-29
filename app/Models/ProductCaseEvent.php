@@ -32,6 +32,15 @@ final class ProductCaseEvent extends Model
     public const TYPE_PHOTO_REMOVED =
         'photo_removed';
 
+    public const TYPE_REQUEST_DRAFT_GENERATED =
+        'request_draft_generated';
+
+    public const TYPE_REQUEST_DRAFT_REGENERATED =
+        'request_draft_regenerated';
+
+    public const TYPE_REQUEST_DRAFT_EDITED =
+        'request_draft_edited';
+
     public const EVENT_TYPES = [
         self::TYPE_CASE_OPENED,
         self::TYPE_STATUS_CHANGED,
@@ -39,6 +48,9 @@ final class ProductCaseEvent extends Model
         self::TYPE_DOCUMENT_DESELECTED,
         self::TYPE_PHOTO_ADDED,
         self::TYPE_PHOTO_REMOVED,
+        self::TYPE_REQUEST_DRAFT_GENERATED,
+        self::TYPE_REQUEST_DRAFT_REGENERATED,
+        self::TYPE_REQUEST_DRAFT_EDITED,
     ];
 
     /**

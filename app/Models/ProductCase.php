@@ -6,10 +6,25 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Spatie\MediaLibrary\HasMedia;
+use Spatie\MediaLibrary\InteractsWithMedia;
 
-class ProductCase extends Model
+class ProductCase extends Model implements HasMedia
 {
+    use InteractsWithMedia;
     use SoftDeletes;
+
+    /**
+     * Collezione di media per le foto delle evidenze della pratica.
+     */
+    public const MEDIA_COLLECTION_ISSUE_PHOTOS =
+    'issue_photos';
+
+    public const ISSUE_PHOTO_MIME_TYPES = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+    ];
 
     /*
     |--------------------------------------------------------------------------
@@ -118,6 +133,21 @@ class ProductCase extends Model
             'cancelled_at' => 'datetime',
             'metadata' => 'array',
         ];
+    }
+
+    /**
+     * Registra le fotografie private associate alla pratica.
+     */
+    public function registerMediaCollections(): void
+    {
+        $this
+            ->addMediaCollection(
+                self::MEDIA_COLLECTION_ISSUE_PHOTOS
+            )
+            ->useDisk('local')
+            ->acceptsMimeTypes(
+                self::ISSUE_PHOTO_MIME_TYPES
+            );
     }
 
     /**

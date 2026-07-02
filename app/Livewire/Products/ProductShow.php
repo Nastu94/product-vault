@@ -3,6 +3,7 @@
 namespace App\Livewire\Products;
 
 use App\Models\Product;
+use App\Models\ProductCase;
 use App\Models\Warranty;
 use App\Models\WarrantyType;
 use App\Services\Products\ProductLifecycleEventRecorder;
@@ -77,6 +78,10 @@ class ProductShow extends Component
             'category',
             'brand',
             'createdBy',
+            'cases' => fn ($query) => $query
+                ->with('openedBy')
+                ->orderByDesc('opened_at')
+                ->orderByDesc('id'),
             'documents.documentType',
             'documents.merchant',
             'warranties.warrantyType',
@@ -85,6 +90,139 @@ class ProductShow extends Component
             'events.document',
             'events.createdBy',
         ]);
+    }
+
+    /**
+     * Riepilogo read-only delle pratiche associate al prodotto.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getProductCaseSummariesProperty(): array
+    {
+        return $this->product
+            ->cases
+            ->filter(
+                fn (ProductCase $productCase): bool =>
+                    (int) $productCase->team_id
+                        === (int) $this->product->team_id
+            )
+            ->map(
+                fn (ProductCase $productCase): array => [
+                    'id' =>
+                        (int) $productCase->id,
+
+                    'title' =>
+                        $productCase->title,
+
+                    'status' =>
+                        $productCase->status,
+
+                    'status_label' =>
+                        $this->productCaseStatusLabel(
+                            $productCase->status
+                        ),
+
+                    'status_badge_classes' =>
+                        $this->productCaseStatusBadgeClasses(
+                            $productCase->status
+                        ),
+
+                    'opened_at' =>
+                        $productCase
+                            ->opened_at
+                            ?->toISOString(),
+
+                    'opened_at_label' =>
+                        $productCase
+                            ->opened_at
+                            ?->format(
+                                'd/m/Y H:i'
+                            )
+                        ?? '—',
+
+                    'occurred_on' =>
+                        $productCase
+                            ->occurred_on
+                            ?->toDateString(),
+
+                    'occurred_on_label' =>
+                        $productCase
+                            ->occurred_on
+                            ?->format(
+                                'd/m/Y'
+                            )
+                        ?? '—',
+
+                    'opened_by_user_id' =>
+                        $productCase
+                            ->opened_by_user_id !== null
+                                ? (int) $productCase
+                                    ->opened_by_user_id
+                                : null,
+
+                    'opened_by_name' =>
+                        $productCase
+                            ->openedBy
+                            ?->name
+                        ?? 'Utente non disponibile',
+                ]
+            )
+            ->values()
+            ->all();
+    }
+
+    private function productCaseStatusLabel(
+        ?string $status
+    ): string {
+        return match ($status) {
+            ProductCase::STATUS_DRAFT =>
+                'Bozza',
+
+            ProductCase::STATUS_READY_TO_CONTACT =>
+                'Pronta per il contatto',
+
+            ProductCase::STATUS_CONTACTED =>
+                'Contattato',
+
+            ProductCase::STATUS_RESOLVED =>
+                'Risolta',
+
+            ProductCase::STATUS_CLOSED =>
+                'Chiusa',
+
+            ProductCase::STATUS_CANCELLED =>
+                'Annullata',
+
+            default =>
+                'Stato non disponibile',
+        };
+    }
+
+    private function productCaseStatusBadgeClasses(
+        ?string $status
+    ): string {
+        return match ($status) {
+            ProductCase::STATUS_DRAFT =>
+                'bg-gray-100 text-gray-700 ring-gray-500/20',
+
+            ProductCase::STATUS_READY_TO_CONTACT =>
+                'bg-blue-50 text-blue-700 ring-blue-600/20',
+
+            ProductCase::STATUS_CONTACTED =>
+                'bg-indigo-50 text-indigo-700 ring-indigo-600/20',
+
+            ProductCase::STATUS_RESOLVED =>
+                'bg-green-50 text-green-700 ring-green-600/20',
+
+            ProductCase::STATUS_CLOSED =>
+                'bg-gray-200 text-gray-800 ring-gray-600/20',
+
+            ProductCase::STATUS_CANCELLED =>
+                'bg-red-50 text-red-700 ring-red-600/20',
+
+            default =>
+                'bg-gray-100 text-gray-700 ring-gray-500/20',
+        };
     }
 
     /**
@@ -781,6 +919,10 @@ class ProductShow extends Component
             'category',
             'brand',
             'createdBy',
+            'cases' => fn ($query) => $query
+                ->with('openedBy')
+                ->orderByDesc('opened_at')
+                ->orderByDesc('id'),
             'documents.documentType',
             'documents.merchant',
             'warranties.warrantyType',

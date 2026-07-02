@@ -4,14 +4,21 @@ namespace App\Livewire\Products;
 
 use App\Models\Product;
 use App\Models\ProductCase;
+use App\Models\User;
 use App\Models\Warranty;
 use App\Models\WarrantyType;
+use App\Services\ProductCases\ProductCaseCreator;
 use App\Services\Products\ProductLifecycleEventRecorder;
 use App\Services\Warranties\ManualWarrantyCoverageContextBuilder;
 use App\Services\Warranties\WarrantyCoverageContextResolver;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Livewire\Component;
+use RuntimeException;
 
 class ProductShow extends Component
 {
@@ -21,6 +28,35 @@ class ProductShow extends Component
      * Prodotto mostrato nella pagina dettaglio.
      */
     public Product $product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Apertura guidata pratica prodotto
+    |--------------------------------------------------------------------------
+    */
+
+    public bool $isCreatingProductCase = false;
+
+    public string $productCaseTitle = '';
+
+    public string $productCaseDescription = '';
+
+    public ?string $productCaseOccurredOn = null;
+
+    public string $productCaseUsabilityStatus =
+        ProductCase::USABILITY_UNKNOWN;
+
+    /**
+     * Valori UI:
+     * - null: non specificato;
+     * - "0": nessun danno accidentale dichiarato;
+     * - "1": danno accidentale dichiarato.
+     */
+    public ?string $productCaseAccidentalDamageDeclared =
+        null;
+
+    public ?string $productCaseAccidentalDamageNotes =
+        null;
 
     /**
      * Stato form modifica garanzia.
@@ -90,6 +126,240 @@ class ProductShow extends Component
             'events.document',
             'events.createdBy',
         ]);
+    }
+
+    /**
+     * Mostra il form iniziale per l’apertura della pratica.
+     */
+    public function startProductCaseCreation(): void
+    {
+        $this->authorize(
+            'create',
+            [
+                ProductCase::class,
+                $this->product,
+            ]
+        );
+
+        $this->resetValidation();
+        $this->resetProductCaseForm();
+
+        $this->isCreatingProductCase = true;
+    }
+
+    /**
+     * Chiude il form senza creare alcuna pratica.
+     */
+    public function cancelProductCaseCreation(): void
+    {
+        $this->resetValidation();
+        $this->resetProductCaseForm();
+    }
+
+    /**
+     * Crea la pratica iniziale in stato draft.
+     */
+    public function createProductCase(
+        ProductCaseCreator $creator
+    ): RedirectResponse {
+        $this->authorize(
+            'create',
+            [
+                ProductCase::class,
+                $this->product,
+            ]
+        );
+
+        $validated = Validator::make(
+            [
+                'productCaseTitle' =>
+                    $this->productCaseTitle,
+
+                'productCaseDescription' =>
+                    $this->productCaseDescription,
+
+                'productCaseOccurredOn' =>
+                    $this->productCaseOccurredOn,
+
+                'productCaseUsabilityStatus' =>
+                    $this->productCaseUsabilityStatus,
+
+                'productCaseAccidentalDamageDeclared' =>
+                    $this
+                        ->productCaseAccidentalDamageDeclared,
+
+                'productCaseAccidentalDamageNotes' =>
+                    $this
+                        ->productCaseAccidentalDamageNotes,
+            ],
+            [
+                'productCaseTitle' => [
+                    'required',
+                    'string',
+                    'max:255',
+                ],
+
+                'productCaseDescription' => [
+                    'required',
+                    'string',
+                    'max:20000',
+                ],
+
+                'productCaseOccurredOn' => [
+                    'nullable',
+                    'date',
+                    'before_or_equal:today',
+                ],
+
+                'productCaseUsabilityStatus' => [
+                    'required',
+                    'string',
+                    Rule::in(
+                        ProductCase::USABILITY_STATUSES
+                    ),
+                ],
+
+                'productCaseAccidentalDamageDeclared' => [
+                    'nullable',
+                    'string',
+                    Rule::in([
+                        '0',
+                        '1',
+                    ]),
+                ],
+
+                'productCaseAccidentalDamageNotes' => [
+                    'nullable',
+                    'string',
+                    'max:10000',
+                ],
+            ],
+            [
+                'productCaseTitle.required' =>
+                    'Inserisci un titolo per il problema.',
+
+                'productCaseTitle.max' =>
+                    'Il titolo non può superare 255 caratteri.',
+
+                'productCaseDescription.required' =>
+                    'Descrivi il problema riscontrato.',
+
+                'productCaseDescription.max' =>
+                    'La descrizione è troppo lunga.',
+
+                'productCaseOccurredOn.date' =>
+                    'La data del problema non è valida.',
+
+                'productCaseOccurredOn.before_or_equal' =>
+                    'La data del problema non può essere futura.',
+
+                'productCaseUsabilityStatus.in' =>
+                    'Seleziona uno stato di utilizzabilità valido.',
+
+                'productCaseAccidentalDamageDeclared.in' =>
+                    'La dichiarazione sul danno accidentale non è valida.',
+
+                'productCaseAccidentalDamageNotes.max' =>
+                    'Le note sul danno accidentale sono troppo lunghe.',
+            ]
+        )->validate();
+
+        $openedBy = Auth::user();
+
+        if (! $openedBy instanceof User) {
+            throw new RuntimeException(
+                'Utente autenticato non disponibile.'
+            );
+        }
+
+        $accidentalDamageDeclared = match (
+            $validated[
+                'productCaseAccidentalDamageDeclared'
+            ] ?? null
+        ) {
+            '1' => true,
+            '0' => false,
+            default => null,
+        };
+
+        /*
+         * Le note vengono conservate soltanto quando l’utente
+         * dichiara esplicitamente un possibile danno accidentale.
+         */
+        $accidentalDamageNotes =
+            $accidentalDamageDeclared === true
+                ? (
+                    $validated[
+                        'productCaseAccidentalDamageNotes'
+                    ] ?? null
+                )
+                : null;
+
+        $productCase = $creator->create(
+            product:
+                $this->product,
+
+            openedBy:
+                $openedBy,
+
+            attributes: [
+                'title' =>
+                    $validated[
+                        'productCaseTitle'
+                    ],
+
+                'description' =>
+                    $validated[
+                        'productCaseDescription'
+                    ],
+
+                'occurred_on' =>
+                    $validated[
+                        'productCaseOccurredOn'
+                    ] ?? null,
+
+                'usability_status' =>
+                    $validated[
+                        'productCaseUsabilityStatus'
+                    ],
+
+                'accidental_damage_declared' =>
+                    $accidentalDamageDeclared,
+
+                'accidental_damage_notes' =>
+                    $accidentalDamageNotes,
+            ],
+        );
+
+        $this->resetProductCaseForm();
+
+        return redirect()->route(
+            'product-cases.show',
+            [
+                'productCase' =>
+                    $productCase,
+            ]
+        );
+    }
+
+    /**
+     * Ripristina lo stato iniziale del form pratica.
+     */
+    private function resetProductCaseForm(): void
+    {
+        $this->isCreatingProductCase = false;
+        $this->productCaseTitle = '';
+        $this->productCaseDescription = '';
+        $this->productCaseOccurredOn = null;
+
+        $this->productCaseUsabilityStatus =
+            ProductCase::USABILITY_UNKNOWN;
+
+        $this->productCaseAccidentalDamageDeclared =
+            null;
+
+        $this->productCaseAccidentalDamageNotes =
+            null;
     }
 
     /**

@@ -14,6 +14,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\View;
+use Illuminate\Support\ViewErrorBag;
 use RuntimeException;
 use Spatie\Permission\PermissionRegistrar;
 use Throwable;
@@ -453,8 +454,44 @@ final class TestProductShowCasesReadOnlyCommand
                 View::make(
                     'livewire.products.partials.product-cases',
                     [
+                        /*
+                         * Nel normale rendering Livewire queste variabili
+                         * arrivano dal componente e dal middleware web.
+                         *
+                         * Il comando renderizza invece la partial in modo
+                         * isolato, quindi ricostruisce esplicitamente il
+                         * contratto minimo della vista.
+                         */
+                        'errors' =>
+                            new ViewErrorBag(),
+
+                        'product' =>
+                            $component->product,
+
                         'productCases' =>
                             $summaries,
+
+                        'isCreatingProductCase' =>
+                            false,
+
+                        'productCaseTitle' =>
+                            '',
+
+                        'productCaseDescription' =>
+                            '',
+
+                        'productCaseOccurredOn' =>
+                            null,
+
+                        'productCaseUsabilityStatus' =>
+                            ProductCase
+                                ::USABILITY_UNKNOWN,
+
+                        'productCaseAccidentalDamageDeclared' =>
+                            null,
+
+                        'productCaseAccidentalDamageNotes' =>
+                            null,
                     ]
                 )->render();
 
@@ -530,13 +567,27 @@ final class TestProductShowCasesReadOnlyCommand
                 )
             );
 
+            /*
+             * L’elenco delle pratiche resta read-only, ma dalla patch 7B1
+             * espone intenzionalmente la CTA che apre il form iniziale.
+             */
             $assertSame(
-                'read_only',
-                'no wire click action rendered',
+                'creation_entry',
+                'problem action available',
+                true,
+                str_contains(
+                    $html,
+                    'wire:click="startProductCaseCreation"'
+                )
+            );
+
+            $assertSame(
+                'creation_entry',
+                'creation form remains closed',
                 false,
                 str_contains(
                     $html,
-                    'wire:click'
+                    'product-case-create-form'
                 )
             );
 

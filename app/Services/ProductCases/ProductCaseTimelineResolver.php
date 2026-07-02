@@ -386,6 +386,11 @@ final class ProductCaseTimelineResolver
                     $metadata
                 ),
 
+            ProductCaseEvent::TYPE_CASE_DETAILS_UPDATED =>
+                $this->caseDetailsUpdateDetails(
+                    $metadata
+                ),
+
             ProductCaseEvent::TYPE_STATUS_CHANGED =>
                 $this->statusDetails(
                     $metadata
@@ -421,6 +426,162 @@ final class ProductCaseTimelineResolver
 
             default => [],
         };
+    }
+
+    /**
+     * @param  array<string, mixed>  $metadata
+     * @return array<string, mixed>
+     */
+    private function caseDetailsUpdateDetails(
+        array $metadata
+    ): array {
+        $labels = [
+            'title' =>
+                'Titolo',
+
+            'description' =>
+                'Descrizione',
+
+            'occurred_on' =>
+                'Data del problema',
+
+            'usability_status' =>
+                'Utilizzabilità',
+
+            'accidental_damage_declared' =>
+                'Danno accidentale',
+
+            'accidental_damage_notes' =>
+                'Note sul danno',
+        ];
+
+        $changedFields = [];
+
+        $rawChangedFields =
+            $metadata[
+                'changed_fields'
+            ] ?? [];
+
+        if (is_array($rawChangedFields)) {
+            foreach (
+                $rawChangedFields
+                as $field
+            ) {
+                if (
+                    is_string($field)
+                    && array_key_exists(
+                        $field,
+                        $labels
+                    )
+                    && ! in_array(
+                        $field,
+                        $changedFields,
+                        true
+                    )
+                ) {
+                    $changedFields[] =
+                        $field;
+                }
+            }
+        }
+
+        $previous = is_array(
+            $metadata['previous']
+            ?? null
+        )
+            ? $metadata['previous']
+            : [];
+
+        $current = is_array(
+            $metadata['current']
+            ?? null
+        )
+            ? $metadata['current']
+            : [];
+
+        return [
+            'changed_fields' =>
+                $changedFields,
+
+            'changed_field_labels' =>
+                array_map(
+                    fn (string $field): string =>
+                        $labels[$field],
+
+                    $changedFields
+                ),
+
+            /*
+             * I testi e i relativi hash non vengono esposti alla UI.
+             */
+            'previous_values' => [
+                'occurred_on' =>
+                    $this->nullableText(
+                        $previous[
+                            'occurred_on'
+                        ] ?? null
+                    ),
+
+                'usability_status' =>
+                    $this->nullableText(
+                        $previous[
+                            'usability_status'
+                        ] ?? null
+                    ),
+
+                'accidental_damage_declared' =>
+                    is_bool(
+                        $previous[
+                            'accidental_damage_declared'
+                        ] ?? null
+                    )
+                        ? $previous[
+                            'accidental_damage_declared'
+                        ]
+                        : null,
+            ],
+
+            'current_values' => [
+                'occurred_on' =>
+                    $this->nullableText(
+                        $current[
+                            'occurred_on'
+                        ] ?? null
+                    ),
+
+                'usability_status' =>
+                    $this->nullableText(
+                        $current[
+                            'usability_status'
+                        ] ?? null
+                    ),
+
+                'accidental_damage_declared' =>
+                    is_bool(
+                        $current[
+                            'accidental_damage_declared'
+                        ] ?? null
+                    )
+                        ? $current[
+                            'accidental_damage_declared'
+                        ]
+                        : null,
+            ],
+
+            'updated_by_user_id' =>
+                $this->integer(
+                    $metadata[
+                        'updated_by_user_id'
+                    ] ?? null
+                ),
+
+            'updater_version' =>
+                $this->nullableText(
+                    $metadata[
+                        'updater_version'
+                    ] ?? null
+                ),
+        ];
     }
 
     /**
@@ -891,6 +1052,21 @@ final class ProductCaseTimelineResolver
             ProductCaseEvent::TYPE_CASE_OPENED =>
                 'Pratica aperta',
 
+            ProductCaseEvent::TYPE_CASE_DETAILS_UPDATED =>
+                (
+                    $details[
+                        'changed_field_labels'
+                    ] ?? []
+                ) !== []
+                    ? 'Dati aggiornati: '
+                        . implode(
+                            ', ',
+                            $details[
+                                'changed_field_labels'
+                            ]
+                        )
+                    : 'Dati della pratica aggiornati',
+
             ProductCaseEvent::TYPE_STATUS_CHANGED =>
                 'Stato: '
                 . $this->text(
@@ -955,6 +1131,7 @@ final class ProductCaseTimelineResolver
     ): string {
         return match ($eventType) {
             ProductCaseEvent::TYPE_CASE_OPENED,
+            ProductCaseEvent::TYPE_CASE_DETAILS_UPDATED,
             ProductCaseEvent::TYPE_STATUS_CHANGED =>
                 'workflow',
 
@@ -999,6 +1176,9 @@ final class ProductCaseTimelineResolver
         return match ($eventType) {
             ProductCaseEvent::TYPE_CASE_OPENED =>
                 'Pratica aperta',
+
+            ProductCaseEvent::TYPE_CASE_DETAILS_UPDATED =>
+                'Dati aggiornati',
 
             ProductCaseEvent::TYPE_STATUS_CHANGED =>
                 'Stato aggiornato',

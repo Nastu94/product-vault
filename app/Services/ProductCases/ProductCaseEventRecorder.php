@@ -16,6 +16,41 @@ final class ProductCaseEventRecorder
         'product_case_event_recorder_v1';
 
     /**
+     * @var list<string>
+     */
+    private const CASE_DETAILS_FIELDS = [
+        'title',
+        'description',
+        'occurred_on',
+        'usability_status',
+        'accidental_damage_declared',
+        'accidental_damage_notes',
+    ];
+
+    /**
+     * @var array<string, string>
+     */
+    private const CASE_DETAILS_SNAPSHOT_KEY_BY_FIELD = [
+        'title' =>
+            'title_sha256',
+
+        'description' =>
+            'description_sha256',
+
+        'occurred_on' =>
+            'occurred_on',
+
+        'usability_status' =>
+            'usability_status',
+
+        'accidental_damage_declared' =>
+            'accidental_damage_declared',
+
+        'accidental_damage_notes' =>
+            'accidental_damage_notes_sha256',
+    ];
+
+    /**
      * Registra l'apertura della pratica.
      */
     public function recordCaseOpened(
@@ -48,6 +83,141 @@ final class ProductCaseEventRecorder
             metadata: [
                 'initial_status' =>
                     ProductCase::STATUS_DRAFT,
+            ],
+        );
+    }
+
+    /**
+     * Registra una modifica effettiva dei dati iniziali.
+     *
+     * @param  list<string>  $changedFields
+     * @param  array<string, mixed>  $previousSnapshot
+     * @param  array<string, mixed>  $currentSnapshot
+     */
+    public function recordCaseDetailsUpdated(
+        ProductCase $productCase,
+        User $actor,
+        array $changedFields,
+        array $previousSnapshot,
+        array $currentSnapshot,
+        string $updaterVersion,
+        CarbonInterface $occurredAt
+    ): ProductCaseEvent {
+        if (
+            $productCase->status
+                !== ProductCase::STATUS_DRAFT
+        ) {
+            throw new RuntimeException(
+                'La modifica dei dati può essere registrata soltanto per una pratica in bozza.'
+            );
+        }
+
+        if (
+            trim($updaterVersion) === ''
+        ) {
+            throw new RuntimeException(
+                'La versione del service di aggiornamento non è valida.'
+            );
+        }
+
+        $this->ensureCaseDetailsSnapshot(
+            $previousSnapshot
+        );
+
+        $this->ensureCaseDetailsSnapshot(
+            $currentSnapshot
+        );
+
+        $persistedSnapshot =
+            $this->caseDetailsSnapshot(
+                $productCase
+            );
+
+        if (
+            $persistedSnapshot
+                !== $currentSnapshot
+        ) {
+            throw new RuntimeException(
+                'Lo snapshot corrente non corrisponde ai dati persistiti della pratica.'
+            );
+        }
+
+        $derivedChangedFields = [];
+
+        foreach (
+            self::CASE_DETAILS_FIELDS
+            as $field
+        ) {
+            $snapshotKey =
+                self::CASE_DETAILS_SNAPSHOT_KEY_BY_FIELD[
+                    $field
+                ];
+
+            if (
+                $previousSnapshot[
+                    $snapshotKey
+                ]
+                !== $currentSnapshot[
+                    $snapshotKey
+                ]
+            ) {
+                $derivedChangedFields[] =
+                    $field;
+            }
+        }
+
+        if (
+            $derivedChangedFields === []
+            || $derivedChangedFields
+                !== array_values(
+                    $changedFields
+                )
+        ) {
+            throw new RuntimeException(
+                'L’elenco dei campi modificati non corrisponde agli snapshot.'
+            );
+        }
+
+        return $this->record(
+            productCase:
+                $productCase,
+
+            actor:
+                $actor,
+
+            eventType:
+                ProductCaseEvent
+                    ::TYPE_CASE_DETAILS_UPDATED,
+
+            title:
+                'Dati della pratica aggiornati',
+
+            description:
+                'I dati iniziali della pratica sono stati modificati dall’utente.',
+
+            source:
+                'product_case_details_updater',
+
+            occurredAt:
+                $occurredAt,
+
+            metadata: [
+                'changed_fields' =>
+                    $derivedChangedFields,
+
+                'previous' =>
+                    $previousSnapshot,
+
+                'current' =>
+                    $currentSnapshot,
+
+                'updated_by_user_id' =>
+                    (int) $actor->id,
+
+                'updater_version' =>
+                    trim(
+                        $updaterVersion
+                    ),
             ],
         );
     }
@@ -503,6 +673,161 @@ final class ProductCaseEventRecorder
                     (int) $actor->id,
             ],
         );
+    }
+
+    /**
+     * @param  array<string, mixed>  $snapshot
+     */
+    private function ensureCaseDetailsSnapshot(
+        array $snapshot
+    ): void {
+        $expectedKeys = array_values(
+            self::CASE_DETAILS_SNAPSHOT_KEY_BY_FIELD
+        );
+
+        $actualKeys =
+            array_keys(
+                $snapshot
+            );
+
+        sort($expectedKeys);
+        sort($actualKeys);
+
+        if ($actualKeys !== $expectedKeys) {
+            throw new RuntimeException(
+                'Lo snapshot dei dati della pratica non ha il formato previsto.'
+            );
+        }
+
+        $this->ensureValidSha256(
+            hash:
+                $snapshot[
+                    'title_sha256'
+                ],
+
+            field:
+                'title_sha256',
+        );
+
+        $this->ensureValidSha256(
+            hash:
+                $snapshot[
+                    'description_sha256'
+                ],
+
+            field:
+                'description_sha256',
+        );
+
+        $this->ensureValidSha256(
+            hash:
+                $snapshot[
+                    'accidental_damage_notes_sha256'
+                ],
+
+            field:
+                'accidental_damage_notes_sha256',
+
+            nullable:
+                true,
+        );
+
+        $occurredOn =
+            $snapshot[
+                'occurred_on'
+            ];
+
+        if (
+            $occurredOn !== null
+            && (
+                ! is_string($occurredOn)
+                || preg_match(
+                    '/^\d{4}-\d{2}-\d{2}$/',
+                    $occurredOn
+                ) !== 1
+            )
+        ) {
+            throw new RuntimeException(
+                'La data dello snapshot non è valida.'
+            );
+        }
+
+        if (
+            ! in_array(
+                $snapshot[
+                    'usability_status'
+                ],
+                ProductCase::USABILITY_STATUSES,
+                true
+            )
+        ) {
+            throw new RuntimeException(
+                'Lo stato di utilizzabilità dello snapshot non è valido.'
+            );
+        }
+
+        $damageDeclared =
+            $snapshot[
+                'accidental_damage_declared'
+            ];
+
+        if (
+            $damageDeclared !== null
+            && ! is_bool(
+                $damageDeclared
+            )
+        ) {
+            throw new RuntimeException(
+                'La dichiarazione di danno dello snapshot non è valida.'
+            );
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function caseDetailsSnapshot(
+        ProductCase $productCase
+    ): array {
+        $notes =
+            $productCase
+                ->accidental_damage_notes;
+
+        return [
+            'title_sha256' =>
+                hash(
+                    'sha256',
+                    (string) $productCase->title
+                ),
+
+            'description_sha256' =>
+                hash(
+                    'sha256',
+                    (string) $productCase
+                        ->description
+                ),
+
+            'occurred_on' =>
+                $productCase
+                    ->occurred_on
+                    ?->toDateString(),
+
+            'usability_status' =>
+                $productCase
+                    ->usability_status,
+
+            'accidental_damage_declared' =>
+                $productCase
+                    ->accidental_damage_declared,
+
+            'accidental_damage_notes_sha256' =>
+                is_string($notes)
+                    ? hash(
+                        'sha256',
+                        $notes
+                    )
+                    : null,
+        ];
     }
 
     /**

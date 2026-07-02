@@ -17,6 +17,9 @@ final class ProductCaseEvent extends Model
     public const TYPE_CASE_OPENED =
         'case_opened';
 
+    public const TYPE_CASE_DETAILS_UPDATED =
+        'case_details_updated';
+
     public const TYPE_STATUS_CHANGED =
         'status_changed';
 
@@ -43,6 +46,7 @@ final class ProductCaseEvent extends Model
 
     public const EVENT_TYPES = [
         self::TYPE_CASE_OPENED,
+        self::TYPE_CASE_DETAILS_UPDATED,
         self::TYPE_STATUS_CHANGED,
         self::TYPE_DOCUMENT_SELECTED,
         self::TYPE_DOCUMENT_DESELECTED,

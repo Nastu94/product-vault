@@ -600,6 +600,44 @@ final class TestProductCaseShowReadOnlyCommand
                         'requestDraftSourceLabel' =>
                             $component
                                 ->requestDraftSourceLabel,
+
+                        /*
+                         * Proprietà dell’editor introdotte dalla 7B2b.
+                         *
+                         * La fixture è ready_to_contact, quindi form e
+                         * pulsante di modifica devono restare nascosti.
+                         */
+                        'isEditingDetails' =>
+                            $component
+                                ->isEditingDetails,
+
+                        'detailsTitle' =>
+                            $component
+                                ->detailsTitle,
+
+                        'detailsDescription' =>
+                            $component
+                                ->detailsDescription,
+
+                        'detailsOccurredOn' =>
+                            $component
+                                ->detailsOccurredOn,
+
+                        'detailsUsabilityStatus' =>
+                            $component
+                                ->detailsUsabilityStatus,
+
+                        'detailsAccidentalDamageDeclared' =>
+                            $component
+                                ->detailsAccidentalDamageDeclared,
+
+                        'detailsAccidentalDamageNotes' =>
+                            $component
+                                ->detailsAccidentalDamageNotes,
+
+                        'detailsSuccessMessage' =>
+                            $component
+                                ->detailsSuccessMessage,
                     ])
                     ->render();
 

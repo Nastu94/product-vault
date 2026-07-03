@@ -45,69 +45,114 @@
                 {{-- Problema --}}
                 <section class="bg-white shadow-sm ring-1 ring-gray-200 sm:rounded-lg">
                     <div class="p-6">
-                        <h2 class="text-lg font-medium text-gray-900">
-                            Problema segnalato
-                        </h2>
-
-                        <dl class="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2">
-                            <div class="sm:col-span-2">
-                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                    Descrizione
-                                </dt>
-
-                                <dd class="mt-1 whitespace-pre-wrap text-sm leading-6 text-gray-900">{{ $productCase->description ?: '—' }}</dd>
-                            </div>
-
+                        <div class="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                    Data del problema
-                                </dt>
+                                <h2 class="text-lg font-medium text-gray-900">
+                                    Problema segnalato
+                                </h2>
 
-                                <dd class="mt-1 text-sm text-gray-900">
-                                    {{ $productCase->occurred_on?->format('d/m/Y') ?? '—' }}
-                                </dd>
+                                <p class="mt-1 text-sm text-gray-600">
+                                    Informazioni correnti registrate nella pratica.
+                                </p>
                             </div>
 
-                            <div>
-                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                    Utilizzabilità
-                                </dt>
+                            @if (
+                                $productCase->status
+                                    === \App\Models\ProductCase::STATUS_DRAFT
+                            )
+                                @can('update', $productCase)
+                                    @if (! $isEditingDetails)
+                                        <button
+                                            type="button"
+                                            data-testid="start-product-case-details-edit"
+                                            wire:click="startDetailsEdit"
+                                            class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                        >
+                                            Modifica dati
+                                        </button>
+                                    @endif
+                                @endcan
+                            @endif
+                        </div>
 
-                                <dd class="mt-1 text-sm text-gray-900">
-                                    {{ $usabilityLabel }}
-                                </dd>
+                        @if ($detailsSuccessMessage)
+                            <div
+                                data-testid="product-case-details-success"
+                                class="mt-5 rounded-md bg-green-50 p-4 text-sm text-green-800 ring-1 ring-inset ring-green-600/20"
+                            >
+                                {{ $detailsSuccessMessage }}
                             </div>
+                        @endif
 
-                            <div>
-                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                    Danno accidentale dichiarato
-                                </dt>
-
-                                <dd class="mt-1 text-sm text-gray-900">
-                                    {{ $accidentalDamageLabel }}
-                                </dd>
-                            </div>
-
-                            <div>
-                                <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                    Aperta da
-                                </dt>
-
-                                <dd class="mt-1 text-sm text-gray-900">
-                                    {{ $productCase->openedBy?->name ?? '—' }}
-                                </dd>
-                            </div>
-
-                            @if ($productCase->accidental_damage_notes)
+                        @if (
+                            $productCase->status
+                                === \App\Models\ProductCase::STATUS_DRAFT
+                            && $isEditingDetails
+                        )
+                            @include(
+                                'livewire.product-cases.partials.details-editor'
+                            )
+                        @else
+                            <dl class="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2">
                                 <div class="sm:col-span-2">
                                     <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                        Note sul possibile danno accidentale
+                                        Descrizione
                                     </dt>
 
-                                    <dd class="mt-1 whitespace-pre-wrap text-sm leading-6 text-gray-900">{{ $productCase->accidental_damage_notes }}</dd>
+                                    <dd class="mt-1 whitespace-pre-wrap text-sm leading-6 text-gray-900">{{ $productCase->description ?: '—' }}</dd>
                                 </div>
-                            @endif
-                        </dl>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Data del problema
+                                    </dt>
+
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        {{ $productCase->occurred_on?->format('d/m/Y') ?? '—' }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Utilizzabilità
+                                    </dt>
+
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        {{ $usabilityLabel }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Danno accidentale dichiarato
+                                    </dt>
+
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        {{ $accidentalDamageLabel }}
+                                    </dd>
+                                </div>
+
+                                <div>
+                                    <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        Aperta da
+                                    </dt>
+
+                                    <dd class="mt-1 text-sm text-gray-900">
+                                        {{ $productCase->openedBy?->name ?? '—' }}
+                                    </dd>
+                                </div>
+
+                                @if ($productCase->accidental_damage_notes)
+                                    <div class="sm:col-span-2">
+                                        <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            Note sul possibile danno accidentale
+                                        </dt>
+
+                                        <dd class="mt-1 whitespace-pre-wrap text-sm leading-6 text-gray-900">{{ $productCase->accidental_damage_notes }}</dd>
+                                    </div>
+                                @endif
+                            </dl>
+                        @endif
                     </div>
                 </section>
 

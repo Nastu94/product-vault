@@ -3,6 +3,12 @@
 namespace App\Livewire\ProductCases;
 
 use App\Models\ProductCase;
+use App\Models\User;
+use App\Services\ProductCases\ProductCaseDetailsUpdater;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
+use RuntimeException;
 use App\Services\ProductCases\ProductCaseReadinessResolver;
 use App\Services\ProductCases\ProductCaseTimelineResolver;
 use Illuminate\Contracts\View\View;
@@ -18,6 +24,38 @@ final class ProductCaseShow extends Component
      * Pratica visualizzata.
      */
     public ProductCase $productCase;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Modifica controllata dei dati iniziali
+    |--------------------------------------------------------------------------
+    */
+
+    public bool $isEditingDetails = false;
+
+    public string $detailsTitle = '';
+
+    public string $detailsDescription = '';
+
+    public ?string $detailsOccurredOn = null;
+
+    public string $detailsUsabilityStatus =
+        ProductCase::USABILITY_UNKNOWN;
+
+    /**
+     * Valori UI:
+     * - null: non specificato;
+     * - "0": no;
+     * - "1": sì.
+     */
+    public ?string $detailsAccidentalDamageDeclared =
+        null;
+
+    public ?string $detailsAccidentalDamageNotes =
+        null;
+
+    public ?string $detailsSuccessMessage =
+        null;
 
     /**
      * Snapshot read-only della readiness.
@@ -62,7 +100,7 @@ final class ProductCaseShow extends Component
         'Nessuna bozza';
 
     /**
-     * Inizializza il dettaglio autorizzato e read-only.
+     * Renderizza il dettaglio della pratica.
      */
     public function mount(
         ProductCase $productCase
@@ -72,6 +110,333 @@ final class ProductCaseShow extends Component
             $productCase
         );
 
+        $this->loadProductCaseState(
+            $productCase
+        );
+    }
+
+    /**
+     * Apre il form con uno snapshot aggiornato della pratica.
+     */
+    public function startDetailsEdit(): void
+    {
+        $currentCase =
+            $this->productCase
+                ->fresh();
+
+        if ($currentCase === null) {
+            throw new RuntimeException(
+                'La pratica non è più disponibile.'
+            );
+        }
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        if (
+            $currentCase->status
+                !== ProductCase::STATUS_DRAFT
+        ) {
+            throw new RuntimeException(
+                'I dati possono essere modificati soltanto mentre la pratica è in bozza.'
+            );
+        }
+
+        $this->loadProductCaseState(
+            $currentCase
+        );
+
+        $this->resetValidation();
+
+        $this->detailsSuccessMessage =
+            null;
+
+        $this->detailsTitle =
+            $this->productCase->title;
+
+        $this->detailsDescription =
+            $this->productCase->description;
+
+        $this->detailsOccurredOn =
+            $this->productCase
+                ->occurred_on
+                ?->toDateString();
+
+        $this->detailsUsabilityStatus =
+            $this->productCase
+                ->usability_status;
+
+        $this->detailsAccidentalDamageDeclared =
+            match (
+                $this->productCase
+                    ->accidental_damage_declared
+            ) {
+                true =>
+                    '1',
+
+                false =>
+                    '0',
+
+                default =>
+                    null,
+            };
+
+        $this->detailsAccidentalDamageNotes =
+            $this->productCase
+                ->accidental_damage_notes;
+
+        $this->isEditingDetails =
+            true;
+    }
+
+    /**
+     * Chiude il form senza scritture.
+     */
+    public function cancelDetailsEdit(): void
+    {
+        $this->authorize(
+            'update',
+            $this->productCase
+        );
+
+        $this->resetValidation();
+
+        $this->detailsSuccessMessage =
+            null;
+
+        $this->resetDetailsForm();
+    }
+
+    /**
+     * Elimina dalla UI le note nascoste quando il danno non è dichiarato.
+     */
+    public function updatedDetailsAccidentalDamageDeclared(
+        ?string $value
+    ): void {
+        if ($value !== '1') {
+            $this->detailsAccidentalDamageNotes =
+                null;
+        }
+    }
+
+    /**
+     * Salva i dati tramite il service di dominio.
+     */
+    public function saveDetails(
+        ProductCaseDetailsUpdater $updater
+    ): void {
+        $this->authorize(
+            'update',
+            $this->productCase
+        );
+
+        $validated = Validator::make(
+            [
+                'detailsTitle' =>
+                    $this->detailsTitle,
+
+                'detailsDescription' =>
+                    $this->detailsDescription,
+
+                'detailsOccurredOn' =>
+                    $this->detailsOccurredOn,
+
+                'detailsUsabilityStatus' =>
+                    $this->detailsUsabilityStatus,
+
+                'detailsAccidentalDamageDeclared' =>
+                    $this
+                        ->detailsAccidentalDamageDeclared,
+
+                'detailsAccidentalDamageNotes' =>
+                    $this
+                        ->detailsAccidentalDamageNotes,
+            ],
+            [
+                'detailsTitle' => [
+                    'required',
+                    'string',
+                    'max:255',
+                ],
+
+                'detailsDescription' => [
+                    'required',
+                    'string',
+                    'max:20000',
+                ],
+
+                'detailsOccurredOn' => [
+                    'nullable',
+                    'date',
+                    'before_or_equal:today',
+                ],
+
+                'detailsUsabilityStatus' => [
+                    'required',
+                    'string',
+                    Rule::in(
+                        ProductCase::USABILITY_STATUSES
+                    ),
+                ],
+
+                'detailsAccidentalDamageDeclared' => [
+                    'nullable',
+                    'string',
+                    Rule::in([
+                        '0',
+                        '1',
+                    ]),
+                ],
+
+                'detailsAccidentalDamageNotes' => [
+                    'nullable',
+                    'string',
+                    'max:10000',
+                ],
+            ],
+            [
+                'detailsTitle.required' =>
+                    'Inserisci un titolo per il problema.',
+
+                'detailsTitle.max' =>
+                    'Il titolo non può superare 255 caratteri.',
+
+                'detailsDescription.required' =>
+                    'Descrivi il problema riscontrato.',
+
+                'detailsDescription.max' =>
+                    'La descrizione è troppo lunga.',
+
+                'detailsOccurredOn.date' =>
+                    'La data del problema non è valida.',
+
+                'detailsOccurredOn.before_or_equal' =>
+                    'La data del problema non può essere futura.',
+
+                'detailsUsabilityStatus.in' =>
+                    'Seleziona uno stato di utilizzabilità valido.',
+
+                'detailsAccidentalDamageDeclared.in' =>
+                    'La dichiarazione sul danno accidentale non è valida.',
+
+                'detailsAccidentalDamageNotes.max' =>
+                    'Le note sul danno accidentale sono troppo lunghe.',
+            ]
+        )->validate();
+
+        $updatedBy =
+            Auth::user();
+
+        if (! $updatedBy instanceof User) {
+            throw new RuntimeException(
+                'Utente autenticato non disponibile.'
+            );
+        }
+
+        $damageDeclared = match (
+            $validated[
+                'detailsAccidentalDamageDeclared'
+            ] ?? null
+        ) {
+            '1' =>
+                true,
+
+            '0' =>
+                false,
+
+            default =>
+                null,
+        };
+
+        $updatedCase =
+            $updater->update(
+                productCase:
+                    $this->productCase,
+
+                updatedBy:
+                    $updatedBy,
+
+                attributes: [
+                    'title' =>
+                        $validated[
+                            'detailsTitle'
+                        ],
+
+                    'description' =>
+                        $validated[
+                            'detailsDescription'
+                        ],
+
+                    'occurred_on' =>
+                        $validated[
+                            'detailsOccurredOn'
+                        ] ?? null,
+
+                    'usability_status' =>
+                        $validated[
+                            'detailsUsabilityStatus'
+                        ],
+
+                    'accidental_damage_declared' =>
+                        $damageDeclared,
+
+                    'accidental_damage_notes' =>
+                        $damageDeclared === true
+                            ? (
+                                $validated[
+                                    'detailsAccidentalDamageNotes'
+                                ] ?? null
+                            )
+                            : null,
+                ],
+            );
+
+        $this->loadProductCaseState(
+            $updatedCase
+        );
+
+        $this->resetValidation();
+        $this->resetDetailsForm();
+
+        $this->detailsSuccessMessage =
+            'Dati della pratica aggiornati correttamente.';
+    }
+
+    /**
+     * Ripristina lo stato interno del form.
+     */
+    private function resetDetailsForm(): void
+    {
+        $this->isEditingDetails =
+            false;
+
+        $this->detailsTitle =
+            '';
+
+        $this->detailsDescription =
+            '';
+
+        $this->detailsOccurredOn =
+            null;
+
+        $this->detailsUsabilityStatus =
+            ProductCase::USABILITY_UNKNOWN;
+
+        $this->detailsAccidentalDamageDeclared =
+            null;
+
+        $this->detailsAccidentalDamageNotes =
+            null;
+    }
+
+    /**
+     * Ricarica modello, relazioni e snapshot derivati della pagina.
+     */
+    private function loadProductCaseState(
+        ProductCase $productCase
+    ): void {
         $this->productCase =
             $productCase->load([
                 'product.brand',
@@ -110,12 +475,6 @@ final class ProductCaseShow extends Component
                         'id' =>
                             (int) $media->id,
 
-                        /*
-                         * Mostriamo soltanto il nome originale leggibile.
-                         *
-                         * file_name, path, disk e URL privato non vengono
-                         * esposti dal componente.
-                         */
                         'original_filename' =>
                             $this->photoOriginalFilename(
                                 $media

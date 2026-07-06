@@ -11,6 +11,7 @@
             [
                 \App\Models\ProductCase::STATUS_READY_TO_CONTACT,
                 \App\Models\ProductCase::STATUS_CONTACTED,
+                \App\Models\ProductCase::STATUS_RESOLVED,
             ],
             true
         )
@@ -209,6 +210,36 @@
                                 </div>
                             </form>
                         @endif
+                    </div>
+                @elseif (
+                    $productCase->status
+                        === \App\Models\ProductCase::STATUS_RESOLVED
+                )
+                    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between {{ ($successMessage || $errorMessage) ? 'mt-5' : '' }}">
+                        <div>
+                            <h2 class="text-sm font-semibold text-gray-900">
+                                Pratica risolta
+                            </h2>
+
+                            <p class="mt-1 text-sm leading-6 text-gray-600">
+                                L’esito è stato registrato. Chiudi la pratica soltanto quando
+                                non sono previste altre attività operative.
+                            </p>
+                        </div>
+
+                        @can('update', $productCase)
+                            <button
+                                type="button"
+                                data-testid="close-product-case"
+                                wire:click="closeProductCase"
+                                wire:confirm="Confermi di voler chiudere definitivamente la pratica? Dopo la chiusura non saranno disponibili altre transizioni."
+                                wire:loading.attr="disabled"
+                                wire:target="closeProductCase"
+                                class="shrink-0 rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                Chiudi pratica
+                            </button>
+                        @endcan
                     </div>
                 @endif
             </section>

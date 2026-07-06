@@ -141,6 +141,8 @@ final class ProductCaseIndex extends Component
             [
                 'productCases' => $productCases,
                 'counts' => $counts,
+                'scope' => $this->scope,
+                'presenter' => $this,
             ]
         )->layout('layouts.app');
     }

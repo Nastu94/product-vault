@@ -44,65 +44,6 @@
             @endif
 
             {{ $slot }}
-
-            @if (request()->routeIs('dashboard'))
-                <div
-                    id="dashboard-product-case-centers"
-                    class="hidden grid grid-cols-1 gap-6 xl:grid-cols-2"
-                >
-                    @livewire(
-                        'dashboard.dashboard-action-center',
-                        [],
-                        key('dashboard-action-center')
-                    )
-
-                    @livewire(
-                        'dashboard.dashboard-results-center',
-                        [],
-                        key('dashboard-results-center')
-                    )
-
-                    @livewire(
-                        'dashboard.dashboard-completion-center',
-                        [],
-                        key('dashboard-completion-center')
-                    )
-
-                    @livewire(
-                        'dashboard.dashboard-expiry-center',
-                        [],
-                        key('dashboard-expiry-center')
-                    )
-                </div>
-
-                <script>
-                    (() => {
-                        const centers = document.getElementById(
-                            'dashboard-product-case-centers'
-                        );
-
-                        const dashboardContainer = document.querySelector(
-                            'main > div.py-6 > div.mx-auto.max-w-7xl'
-                        );
-
-                        const introSection = dashboardContainer
-                            ? Array.from(dashboardContainer.children)
-                                .find((element) => element.tagName === 'SECTION')
-                            : null;
-
-                        if (! centers || ! dashboardContainer || ! introSection) {
-                            return;
-                        }
-
-                        introSection.insertAdjacentElement(
-                            'afterend',
-                            centers
-                        );
-
-                        centers.classList.remove('hidden');
-                    })();
-                </script>
-            @endif
         </main>
     </div>
 

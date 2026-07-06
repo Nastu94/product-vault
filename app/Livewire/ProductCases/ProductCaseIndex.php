@@ -23,8 +23,24 @@ final class ProductCaseIndex extends Component
 
     public int $perPage = 10;
 
+    public function mount(): void
+    {
+        $requestedScope = request()->query('scope');
+
+        if (
+            is_string($requestedScope)
+            && in_array($requestedScope, $this->allowedScopes(), true)
+        ) {
+            $this->scope = $requestedScope;
+        }
+    }
+
     public function updatedScope(): void
     {
+        if (! in_array($this->scope, $this->allowedScopes(), true)) {
+            $this->scope = 'open';
+        }
+
         $this->resetPage();
     }
 
@@ -225,6 +241,19 @@ final class ProductCaseIndex extends Component
             ProductCase::STATUS_READY_TO_CONTACT,
             ProductCase::STATUS_CONTACTED,
             ProductCase::STATUS_RESOLVED,
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function allowedScopes(): array
+    {
+        return [
+            'open',
+            'closed',
+            'cancelled',
+            'all',
         ];
     }
 }

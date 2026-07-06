@@ -1,7 +1,7 @@
-<div class="xl:col-span-2">
+<div class="h-full">
     <section
         data-testid="dashboard-completion-center"
-        class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+        class="h-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
     >
         <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -105,7 +105,7 @@
                     </span>
                 </div>
 
-                <div class="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div class="mt-3 grid grid-cols-1 gap-4">
                     @foreach ($completionItems as $item)
                         <a
                             data-testid="dashboard-completion-item-{{ $item['type'] }}-{{ $loop->index }}"

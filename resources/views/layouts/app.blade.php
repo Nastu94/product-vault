@@ -55,6 +55,18 @@
                                 . $workflowProductCase->getKey()
                             )
                         )
+
+                        @livewire(
+                            'product-cases.product-case-stop-bar',
+                            [
+                                'productCase' =>
+                                    $workflowProductCase,
+                            ],
+                            key(
+                                'product-case-stop-bar-'
+                                . $workflowProductCase->getKey()
+                            )
+                        )
                     @endif
                 @endif
 

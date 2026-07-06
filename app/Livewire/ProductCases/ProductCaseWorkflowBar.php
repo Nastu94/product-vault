@@ -339,6 +339,56 @@ final class ProductCaseWorkflowBar extends Component
         );
     }
 
+    /**
+     * Chiude definitivamente una pratica già risolta.
+     */
+    public function closeProductCase(
+        ProductCaseStatusTransitionService $transitionService
+    ): void {
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->resetMessages();
+        $this->resetResolutionForm();
+
+        if (
+            $currentCase->status
+                !== ProductCase::STATUS_RESOLVED
+        ) {
+            $this->redirectWithError(
+                $currentCase,
+                'Soltanto una pratica risolta può essere chiusa.'
+            );
+
+            return;
+        }
+
+        $updatedCase =
+            $transitionService->transition(
+                productCase:
+                    $currentCase,
+
+                performedBy:
+                    $this->authenticatedUser(),
+
+                targetStatus:
+                    ProductCase::STATUS_CLOSED,
+            );
+
+        $this->productCase =
+            $updatedCase;
+
+        $this->redirectWithSuccess(
+            $updatedCase,
+            'La pratica è stata chiusa definitivamente.'
+        );
+    }
+
     private function freshProductCase(): ProductCase
     {
         return $this->productCase->fresh()

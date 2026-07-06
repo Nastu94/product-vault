@@ -166,19 +166,26 @@ final class TestDashboardActionHierarchyCommand extends Command
                 str_contains($layout, 'insertAdjacentElement')
             );
 
+            $legacyControllerFragments = [
+                'openReviewDocuments query' =>
+                    '$openReviewDocuments =',
+                'expiringWarranties collection' =>
+                    '$expiringWarranties =',
+                'expiringWarrantyContexts map' =>
+                    '$expiringWarrantyContexts =',
+                'coverage resolver import' =>
+                    'use App\\Services\\Warranties\\WarrantyCoverageContextResolver;',
+            ];
+
             foreach (
-                [
-                    'openReviewDocuments',
-                    'expiringWarranties',
-                    'expiringWarrantyContexts',
-                    'WarrantyCoverageContextResolver',
-                ] as $legacyLoader
+                $legacyControllerFragments
+                as $label => $fragment
             ) {
                 $assertSame(
                     'controller',
-                    $legacyLoader . ' removed',
+                    $label . ' removed',
                     false,
-                    str_contains($controller, $legacyLoader)
+                    str_contains($controller, $fragment)
                 );
             }
         } catch (Throwable $exception) {

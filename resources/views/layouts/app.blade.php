@@ -67,6 +67,12 @@
                         [],
                         key('dashboard-completion-center')
                     )
+
+                    @livewire(
+                        'dashboard.dashboard-expiry-center',
+                        [],
+                        key('dashboard-expiry-center')
+                    )
                 </div>
 
                 <script>

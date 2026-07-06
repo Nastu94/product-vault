@@ -81,6 +81,12 @@ class CreateNewUser implements CreatesNewUsers
                         'products.update',
                         'products.delete',
 
+                        'product_cases.view',
+                        'product_cases.create',
+                        'product_cases.update',
+                        'product_cases.close',
+                        'product_cases.delete',
+
                         'warranties.view',
                         'warranties.create',
                         'warranties.update',

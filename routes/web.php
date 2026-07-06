@@ -9,6 +9,8 @@ use App\Livewire\Documents\DocumentUpload;
 use App\Livewire\Documents\DocumentShow;
 use App\Livewire\Products\ProductIndex;
 use App\Livewire\Products\ProductShow;
+use App\Livewire\ProductCases\ProductCaseIndex;
+use App\Livewire\ProductCases\ProductCaseShow;
 use App\Livewire\Reviews\ReviewIndex;
 use App\Livewire\Warranties\WarrantyIndex;
 
@@ -53,6 +55,19 @@ Route::middleware([
     Route::get('/products/{product}', ProductShow::class)
         ->whereNumber('product')
         ->name('products.show');
+
+    /**
+     * Elenco e dettaglio delle pratiche prodotto.
+     */
+    Route::get('/product-cases', ProductCaseIndex::class)
+        ->name('product-cases.index');
+
+    Route::get(
+        '/product-cases/{productCase}',
+        ProductCaseShow::class
+    )
+        ->whereNumber('productCase')
+        ->name('product-cases.show');
 
     /**
      * Rotte per la gestione delle garanzie.

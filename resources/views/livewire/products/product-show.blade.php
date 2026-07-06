@@ -1227,6 +1227,14 @@
             </div>
 
             <aside class="space-y-6">
+                @include(
+                    'livewire.products.partials.product-cases',
+                    [
+                        'productCases' =>
+                            $this->productCaseSummaries,
+                    ]
+                )
+
                 <section class="bg-white shadow-sm ring-1 ring-gray-200 sm:rounded-lg">
                     <div class="p-6">
                         <h2 class="text-lg font-medium text-gray-900">

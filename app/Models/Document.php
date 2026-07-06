@@ -109,6 +109,22 @@ class Document extends Model implements HasMedia
     }
 
     /**
+     * Pratiche nelle quali il documento è stato selezionato.
+     */
+    public function productCases(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            ProductCase::class,
+            'product_case_documents'
+        )
+            ->withPivot([
+                'selected_by_user_id',
+                'notes',
+            ])
+            ->withTimestamps();
+    }
+
+    /**
      * Tentativi di estrazione testo associati al documento.
      */
     public function textExtractions(): HasMany

@@ -35,6 +35,10 @@
                         Prodotti
                     </x-nav-link>
 
+                    <x-nav-link href="{{ route('product-cases.index') }}" :active="request()->routeIs('product-cases.*')">
+                        Pratiche
+                    </x-nav-link>
+
                     <x-nav-link href="{{ route('warranties.index') }}" :active="request()->routeIs('warranties.*')">
                         Garanzie
                     </x-nav-link>
@@ -215,6 +219,10 @@
                 Prodotti
             </x-responsive-nav-link>
 
+            <x-responsive-nav-link href="{{ route('product-cases.index') }}" :active="request()->routeIs('product-cases.*')">
+                Pratiche
+            </x-responsive-nav-link>
+
             <x-responsive-nav-link href="{{ route('warranties.index') }}" :active="request()->routeIs('warranties.*')">
                 Garanzie
             </x-responsive-nav-link>
@@ -259,22 +267,6 @@
 
                 {{-- Team Management --}}
                 @if (Laravel\Jetstream\Jetstream::hasTeamFeatures())
-                    <div class="border-t border-slate-200"></div>
-
-                    <div class="block px-4 py-2 text-xs text-slate-400">
-                        Team
-                    </div>
-
-                    <div class="px-4 py-2">
-                        <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
-                            Team attivo
-                        </p>
-
-                        <p class="mt-1 text-sm font-semibold text-slate-900">
-                            {{ Auth::user()->currentTeam->name }}
-                        </p>
-                    </div>
-
                     <x-responsive-nav-link href="{{ route('teams.show', Auth::user()->currentTeam->id) }}" :active="request()->routeIs('teams.show')">
                         Impostazioni team
                     </x-responsive-nav-link>
@@ -284,26 +276,13 @@
                             Crea nuovo team
                         </x-responsive-nav-link>
                     @endcan
-
-                    @if (Auth::user()->allTeams()->count() > 1)
-                        <div class="border-t border-slate-200"></div>
-
-                        <div class="block px-4 py-2 text-xs text-slate-400">
-                            Cambia team
-                        </div>
-
-                        @foreach (Auth::user()->allTeams() as $team)
-                            <x-switchable-team :team="$team" component="responsive-nav-link" />
-                        @endforeach
-                    @endif
                 @endif
 
-                {{-- Authentication --}}
                 <form method="POST" action="{{ route('logout') }}" x-data>
                     @csrf
 
                     <x-responsive-nav-link href="{{ route('logout') }}"
-                        @click.prevent="$root.submit();">
+                            @click.prevent="$root.submit();">
                         Esci
                     </x-responsive-nav-link>
                 </form>

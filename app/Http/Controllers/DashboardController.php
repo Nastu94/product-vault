@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\Document;
 use App\Models\Product;
 use App\Models\Warranty;
-use App\Services\Warranties\WarrantyCoverageContextResolver;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
 use Laravel\Jetstream\Jetstream;
@@ -13,42 +12,21 @@ use Laravel\Jetstream\Jetstream;
 class DashboardController extends Controller
 {
     /**
-     * Mostra la homepage della dashboard.
-     *
-     * La dashboard deve sempre leggere i dati relativi al workspace/team attivo,
-     * non dati globali dell'applicazione.
+     * Mostra la dashboard del workspace attivo.
      */
     public function index(Request $request): View
     {
         $user = $request->user();
 
-        /*
-        |--------------------------------------------------------------------------
-        | Workspace / team attivo
-        |--------------------------------------------------------------------------
-        |
-        | Il progetto usa Jetstream con team. Per ora trattiamo il currentTeam come
-        | workspace attivo. Le tabelle business usano team_id, quindi useremo
-        | l'id del team corrente come identificativo dell'account/workspace attivo.
-        |
-        */
         $currentTeam = Jetstream::hasTeamFeatures()
             ? $user->currentTeam
             : null;
 
         $activeTeamId = $currentTeam?->id;
 
-        $activeWorkspaceName = $currentTeam?->name ?? 'Personale ' . $user->name;
+        $activeWorkspaceName = $currentTeam?->name
+            ?? 'Personale ' . $user->name;
 
-        /*
-        |--------------------------------------------------------------------------
-        | Conteggi principali
-        |--------------------------------------------------------------------------
-        |
-        | Se non esiste un workspace attivo, restituiamo conteggi a zero.
-        | In condizioni normali Jetstream dovrebbe sempre avere un currentTeam.
-        |
-        */
         $documentsCount = $activeTeamId
             ? Document::query()
                 ->where('team_id', $activeTeamId)
@@ -61,32 +39,16 @@ class DashboardController extends Controller
                 ->count()
             : 0;
 
-        /*
-        |--------------------------------------------------------------------------
-        | Revisioni aperte
-        |--------------------------------------------------------------------------
-        |
-        | Per MVP consideriamo da revisionare i documenti con status needs_review
-        | o low_confidence. Più avanti potremo includere anche prodotti parziali,
-        | processing falliti o garanzie da confermare.
-        |
-        */
         $openReviewsCount = $activeTeamId
             ? Document::query()
                 ->where('team_id', $activeTeamId)
-                ->whereIn('status', ['needs_review', 'low_confidence'])
+                ->whereIn(
+                    'status',
+                    ['needs_review', 'low_confidence']
+                )
                 ->count()
             : 0;
 
-        /*
-        |--------------------------------------------------------------------------
-        | Finestra temporale delle coperture in scadenza
-        |--------------------------------------------------------------------------
-        |
-        | La dashboard usa gli stessi confini temporali del resolver:
-        | periodo già iniziato e data finale compresa nei prossimi 30 giorni.
-        |
-        */
         $today = now()
             ->startOfDay()
             ->toDateString();
@@ -96,88 +58,45 @@ class DashboardController extends Controller
             ->addDays(30)
             ->toDateString();
 
-        /*
-        |--------------------------------------------------------------------------
-        | Garanzie in scadenza
-        |--------------------------------------------------------------------------
-        |
-        | Conteggiamo le garanzie collegate a prodotti del workspace attivo
-        | con data di fine entro i prossimi 30 giorni.
-        |
-        */
-        $expiringWarrantiesCount = $activeTeamId
-            ? Warranty::query()
-                ->whereIn(
-                    'product_id',
-                    Product::query()
-                        ->select('id')
-                        ->where('team_id', $activeTeamId)
-                )
-                ->whereNotNull('starts_at')
-                ->whereNotNull('ends_at')
-                ->whereDate('starts_at', '<=', $today)
-                ->whereDate('ends_at', '>=', $today)
-                ->whereDate('ends_at', '<=', $soon)
-                ->count()
-            : 0;
+        $workspaceProductIds = Product::query()
+            ->select('id')
+            ->when(
+                $activeTeamId !== null,
+                fn ($query) => $query
+                    ->where('team_id', $activeTeamId),
+                fn ($query) => $query->whereRaw('1 = 0')
+            );
 
-        $warrantiesCount = $activeTeamId
-            ? Warranty::query()
-                ->whereIn(
-                    'product_id',
-                    Product::query()
-                        ->select('id')
-                        ->where('team_id', $activeTeamId)
-                )
-                ->count()
-            : 0;
+        $expiringWarrantiesCount = Warranty::query()
+            ->whereIn('product_id', clone $workspaceProductIds)
+            ->whereNotNull('starts_at')
+            ->whereNotNull('ends_at')
+            ->whereDate('starts_at', '<=', $today)
+            ->whereDate('ends_at', '>=', $today)
+            ->whereDate('ends_at', '<=', $soon)
+            ->count();
 
-        $expiredWarrantiesCount = $activeTeamId
-            ? Warranty::query()
-                ->whereIn(
-                    'product_id',
-                    Product::query()
-                        ->select('id')
-                        ->where('team_id', $activeTeamId)
-                )
-                ->whereNotNull('ends_at')
-                ->whereDate('ends_at', '<', now()->toDateString())
-                ->count()
-            : 0;
+        $warrantiesCount = Warranty::query()
+            ->whereIn('product_id', clone $workspaceProductIds)
+            ->count();
 
-        $stats = [
-            'documents_count' => $documentsCount,
-            'products_count' => $productsCount,
-            'open_reviews_count' => $openReviewsCount,
-            'warranties_count' => $warrantiesCount,
-            'expiring_warranties_count' => $expiringWarrantiesCount,
-            'expired_warranties_count' => $expiredWarrantiesCount,
-        ];
-
-        /*
-        |--------------------------------------------------------------------------
-        | Liste sintetiche dashboard
-        |--------------------------------------------------------------------------
-        |
-        | Mostriamo pochi elementi recenti, sempre filtrati per team attivo.
-        | La dashboard deve rimanere compatta: non è una pagina elenco completa.
-        |
-        */
-        $openReviewDocuments = $activeTeamId
-            ? Document::query()
-                ->where('team_id', $activeTeamId)
-                ->whereIn('status', ['needs_review', 'low_confidence'])
-                ->latest()
-                ->limit(3)
-                ->get(['id', 'original_filename', 'status', 'created_at'])
-            : collect();
+        $expiredWarrantiesCount = Warranty::query()
+            ->whereIn('product_id', clone $workspaceProductIds)
+            ->whereNotNull('ends_at')
+            ->whereDate('ends_at', '<', $today)
+            ->count();
 
         $recentDocuments = $activeTeamId
             ? Document::query()
                 ->where('team_id', $activeTeamId)
                 ->latest()
                 ->limit(4)
-                ->get(['id', 'original_filename', 'status', 'created_at'])
+                ->get([
+                    'id',
+                    'original_filename',
+                    'status',
+                    'created_at',
+                ])
             : collect();
 
         $recentProducts = $activeTeamId
@@ -185,63 +104,31 @@ class DashboardController extends Controller
                 ->where('team_id', $activeTeamId)
                 ->latest()
                 ->limit(4)
-                ->get(['id', 'name', 'created_at'])
-            : collect();
-
-        $expiringWarranties = $activeTeamId
-            ? Warranty::query()
-                ->with([
-                    'product',
-                    'warrantyType',
+                ->get([
+                    'id',
+                    'name',
+                    'created_at',
                 ])
-                ->whereIn(
-                    'product_id',
-                    Product::query()
-                        ->select('id')
-                        ->where('team_id', $activeTeamId)
-                )
-                ->whereNotNull('starts_at')
-                ->whereNotNull('ends_at')
-                ->whereDate('starts_at', '<=', $today)
-                ->whereDate('ends_at', '>=', $today)
-                ->whereDate('ends_at', '<=', $soon)
-                ->orderBy('ends_at')
-                ->limit(3)
-                ->get()
             : collect();
-
-        /*
-        |--------------------------------------------------------------------------
-        | Contesti normalizzati delle coperture mostrate
-        |--------------------------------------------------------------------------
-        |
-        | La vista non deve dedurre autonomamente stato, provenienza o tipo.
-        | I risultati sono indicizzati per id della garanzia.
-        |
-        */
-        $coverageResolver = app(
-            WarrantyCoverageContextResolver::class
-        );
-
-        $expiringWarrantyContexts = $expiringWarranties
-            ->mapWithKeys(
-                fn (Warranty $warranty): array => [
-                    (int) $warranty->getKey() =>
-                        $coverageResolver->resolve($warranty),
-                ]
-            )
-            ->all();
 
         return view('dashboard', [
             'userName' => $user->name,
             'activeWorkspaceName' => $activeWorkspaceName,
-            'stats' => $stats,
-            'isArchiveEmpty' => $documentsCount === 0 && $productsCount === 0,
-            'openReviewDocuments' => $openReviewDocuments,
+            'stats' => [
+                'documents_count' => $documentsCount,
+                'products_count' => $productsCount,
+                'open_reviews_count' => $openReviewsCount,
+                'warranties_count' => $warrantiesCount,
+                'expiring_warranties_count' =>
+                    $expiringWarrantiesCount,
+                'expired_warranties_count' =>
+                    $expiredWarrantiesCount,
+            ],
+            'isArchiveEmpty' =>
+                $documentsCount === 0
+                && $productsCount === 0,
             'recentDocuments' => $recentDocuments,
             'recentProducts' => $recentProducts,
-            'expiringWarranties' => $expiringWarranties,
-            'expiringWarrantyContexts' => $expiringWarrantyContexts,
         ]);
     }
 }

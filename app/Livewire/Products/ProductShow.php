@@ -3,14 +3,22 @@
 namespace App\Livewire\Products;
 
 use App\Models\Product;
+use App\Models\ProductCase;
+use App\Models\User;
 use App\Models\Warranty;
 use App\Models\WarrantyType;
+use App\Services\ProductCases\ProductCaseCreator;
 use App\Services\Products\ProductLifecycleEventRecorder;
 use App\Services\Warranties\ManualWarrantyCoverageContextBuilder;
 use App\Services\Warranties\WarrantyCoverageContextResolver;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Livewire\Component;
+use RuntimeException;
 
 class ProductShow extends Component
 {
@@ -20,6 +28,35 @@ class ProductShow extends Component
      * Prodotto mostrato nella pagina dettaglio.
      */
     public Product $product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Apertura guidata pratica prodotto
+    |--------------------------------------------------------------------------
+    */
+
+    public bool $isCreatingProductCase = false;
+
+    public string $productCaseTitle = '';
+
+    public string $productCaseDescription = '';
+
+    public ?string $productCaseOccurredOn = null;
+
+    public string $productCaseUsabilityStatus =
+        ProductCase::USABILITY_UNKNOWN;
+
+    /**
+     * Valori UI:
+     * - null: non specificato;
+     * - "0": nessun danno accidentale dichiarato;
+     * - "1": danno accidentale dichiarato.
+     */
+    public ?string $productCaseAccidentalDamageDeclared =
+        null;
+
+    public ?string $productCaseAccidentalDamageNotes =
+        null;
 
     /**
      * Stato form modifica garanzia.
@@ -77,6 +114,10 @@ class ProductShow extends Component
             'category',
             'brand',
             'createdBy',
+            'cases' => fn ($query) => $query
+                ->with('openedBy')
+                ->orderByDesc('opened_at')
+                ->orderByDesc('id'),
             'documents.documentType',
             'documents.merchant',
             'warranties.warrantyType',
@@ -85,6 +126,373 @@ class ProductShow extends Component
             'events.document',
             'events.createdBy',
         ]);
+    }
+
+    /**
+     * Mostra il form iniziale per l’apertura della pratica.
+     */
+    public function startProductCaseCreation(): void
+    {
+        $this->authorize(
+            'create',
+            [
+                ProductCase::class,
+                $this->product,
+            ]
+        );
+
+        $this->resetValidation();
+        $this->resetProductCaseForm();
+
+        $this->isCreatingProductCase = true;
+    }
+
+    /**
+     * Chiude il form senza creare alcuna pratica.
+     */
+    public function cancelProductCaseCreation(): void
+    {
+        $this->resetValidation();
+        $this->resetProductCaseForm();
+    }
+
+    /**
+     * Crea la pratica iniziale in stato draft.
+     */
+    public function createProductCase(
+        ProductCaseCreator $creator
+    ): mixed {
+        $this->authorize(
+            'create',
+            [
+                ProductCase::class,
+                $this->product,
+            ]
+        );
+
+        $validated = Validator::make(
+            [
+                'productCaseTitle' =>
+                    $this->productCaseTitle,
+
+                'productCaseDescription' =>
+                    $this->productCaseDescription,
+
+                'productCaseOccurredOn' =>
+                    $this->productCaseOccurredOn,
+
+                'productCaseUsabilityStatus' =>
+                    $this->productCaseUsabilityStatus,
+
+                'productCaseAccidentalDamageDeclared' =>
+                    $this
+                        ->productCaseAccidentalDamageDeclared,
+
+                'productCaseAccidentalDamageNotes' =>
+                    $this
+                        ->productCaseAccidentalDamageNotes,
+            ],
+            [
+                'productCaseTitle' => [
+                    'required',
+                    'string',
+                    'max:255',
+                ],
+
+                'productCaseDescription' => [
+                    'required',
+                    'string',
+                    'max:20000',
+                ],
+
+                'productCaseOccurredOn' => [
+                    'nullable',
+                    'date',
+                    'before_or_equal:today',
+                ],
+
+                'productCaseUsabilityStatus' => [
+                    'required',
+                    'string',
+                    Rule::in(
+                        ProductCase::USABILITY_STATUSES
+                    ),
+                ],
+
+                'productCaseAccidentalDamageDeclared' => [
+                    'nullable',
+                    'string',
+                    Rule::in([
+                        '0',
+                        '1',
+                    ]),
+                ],
+
+                'productCaseAccidentalDamageNotes' => [
+                    'nullable',
+                    'string',
+                    'max:10000',
+                ],
+            ],
+            [
+                'productCaseTitle.required' =>
+                    'Inserisci un titolo per il problema.',
+
+                'productCaseTitle.max' =>
+                    'Il titolo non può superare 255 caratteri.',
+
+                'productCaseDescription.required' =>
+                    'Descrivi il problema riscontrato.',
+
+                'productCaseDescription.max' =>
+                    'La descrizione è troppo lunga.',
+
+                'productCaseOccurredOn.date' =>
+                    'La data del problema non è valida.',
+
+                'productCaseOccurredOn.before_or_equal' =>
+                    'La data del problema non può essere futura.',
+
+                'productCaseUsabilityStatus.in' =>
+                    'Seleziona uno stato di utilizzabilità valido.',
+
+                'productCaseAccidentalDamageDeclared.in' =>
+                    'La dichiarazione sul danno accidentale non è valida.',
+
+                'productCaseAccidentalDamageNotes.max' =>
+                    'Le note sul danno accidentale sono troppo lunghe.',
+            ]
+        )->validate();
+
+        $openedBy = Auth::user();
+
+        if (! $openedBy instanceof User) {
+            throw new RuntimeException(
+                'Utente autenticato non disponibile.'
+            );
+        }
+
+        $accidentalDamageDeclared = match (
+            $validated[
+                'productCaseAccidentalDamageDeclared'
+            ] ?? null
+        ) {
+            '1' => true,
+            '0' => false,
+            default => null,
+        };
+
+        /*
+         * Le note vengono conservate soltanto quando l’utente
+         * dichiara esplicitamente un possibile danno accidentale.
+         */
+        $accidentalDamageNotes =
+            $accidentalDamageDeclared === true
+                ? (
+                    $validated[
+                        'productCaseAccidentalDamageNotes'
+                    ] ?? null
+                )
+                : null;
+
+        $productCase = $creator->create(
+            product:
+                $this->product,
+
+            openedBy:
+                $openedBy,
+
+            attributes: [
+                'title' =>
+                    $validated[
+                        'productCaseTitle'
+                    ],
+
+                'description' =>
+                    $validated[
+                        'productCaseDescription'
+                    ],
+
+                'occurred_on' =>
+                    $validated[
+                        'productCaseOccurredOn'
+                    ] ?? null,
+
+                'usability_status' =>
+                    $validated[
+                        'productCaseUsabilityStatus'
+                    ],
+
+                'accidental_damage_declared' =>
+                    $accidentalDamageDeclared,
+
+                'accidental_damage_notes' =>
+                    $accidentalDamageNotes,
+            ],
+        );
+
+        $this->resetProductCaseForm();
+
+        return redirect()->route(
+            'product-cases.show',
+            [
+                'productCase' =>
+                    $productCase,
+            ]
+        );
+    }
+
+    /**
+     * Ripristina lo stato iniziale del form pratica.
+     */
+    private function resetProductCaseForm(): void
+    {
+        $this->isCreatingProductCase = false;
+        $this->productCaseTitle = '';
+        $this->productCaseDescription = '';
+        $this->productCaseOccurredOn = null;
+
+        $this->productCaseUsabilityStatus =
+            ProductCase::USABILITY_UNKNOWN;
+
+        $this->productCaseAccidentalDamageDeclared =
+            null;
+
+        $this->productCaseAccidentalDamageNotes =
+            null;
+    }
+
+    /**
+     * Riepilogo read-only delle pratiche associate al prodotto.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function getProductCaseSummariesProperty(): array
+    {
+        return $this->product
+            ->cases
+            ->filter(
+                fn (ProductCase $productCase): bool =>
+                    (int) $productCase->team_id
+                        === (int) $this->product->team_id
+            )
+            ->map(
+                fn (ProductCase $productCase): array => [
+                    'id' =>
+                        (int) $productCase->id,
+
+                    'title' =>
+                        $productCase->title,
+
+                    'status' =>
+                        $productCase->status,
+
+                    'status_label' =>
+                        $this->productCaseStatusLabel(
+                            $productCase->status
+                        ),
+
+                    'status_badge_classes' =>
+                        $this->productCaseStatusBadgeClasses(
+                            $productCase->status
+                        ),
+
+                    'opened_at' =>
+                        $productCase
+                            ->opened_at
+                            ?->toISOString(),
+
+                    'opened_at_label' =>
+                        $productCase
+                            ->opened_at
+                            ?->format(
+                                'd/m/Y H:i'
+                            )
+                        ?? '—',
+
+                    'occurred_on' =>
+                        $productCase
+                            ->occurred_on
+                            ?->toDateString(),
+
+                    'occurred_on_label' =>
+                        $productCase
+                            ->occurred_on
+                            ?->format(
+                                'd/m/Y'
+                            )
+                        ?? '—',
+
+                    'opened_by_user_id' =>
+                        $productCase
+                            ->opened_by_user_id !== null
+                                ? (int) $productCase
+                                    ->opened_by_user_id
+                                : null,
+
+                    'opened_by_name' =>
+                        $productCase
+                            ->openedBy
+                            ?->name
+                        ?? 'Utente non disponibile',
+                ]
+            )
+            ->values()
+            ->all();
+    }
+
+    private function productCaseStatusLabel(
+        ?string $status
+    ): string {
+        return match ($status) {
+            ProductCase::STATUS_DRAFT =>
+                'Bozza',
+
+            ProductCase::STATUS_READY_TO_CONTACT =>
+                'Pronta per il contatto',
+
+            ProductCase::STATUS_CONTACTED =>
+                'Contattato',
+
+            ProductCase::STATUS_RESOLVED =>
+                'Risolta',
+
+            ProductCase::STATUS_CLOSED =>
+                'Chiusa',
+
+            ProductCase::STATUS_CANCELLED =>
+                'Annullata',
+
+            default =>
+                'Stato non disponibile',
+        };
+    }
+
+    private function productCaseStatusBadgeClasses(
+        ?string $status
+    ): string {
+        return match ($status) {
+            ProductCase::STATUS_DRAFT =>
+                'bg-gray-100 text-gray-700 ring-gray-500/20',
+
+            ProductCase::STATUS_READY_TO_CONTACT =>
+                'bg-blue-50 text-blue-700 ring-blue-600/20',
+
+            ProductCase::STATUS_CONTACTED =>
+                'bg-indigo-50 text-indigo-700 ring-indigo-600/20',
+
+            ProductCase::STATUS_RESOLVED =>
+                'bg-green-50 text-green-700 ring-green-600/20',
+
+            ProductCase::STATUS_CLOSED =>
+                'bg-gray-200 text-gray-800 ring-gray-600/20',
+
+            ProductCase::STATUS_CANCELLED =>
+                'bg-red-50 text-red-700 ring-red-600/20',
+
+            default =>
+                'bg-gray-100 text-gray-700 ring-gray-500/20',
+        };
     }
 
     /**
@@ -489,7 +897,6 @@ class ProductShow extends Component
         |
         | Questo ramo deve stare prima della modifica, perché quando stiamo creando
         | una garanzia il prodotto non ha ancora una primaryWarranty.
-        |
         */
         if ($this->isCreatingWarranty) {
             if ($this->primaryWarranty) {
@@ -570,7 +977,6 @@ class ProductShow extends Component
 
         if (! $warranty) {
             $this->addError('warranty', 'Nessuna garanzia da modificare.');
-
             return;
         }
 
@@ -781,6 +1187,10 @@ class ProductShow extends Component
             'category',
             'brand',
             'createdBy',
+            'cases' => fn ($query) => $query
+                ->with('openedBy')
+                ->orderByDesc('opened_at')
+                ->orderByDesc('id'),
             'documents.documentType',
             'documents.merchant',
             'warranties.warrantyType',

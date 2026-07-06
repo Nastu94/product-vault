@@ -61,6 +61,12 @@
                         [],
                         key('dashboard-results-center')
                     )
+
+                    @livewire(
+                        'dashboard.dashboard-completion-center',
+                        [],
+                        key('dashboard-completion-center')
+                    )
                 </div>
 
                 <script>

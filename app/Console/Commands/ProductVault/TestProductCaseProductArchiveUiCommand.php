@@ -98,10 +98,16 @@ final class TestProductCaseProductArchiveUiCommand extends Command
             $user->unsetRelation('permissions');
             Auth::login($user);
 
+            $targetProductCasesBefore = ProductCase::query()
+                ->where('team_id', $product->team_id)
+                ->where('product_id', $product->id)
+                ->count();
+
             $otherProduct = $product->replicate();
             $otherProduct->name =
                 'Archivio pratiche altro prodotto ' . Str::uuid();
-            $otherProduct->model = 'PV-OTHER-' . Str::upper(Str::random(6));
+            $otherProduct->model =
+                'PV-OTHER-' . Str::upper(Str::random(6));
             $otherProduct->serial_number = null;
             $otherProduct->ean_code = null;
             $otherProduct->save();
@@ -141,7 +147,10 @@ final class TestProductCaseProductArchiveUiCommand extends Command
             );
 
             request()->query->set('scope', 'all');
-            request()->query->set('product', (string) $product->id);
+            request()->query->set(
+                'product',
+                (string) $product->id
+            );
 
             $component = app(ProductCaseIndex::class);
             $component->perPage = 100;
@@ -193,7 +202,7 @@ final class TestProductCaseProductArchiveUiCommand extends Command
             $assertSame(
                 'counts',
                 'counts restricted to product',
-                1,
+                $targetProductCasesBefore + 1,
                 (int) data_get($data, 'counts.all')
             );
 
@@ -239,19 +248,21 @@ final class TestProductCaseProductArchiveUiCommand extends Command
                 )
             );
 
+            $expectedArchiveUrl = route(
+                'product-cases.index',
+                [
+                    'scope' => 'all',
+                    'product' => $product->id,
+                ]
+            );
+
             $assertSame(
                 'product page',
                 'archive link carries product and all scope',
                 true,
                 str_contains(
                     $partialHtml,
-                    route(
-                        'product-cases.index',
-                        [
-                            'scope' => 'all',
-                            'product' => $product->id,
-                        ]
-                    )
+                    e($expectedArchiveUrl)
                 )
             );
 

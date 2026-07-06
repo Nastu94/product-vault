@@ -70,6 +70,14 @@
                     @endif
                 @endif
 
+                @if (request()->routeIs('dashboard'))
+                    @livewire(
+                        'dashboard.dashboard-action-center',
+                        [],
+                        key('dashboard-action-center')
+                    )
+                @endif
+
                 {{ $slot }}
             </main>
         </div>

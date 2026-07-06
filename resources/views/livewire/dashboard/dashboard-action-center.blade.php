@@ -18,9 +18,19 @@
                 </p>
             </div>
 
-            <span class="inline-flex w-fit items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700 ring-1 ring-inset ring-slate-500/20">
-                {{ $openProductCasesCount }} aperte
-            </span>
+            <div class="flex shrink-0 flex-col items-start gap-2 sm:items-end">
+                <span class="inline-flex w-fit items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700 ring-1 ring-inset ring-slate-500/20">
+                    {{ $openProductCasesCount }} aperte
+                </span>
+
+                <a
+                    data-testid="dashboard-open-product-cases-archive-link"
+                    href="{{ route('product-cases.index', ['scope' => 'open']) }}"
+                    class="text-sm font-semibold text-slate-700 transition hover:text-slate-950"
+                >
+                    Vedi tutte le pratiche aperte
+                </a>
+            </div>
         </div>
 
         @if ($openProductCases !== [])

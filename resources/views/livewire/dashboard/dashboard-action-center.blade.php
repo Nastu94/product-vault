@@ -1,7 +1,7 @@
-<div class="mx-auto max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">
+<div class="h-full">
     <section
         data-testid="dashboard-product-case-actions"
-        class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+        class="h-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
     >
         <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -24,12 +24,12 @@
         </div>
 
         @if ($openProductCases !== [])
-            <div class="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div class="mt-6 space-y-4">
                 @foreach ($openProductCases as $productCase)
                     <a
                         data-testid="dashboard-product-case-{{ $productCase['id'] }}"
                         href="{{ route('product-cases.show', $productCase['id']) }}"
-                        class="rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:border-slate-300 hover:bg-slate-100"
+                        class="block rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:border-slate-300 hover:bg-slate-100"
                     >
                         <div class="flex items-start justify-between gap-4">
                             <div class="min-w-0">

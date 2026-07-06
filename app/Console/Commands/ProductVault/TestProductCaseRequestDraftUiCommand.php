@@ -222,6 +222,14 @@ final class TestProductCaseRequestDraftUiCommand
                     'requestDraftBody' =>
                         $component
                             ->requestDraftBody,
+
+                    'workflowSuccessMessage' =>
+                        $component
+                            ->workflowSuccessMessage,
+
+                    'workflowErrorMessage' =>
+                        $component
+                            ->workflowErrorMessage,
                 ])
                 ->render();
         };

@@ -3,6 +3,7 @@
 namespace App\Livewire\ProductCases;
 
 use App\Exceptions\ProductCases\ProductCaseRequestDraftProtectedException;
+use App\Exceptions\ProductCases\ProductCaseNotReadyException;
 use App\Models\Document;
 use App\Models\ProductCase;
 use App\Models\User;
@@ -13,6 +14,7 @@ use App\Services\ProductCases\ProductCaseReadinessResolver;
 use App\Services\ProductCases\ProductCaseTimelineResolver;
 use App\Services\ProductCases\ProductCaseRequestDraftGenerator;
 use App\Services\ProductCases\ProductCasePhotoManager;
+use App\Services\ProductCases\ProductCaseStatusTransitionService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -116,6 +118,16 @@ final class ProductCaseShow extends Component
 
     public string $requestDraftBody = '';
 
+    /*
+    |--------------------------------------------------------------------------
+    | Workflow della pratica
+    |--------------------------------------------------------------------------
+    */
+
+    public ?string $workflowSuccessMessage = null;
+
+    public ?string $workflowErrorMessage = null;
+
     /**
      * Snapshot read-only della readiness.
      *
@@ -208,11 +220,11 @@ final class ProductCaseShow extends Component
         );
 
         $this->resetValidation();
-
         $this->resetDocumentManagementForm();
         $this->resetPhotoManagementForm();
         $this->resetRequestDraftMessages();
         $this->resetRequestDraftEditForm();
+        $this->resetWorkflowMessages();
 
         $this->documentsSuccessMessage =
             null;
@@ -496,6 +508,7 @@ final class ProductCaseShow extends Component
         $this->resetPhotoManagementForm();
         $this->resetRequestDraftMessages();
         $this->resetRequestDraftEditForm();
+        $this->resetWorkflowMessages();
 
         $this->detailsSuccessMessage =
             null;
@@ -782,6 +795,7 @@ final class ProductCaseShow extends Component
         $this->resetDocumentManagementForm();
         $this->resetRequestDraftMessages();
         $this->resetRequestDraftEditForm();
+        $this->resetWorkflowMessages();
 
         $this->detailsSuccessMessage =
             null;
@@ -1065,6 +1079,7 @@ final class ProductCaseShow extends Component
         $this->resetPhotoManagementForm();
         $this->resetRequestDraftMessages();
         $this->resetRequestDraftEditForm();
+        $this->resetWorkflowMessages();
 
         $this->detailsSuccessMessage =
             null;
@@ -1197,6 +1212,7 @@ final class ProductCaseShow extends Component
         $this->resetPhotoManagementForm();
         $this->resetRequestDraftEditForm();
         $this->resetRequestDraftMessages();
+        $this->resetWorkflowMessages();
 
         $this->detailsSuccessMessage =
             null;
@@ -1344,6 +1360,94 @@ final class ProductCaseShow extends Component
     }
 
     /**
+     * Segna la pratica come pronta per il contatto.
+     *
+     * Il contatto effettivo non viene ancora registrato.
+     */
+    public function markReadyToContact(
+        ProductCaseStatusTransitionService $transitionService
+    ): void {
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->ensureReadyTransitionIsAvailable(
+            $currentCase
+        );
+
+        $this->resetValidation();
+        $this->resetDetailsForm();
+        $this->resetDocumentManagementForm();
+        $this->resetPhotoManagementForm();
+        $this->resetRequestDraftEditForm();
+        $this->resetRequestDraftMessages();
+        $this->resetWorkflowMessages();
+
+        $this->detailsSuccessMessage =
+            null;
+
+        $this->documentsSuccessMessage =
+            null;
+
+        $this->photosSuccessMessage =
+            null;
+
+        $performedBy =
+            Auth::user();
+
+        if (! $performedBy instanceof User) {
+            throw new RuntimeException(
+                'Utente autenticato non disponibile.'
+            );
+        }
+
+        try {
+            $updatedCase =
+                $transitionService->transition(
+                    productCase:
+                        $currentCase,
+
+                    performedBy:
+                        $performedBy,
+
+                    targetStatus:
+                        ProductCase
+                            ::STATUS_READY_TO_CONTACT,
+                );
+        } catch (
+            ProductCaseNotReadyException $exception
+        ) {
+            /*
+            * La readiness può essere cambiata dopo il rendering iniziale.
+            *
+            * Ricarichiamo quindi lo snapshot effettivo lasciando il service
+            * come autorità finale sulla transizione.
+            */
+            $this->loadProductCaseState(
+                $this->freshProductCase()
+            );
+
+            $this->workflowErrorMessage =
+                'La pratica non è ancora pronta. '
+                . 'Completa le informazioni bloccanti indicate '
+                . 'nella sezione Completezza operativa.';
+
+            return;
+        }
+
+        $this->loadProductCaseState(
+            $updatedCase
+        );
+
+        $this->workflowSuccessMessage =
+            'La pratica è ora pronta per il contatto.';
+    }
+
+    /**
      * Verifica che l’azione provenga dal pannello fotografie aperto.
      */
     private function ensurePhotoManagementIsOpen(): void
@@ -1353,6 +1457,36 @@ final class ProductCaseShow extends Component
                 'La gestione delle fotografie non è aperta.'
             );
         }
+    }
+
+    /**
+     * Replica nella UI la sola transizione prevista da questa patch.
+     *
+     * Il service resta l’autorità finale.
+     */
+    private function ensureReadyTransitionIsAvailable(
+        ProductCase $productCase
+    ): void {
+        if (
+            $productCase->status
+                !== ProductCase::STATUS_DRAFT
+        ) {
+            throw new RuntimeException(
+                'Soltanto una pratica in bozza può essere segnata come pronta per il contatto.'
+            );
+        }
+    }
+
+    /**
+     * Azzera i feedback relativi alle transizioni di stato.
+     */
+    private function resetWorkflowMessages(): void
+    {
+        $this->workflowSuccessMessage =
+            null;
+
+        $this->workflowErrorMessage =
+            null;
     }
 
     /**

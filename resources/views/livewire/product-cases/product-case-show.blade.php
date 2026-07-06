@@ -705,6 +705,24 @@
                             </span>
                         </div>
 
+                        @if ($workflowSuccessMessage)
+                            <div
+                                data-testid="product-case-workflow-success"
+                                class="mt-5 rounded-md bg-green-50 p-4 text-sm text-green-800 ring-1 ring-inset ring-green-600/20"
+                            >
+                                {{ $workflowSuccessMessage }}
+                            </div>
+                        @endif
+
+                        @if ($workflowErrorMessage)
+                            <div
+                                data-testid="product-case-workflow-error"
+                                class="mt-5 rounded-md bg-red-50 p-4 text-sm text-red-800 ring-1 ring-inset ring-red-600/20"
+                            >
+                                {{ $workflowErrorMessage }}
+                            </div>
+                        @endif
+
                         <p class="mt-4 text-xs leading-5 text-gray-500">
                             La completezza indica se i dati sono sufficienti per preparare il contatto.
                             Non rappresenta una decisione automatica sulla copertura legale.
@@ -746,6 +764,58 @@
                                     @endforeach
                                 </ul>
                             </div>
+                        @endif
+
+                        @if (
+                            $productCase->status
+                                === \App\Models\ProductCase::STATUS_DRAFT
+                        )
+                            @can('update', $productCase)
+                                @if (
+                                    ! $isEditingDetails
+                                    && ! $isManagingDocuments
+                                    && ! $isManagingPhotos
+                                    && ! $isEditingRequestDraft
+                                )
+                                    <div class="mt-6 border-t border-gray-200 pt-5">
+                                        @if (
+                                            ($readiness['is_ready_to_contact'] ?? false)
+                                                === true
+                                        )
+                                            <button
+                                                type="button"
+                                                data-testid="mark-product-case-ready-to-contact"
+                                                wire:click="markReadyToContact"
+                                                wire:confirm="Confermi di voler segnare la pratica come pronta per il contatto? Questa azione non registra ancora il contatto."
+                                                wire:loading.attr="disabled"
+                                                wire:target="markReadyToContact"
+                                                class="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                                Segna come pronta per il contatto
+                                            </button>
+
+                                            <p class="mt-3 text-xs leading-5 text-gray-500">
+                                                Lo stato indica che le informazioni sono complete.
+                                                Il contatto con venditore o assistenza non verrà ancora registrato.
+                                            </p>
+                                        @else
+                                            <button
+                                                type="button"
+                                                data-testid="mark-product-case-ready-to-contact-disabled"
+                                                disabled
+                                                class="w-full cursor-not-allowed rounded-md bg-gray-200 px-4 py-2 text-sm font-medium text-gray-500"
+                                            >
+                                                Completa le informazioni bloccanti
+                                            </button>
+
+                                            <p class="mt-3 text-xs leading-5 text-gray-500">
+                                                La pratica resterà in bozza finché la completezza
+                                                operativa non risulterà sufficiente.
+                                            </p>
+                                        @endif
+                                    </div>
+                                @endif
+                            @endcan
                         @endif
                     </div>
                 </section>

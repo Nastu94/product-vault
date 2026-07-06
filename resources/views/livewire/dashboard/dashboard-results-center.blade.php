@@ -18,9 +18,19 @@
                 </p>
             </div>
 
-            <span class="inline-flex w-fit items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700 ring-1 ring-inset ring-slate-500/20">
-                {{ $concludedCount }} concluse
-            </span>
+            <div class="flex shrink-0 flex-col items-start gap-2 sm:items-end">
+                <span class="inline-flex w-fit items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700 ring-1 ring-inset ring-slate-500/20">
+                    {{ $concludedCount }} concluse
+                </span>
+
+                <a
+                    data-testid="dashboard-closed-product-cases-archive-link"
+                    href="{{ route('product-cases.index', ['scope' => 'closed']) }}"
+                    class="text-sm font-semibold text-slate-700 transition hover:text-slate-950"
+                >
+                    Vedi tutte le pratiche concluse
+                </a>
+            </div>
         </div>
 
         <div class="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">

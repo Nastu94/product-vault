@@ -9,6 +9,7 @@ use App\Livewire\Documents\DocumentUpload;
 use App\Livewire\Documents\DocumentShow;
 use App\Livewire\Products\ProductIndex;
 use App\Livewire\Products\ProductShow;
+use App\Livewire\ProductCases\ProductCaseIndex;
 use App\Livewire\ProductCases\ProductCaseShow;
 use App\Livewire\Reviews\ReviewIndex;
 use App\Livewire\Warranties\WarrantyIndex;
@@ -56,8 +57,11 @@ Route::middleware([
         ->name('products.show');
 
     /**
-     * Dettaglio read-only delle pratiche prodotto.
+     * Elenco e dettaglio delle pratiche prodotto.
      */
+    Route::get('/product-cases', ProductCaseIndex::class)
+        ->name('product-cases.index');
+
     Route::get(
         '/product-cases/{productCase}',
         ProductCaseShow::class

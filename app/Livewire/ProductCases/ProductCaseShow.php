@@ -2,26 +2,27 @@
 
 namespace App\Livewire\ProductCases;
 
+use App\Exceptions\ProductCases\ProductCaseRequestDraftProtectedException;
+use App\Models\Document;
 use App\Models\ProductCase;
 use App\Models\User;
 use App\Services\ProductCases\ProductCaseDetailsUpdater;
+use App\Services\ProductCases\ProductCaseRequestDraftEditor;
+use App\Services\ProductCases\ProductCaseDocumentSelector;
+use App\Services\ProductCases\ProductCaseReadinessResolver;
+use App\Services\ProductCases\ProductCaseTimelineResolver;
+use App\Services\ProductCases\ProductCaseRequestDraftGenerator;
+use App\Services\ProductCases\ProductCasePhotoManager;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
-use App\Models\Document;
-use App\Services\ProductCases\ProductCaseDocumentSelector;
-use RuntimeException;
-use App\Services\ProductCases\ProductCaseReadinessResolver;
-use App\Services\ProductCases\ProductCaseTimelineResolver;
-use App\Exceptions\ProductCases\ProductCaseRequestDraftProtectedException;
-use App\Services\ProductCases\ProductCaseRequestDraftGenerator;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
-use Livewire\Component;
-use Spatie\MediaLibrary\MediaCollections\Models\Media;
-use App\Services\ProductCases\ProductCasePhotoManager;
 use Illuminate\Http\UploadedFile;
 use Livewire\WithFileUploads;
+use Livewire\Component;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use RuntimeException;
 
 final class ProductCaseShow extends Component
 {
@@ -110,6 +111,10 @@ final class ProductCaseShow extends Component
     public ?string $requestDraftSuccessMessage = null;
 
     public ?string $requestDraftErrorMessage = null;
+
+    public bool $isEditingRequestDraft = false;
+
+    public string $requestDraftBody = '';
 
     /**
      * Snapshot read-only della readiness.
@@ -207,6 +212,7 @@ final class ProductCaseShow extends Component
         $this->resetDocumentManagementForm();
         $this->resetPhotoManagementForm();
         $this->resetRequestDraftMessages();
+        $this->resetRequestDraftEditForm();
 
         $this->documentsSuccessMessage =
             null;
@@ -489,6 +495,7 @@ final class ProductCaseShow extends Component
         $this->resetDetailsForm();
         $this->resetPhotoManagementForm();
         $this->resetRequestDraftMessages();
+        $this->resetRequestDraftEditForm();
 
         $this->detailsSuccessMessage =
             null;
@@ -774,6 +781,7 @@ final class ProductCaseShow extends Component
         $this->resetDetailsForm();
         $this->resetDocumentManagementForm();
         $this->resetRequestDraftMessages();
+        $this->resetRequestDraftEditForm();
 
         $this->detailsSuccessMessage =
             null;
@@ -1056,6 +1064,7 @@ final class ProductCaseShow extends Component
         $this->resetDocumentManagementForm();
         $this->resetPhotoManagementForm();
         $this->resetRequestDraftMessages();
+        $this->resetRequestDraftEditForm();
 
         $this->detailsSuccessMessage =
             null;
@@ -1135,6 +1144,203 @@ final class ProductCaseShow extends Component
 
         $this->requestDraftSuccessMessage =
             'Bozza rigenerata correttamente.';
+    }
+
+    /**
+     * Verifica che il salvataggio provenga dall’editor aperto.
+     */
+    private function ensureRequestDraftEditIsOpen(): void
+    {
+        if (! $this->isEditingRequestDraft) {
+            throw new RuntimeException(
+                'L’editor della bozza non è aperto.'
+            );
+        }
+    }
+
+    /**
+     * Ripristina lo stato interno dell’editor manuale.
+     */
+    private function resetRequestDraftEditForm(): void
+    {
+        $this->isEditingRequestDraft =
+            false;
+
+        $this->requestDraftBody =
+            '';
+    }
+
+    /**
+     * Apre l’editor manuale usando il contenuto corrente.
+     */
+    public function startRequestDraftEdit(): void
+    {
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->ensureRequestDraftIsMutable(
+            $currentCase
+        );
+
+        $this->loadProductCaseState(
+            $currentCase
+        );
+
+        $this->resetValidation();
+        $this->resetDetailsForm();
+        $this->resetDocumentManagementForm();
+        $this->resetPhotoManagementForm();
+        $this->resetRequestDraftEditForm();
+        $this->resetRequestDraftMessages();
+
+        $this->detailsSuccessMessage =
+            null;
+
+        $this->documentsSuccessMessage =
+            null;
+
+        $this->photosSuccessMessage =
+            null;
+
+        $this->requestDraftBody =
+            is_string(
+                $this->productCase
+                    ->request_draft
+            )
+                ? $this->productCase
+                    ->request_draft
+                : '';
+
+        $this->isEditingRequestDraft =
+            true;
+    }
+
+    /**
+     * Chiude l’editor senza salvare modifiche.
+     */
+    public function cancelRequestDraftEdit(): void
+    {
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->resetValidation();
+        $this->resetRequestDraftEditForm();
+        $this->resetRequestDraftMessages();
+    }
+
+    /**
+     * Salva la bozza manuale tramite il service di dominio.
+     */
+    public function saveRequestDraft(
+        ProductCaseRequestDraftEditor $editor
+    ): void {
+        $this->ensureRequestDraftEditIsOpen();
+
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->ensureRequestDraftIsMutable(
+            $currentCase
+        );
+
+        $validated = Validator::make(
+            [
+                'requestDraftBody' =>
+                    $this->requestDraftBody,
+            ],
+            [
+                'requestDraftBody' => [
+                    'required',
+                    'string',
+                    'max:'
+                        . ProductCaseRequestDraftEditor
+                            ::MAX_LENGTH,
+                ],
+            ],
+            [
+                'requestDraftBody.required' =>
+                    'Inserisci il testo della richiesta.',
+
+                'requestDraftBody.max' =>
+                    'La bozza non può superare 50.000 caratteri.',
+            ]
+        )->validate();
+
+        $editedBy =
+            Auth::user();
+
+        if (! $editedBy instanceof User) {
+            throw new RuntimeException(
+                'Utente autenticato non disponibile.'
+            );
+        }
+
+        $previousDraft =
+            is_string(
+                $currentCase->request_draft
+            )
+                ? $currentCase->request_draft
+                : null;
+
+        $hadDraft =
+            $previousDraft !== null
+            && trim($previousDraft) !== '';
+
+        $updatedCase =
+            $editor->saveManualDraft(
+                productCase:
+                    $currentCase,
+
+                editedBy:
+                    $editedBy,
+
+                draft:
+                    $validated[
+                        'requestDraftBody'
+                    ],
+            );
+
+        $currentDraft =
+            is_string(
+                $updatedCase->request_draft
+            )
+                ? $updatedCase->request_draft
+                : null;
+
+        $this->loadProductCaseState(
+            $updatedCase
+        );
+
+        $this->resetValidation();
+        $this->resetRequestDraftEditForm();
+        $this->resetRequestDraftMessages();
+
+        if ($previousDraft === $currentDraft) {
+            $this->requestDraftSuccessMessage =
+                'La bozza non contiene modifiche.';
+
+            return;
+        }
+
+        $this->requestDraftSuccessMessage =
+            $hadDraft
+                ? 'Bozza aggiornata manualmente.'
+                : 'Bozza manuale salvata correttamente.';
     }
 
     /**
@@ -1300,13 +1506,13 @@ final class ProductCaseShow extends Component
             )
         ) {
             throw new RuntimeException(
-                'La bozza può essere generata soltanto prima che il contatto venga registrato.'
+                'La bozza può essere gestita soltanto prima che il contatto venga registrato.'
             );
         }
     }
 
     /**
-     * Azzera i feedback della generazione automatica.
+     * Azzera i feedback delle operazioni sulla bozza.
      */
     private function resetRequestDraftMessages(): void
     {

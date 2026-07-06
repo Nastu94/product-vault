@@ -8,11 +8,11 @@ use App\Models\ProductCase;
 use App\Models\ProductCaseEvent;
 use App\Models\User;
 use App\Services\ProductCases\ProductCaseCreator;
-use App\Services\ProductCases\ProductCasePhotoManager;
+use App\Services\ProductCases\ProductCaseRequestDraftEditor;
+use App\Services\ProductCases\ProductCaseRequestDraftGenerator;
 use App\Services\ProductCases\ProductCaseStatusTransitionService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Console\Command;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -23,28 +23,25 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Spatie\Permission\PermissionRegistrar;
 use Throwable;
 
-final class TestProductCasePhotoManagementUiCommand
+final class TestProductCaseRequestDraftEditUiCommand
     extends Command
 {
     protected $signature =
-        'product-vault:test-product-case-photo-management-ui';
+        'product-vault:test-product-case-request-draft-edit-ui';
 
     protected $description =
-        'Verifica con rollback la gestione UI delle fotografie private della pratica.';
+        'Verifica con rollback la modifica manuale UI della bozza di richiesta.';
 
     public function handle(
         ProductCaseCreator $creator,
-        ProductCasePhotoManager $photoManager,
+        ProductCaseRequestDraftGenerator $generator,
+        ProductCaseRequestDraftEditor $editor,
         ProductCaseStatusTransitionService $transitionService
     ): int {
         $rows = [];
         $failures = [];
 
-        $createdCaseId = null;
-        $createdMediaId = null;
-
-        $temporaryPaths = [];
-        $mediaPaths = [];
+        $createdCaseIds = [];
 
         $casesBefore =
             ProductCase::query()->count();
@@ -55,7 +52,7 @@ final class TestProductCasePhotoManagementUiCommand
         $mediaBefore =
             Media::query()->count();
 
-        $caseDocumentLinksBefore =
+        $documentLinksBefore =
             DB::table(
                 'product_case_documents'
             )->count();
@@ -98,102 +95,6 @@ final class TestProductCasePhotoManagementUiCommand
                         $actual,
                 ];
             }
-        };
-
-        /*
-         * PNG RGB 1x1 valido, generato senza dipendenze esterne.
-         */
-        $makePngContent = function (): string {
-            $chunk = function (
-                string $type,
-                string $data
-            ): string {
-                return pack(
-                    'N',
-                    strlen($data)
-                )
-                    . $type
-                    . $data
-                    . pack(
-                        'N',
-                        crc32($type . $data)
-                    );
-            };
-
-            $header = pack(
-                'NNCCCCC',
-                1,
-                1,
-                8,
-                2,
-                0,
-                0,
-                0
-            );
-
-            $pixel =
-                "\x00\x35\x79\xBD";
-
-            return "\x89PNG\r\n\x1a\n"
-                . $chunk(
-                    'IHDR',
-                    $header
-                )
-                . $chunk(
-                    'IDAT',
-                    gzcompress($pixel)
-                )
-                . $chunk(
-                    'IEND',
-                    ''
-                );
-        };
-
-        $makeUpload = function (
-            string $content,
-            string $originalName
-        ) use (&$temporaryPaths): UploadedFile {
-            $path = tempnam(
-                sys_get_temp_dir(),
-                'pv-case-photo-ui-'
-            );
-
-            if ($path === false) {
-                throw new RuntimeException(
-                    'Impossibile creare il file temporaneo.'
-                );
-            }
-
-            if (
-                file_put_contents(
-                    $path,
-                    $content
-                ) === false
-            ) {
-                throw new RuntimeException(
-                    'Impossibile scrivere il file temporaneo.'
-                );
-            }
-
-            $temporaryPaths[] =
-                $path;
-
-            return new UploadedFile(
-                path:
-                    $path,
-
-                originalName:
-                    $originalName,
-
-                mimeType:
-                    'image/png',
-
-                error:
-                    UPLOAD_ERR_OK,
-
-                test:
-                    true,
-            );
         };
 
         $render = function (
@@ -386,7 +287,7 @@ final class TestProductCasePhotoManagementUiCommand
                 $user
             );
 
-            $productCase =
+            $manualCase =
                 $creator->create(
                     product:
                         $product,
@@ -396,10 +297,10 @@ final class TestProductCasePhotoManagementUiCommand
 
                     attributes: [
                         'title' =>
-                            'Problema con fotografie private',
+                            'Bozza manuale da compilare',
 
                         'description' =>
-                            'Il prodotto presenta un difetto visibile da documentare.',
+                            'Il prodotto presenta un problema da descrivere al venditore.',
 
                         'occurred_on' =>
                             today()
@@ -414,25 +315,8 @@ final class TestProductCasePhotoManagementUiCommand
                     ],
                 );
 
-            $createdCaseId =
-                (int) $productCase->id;
-
-            $caseMetadataBefore =
-                $productCase->metadata;
-
-            $requestDraftBefore =
-                $productCase
-                    ->request_draft;
-
-            $caseUpdatedAtBefore =
-                $productCase
-                    ->updated_at
-                    ?->toISOString();
-
-            $caseDocumentLinksBeforeOperations =
-                DB::table(
-                    'product_case_documents'
-                )->count();
+            $createdCaseIds[] =
+                (int) $manualCase->id;
 
             $component =
                 app(
@@ -440,11 +324,19 @@ final class TestProductCasePhotoManagementUiCommand
                 );
 
             $component->mount(
-                $productCase
+                $manualCase
             );
 
-            $readinessBefore =
-                $component->readiness;
+            $initialStatus =
+                $manualCase->status;
+
+            $documentLinksBeforeOperations =
+                DB::table(
+                    'product_case_documents'
+                )->count();
+
+            $mediaBeforeOperations =
+                Media::query()->count();
 
             /*
              |--------------------------------------------------------------------------
@@ -452,76 +344,124 @@ final class TestProductCasePhotoManagementUiCommand
              |--------------------------------------------------------------------------
              */
 
-            $assertSame(
-                'initial',
-                'photo manager starts closed',
-                false,
-                $component
-                    ->isManagingPhotos
-            );
-
-            $assertSame(
-                'initial',
-                'case starts without photos',
-                [],
-                $component
-                    ->issuePhotos
-            );
-
             $initialHtml =
                 $render(
                     $component
                 );
 
             $assertSame(
+                'initial',
+                'editor starts closed',
+                false,
+                $component
+                    ->isEditingRequestDraft
+            );
+
+            $assertSame(
+                'initial',
+                'draft body starts empty',
+                '',
+                $component
+                    ->requestDraftBody
+            );
+
+            $assertSame(
                 'html',
-                'photo management action visible',
+                'manual action visible',
                 true,
                 str_contains(
                     $initialHtml,
-                    'start-product-case-photo-management'
+                    'start-product-case-request-draft-edit'
                 )
             );
 
             $assertSame(
                 'html',
-                'photo manager hidden initially',
-                false,
+                'manual creation label visible',
+                true,
                 str_contains(
                     $initialHtml,
-                    'product-case-photo-manager'
+                    'Scrivi manualmente'
                 )
             );
 
             $assertSame(
                 'html',
-                'no file input before opening',
+                'editor hidden initially',
                 false,
                 str_contains(
                     $initialHtml,
-                    'type="file"'
+                    'product-case-request-draft-editor'
                 )
             );
 
             /*
              |--------------------------------------------------------------------------
-             | Apertura pannello
+             | Salvataggio senza editor aperto
+             |--------------------------------------------------------------------------
+             */
+
+            $eventsBeforeClosedAttempt =
+                ProductCaseEvent::query()
+                    ->count();
+
+            $closedAttemptRejected =
+                false;
+
+            try {
+                $component
+                    ->saveRequestDraft(
+                        $editor
+                    );
+            } catch (
+                RuntimeException
+            ) {
+                $closedAttemptRejected =
+                    true;
+            }
+
+            $assertSame(
+                'guard',
+                'save rejected when editor closed',
+                true,
+                $closedAttemptRejected
+            );
+
+            $assertSame(
+                'guard',
+                'closed attempt creates no event',
+                $eventsBeforeClosedAttempt,
+                ProductCaseEvent::query()
+                    ->count()
+            );
+
+            /*
+             |--------------------------------------------------------------------------
+             | Apertura editor
              |--------------------------------------------------------------------------
              */
 
             $component
-                ->startPhotoManagement();
+                ->startRequestDraftEdit();
 
             $assertSame(
-                'manager',
-                'photo manager opened',
+                'editor',
+                'editor opened',
                 true,
                 $component
-                    ->isManagingPhotos
+                    ->isEditingRequestDraft
             );
 
             $assertSame(
-                'manager',
+                'editor',
+                'empty case loads empty body',
+                '',
+                $component
+                    ->requestDraftBody
+            );
+
+            $assertSame(
+                'editor',
                 'details editor closed',
                 false,
                 $component
@@ -529,11 +469,19 @@ final class TestProductCasePhotoManagementUiCommand
             );
 
             $assertSame(
-                'manager',
+                'editor',
                 'document manager closed',
                 false,
                 $component
                     ->isManagingDocuments
+            );
+
+            $assertSame(
+                'editor',
+                'photo manager closed',
+                false,
+                $component
+                    ->isManagingPhotos
             );
 
             $openHtml =
@@ -543,47 +491,47 @@ final class TestProductCasePhotoManagementUiCommand
 
             $assertSame(
                 'html',
-                'photo manager rendered',
+                'editor rendered',
                 true,
                 str_contains(
                     $openHtml,
-                    'product-case-photo-manager'
+                    'product-case-request-draft-editor'
                 )
             );
 
             $assertSame(
                 'html',
-                'upload action rendered',
+                'textarea rendered',
                 true,
                 str_contains(
                     $openHtml,
-                    'wire:submit.prevent="uploadPhoto"'
+                    'product-case-request-draft-body'
                 )
             );
 
             $assertSame(
                 'html',
-                'private image input rendered',
+                'save action rendered',
                 true,
                 str_contains(
                     $openHtml,
-                    'type="file"'
+                    'wire:submit.prevent="saveRequestDraft"'
                 )
             );
 
             $assertSame(
                 'html',
-                'input accepts supported formats',
-                true,
+                'automatic generation hidden during editing',
+                false,
                 str_contains(
                     $openHtml,
-                    '.jpg,.jpeg,.png,.webp'
+                    'generate-product-case-request-draft'
                 )
             );
 
             /*
              |--------------------------------------------------------------------------
-             | Validazione upload vuoto
+             | Validazione testo vuoto
              |--------------------------------------------------------------------------
              */
 
@@ -591,23 +539,21 @@ final class TestProductCasePhotoManagementUiCommand
                 ProductCaseEvent::query()
                     ->count();
 
-            $mediaBeforeInvalid =
-                Media::query()->count();
-
-            $emptyUploadRejected =
+            $invalidRejected =
                 false;
 
             $invalidFields =
                 [];
 
             try {
-                $component->uploadPhoto(
-                    $photoManager
-                );
+                $component
+                    ->saveRequestDraft(
+                        $editor
+                    );
             } catch (
                 ValidationException $exception
             ) {
-                $emptyUploadRejected =
+                $invalidRejected =
                     true;
 
                 $invalidFields =
@@ -618,314 +564,262 @@ final class TestProductCasePhotoManagementUiCommand
 
             $assertSame(
                 'validation',
-                'empty upload rejected',
+                'empty draft rejected',
                 true,
-                $emptyUploadRejected
+                $invalidRejected
             );
 
             $assertSame(
                 'validation',
-                'photo field reported',
+                'draft field reported',
                 [
-                    'photoUpload',
+                    'requestDraftBody',
                 ],
                 $invalidFields
             );
 
             $assertSame(
                 'validation',
-                'invalid upload creates no media',
-                $mediaBeforeInvalid,
-                Media::query()->count()
-            );
-
-            $assertSame(
-                'validation',
-                'invalid upload creates no event',
+                'invalid draft creates no event',
                 $eventsBeforeInvalid,
                 ProductCaseEvent::query()
                     ->count()
             );
 
+            $assertSame(
+                'validation',
+                'invalid draft not persisted',
+                null,
+                ProductCase::query()
+                    ->findOrFail(
+                        $manualCase->id
+                    )
+                    ->request_draft
+            );
+
             /*
              |--------------------------------------------------------------------------
-             | Upload valido
+             | Annullamento
              |--------------------------------------------------------------------------
              */
 
-            $pngContent =
-                $makePngContent();
+            $component->requestDraftBody =
+                'Testo da non salvare';
 
-            $originalFilename =
-                'foto-problema-privata.png';
-
-            $eventsBeforeUpload =
+            $eventsBeforeCancel =
                 ProductCaseEvent::query()
                     ->count();
 
-            $mediaBeforeUpload =
-                Media::query()->count();
-
-            $component->photoUpload =
-                $makeUpload(
-                    content:
-                        $pngContent,
-
-                    originalName:
-                        $originalFilename,
-                );
-
-            $component->uploadPhoto(
-                $photoManager
-            );
-
-            $storedMedia = Media::query()
-                ->where(
-                    'model_type',
-                    $productCase
-                        ->getMorphClass()
-                )
-                ->where(
-                    'model_id',
-                    $productCase->id
-                )
-                ->where(
-                    'collection_name',
-                    ProductCase
-                        ::MEDIA_COLLECTION_ISSUE_PHOTOS
-                )
-                ->orderByDesc('id')
-                ->first();
-
-            if ($storedMedia === null) {
-                throw new RuntimeException(
-                    'Fotografia caricata non disponibile.'
-                );
-            }
-
-            $createdMediaId =
-                (int) $storedMedia->id;
-
-            $storedPath =
-                $storedMedia->getPath();
-
-            $mediaPaths[] =
-                $storedPath;
+            $component
+                ->cancelRequestDraftEdit();
 
             $assertSame(
-                'upload',
-                'one media created',
-                $mediaBeforeUpload + 1,
-                Media::query()->count()
+                'cancellation',
+                'editor closed',
+                false,
+                $component
+                    ->isEditingRequestDraft
             );
 
             $assertSame(
-                'upload',
-                'one event created',
-                $eventsBeforeUpload + 1,
+                'cancellation',
+                'draft body reset',
+                '',
+                $component
+                    ->requestDraftBody
+            );
+
+            $assertSame(
+                'cancellation',
+                'cancel creates no event',
+                $eventsBeforeCancel,
                 ProductCaseEvent::query()
                     ->count()
             );
 
             $assertSame(
-                'upload',
-                'private disk used',
-                'local',
-                $storedMedia->disk
-            );
-
-            $assertSame(
-                'upload',
-                'issue photo collection used',
-                ProductCase
-                    ::MEDIA_COLLECTION_ISSUE_PHOTOS,
-                $storedMedia
-                    ->collection_name
-            );
-
-            $assertSame(
-                'upload',
-                'original filename preserved',
-                $originalFilename,
-                $storedMedia
-                    ->getCustomProperty(
-                        'original_filename'
-                    )
-            );
-
-            $assertSame(
-                'upload',
-                'physical filename randomized',
-                false,
-                $storedMedia->file_name
-                    === $originalFilename
-            );
-
-            $assertSame(
-                'upload',
-                'physical file exists',
-                true,
-                is_file(
-                    $storedPath
-                )
-            );
-
-            $storedHash =
-                $storedMedia
-                    ->getCustomProperty(
-                        'sha256'
-                    );
-
-            $assertSame(
-                'upload',
-                'sha256 stored',
-                hash(
-                    'sha256',
-                    $pngContent
-                ),
-                $storedHash
-            );
-
-            $assertSame(
-                'component',
-                'one photo immediately visible',
-                1,
-                count(
-                    $component
-                        ->issuePhotos
-                )
-            );
-
-            $assertSame(
-                'component',
-                'photo id exposed',
-                (int) $storedMedia->id,
-                (int) data_get(
-                    $component
-                        ->issuePhotos,
-                    '0.id'
-                )
-            );
-
-            $assertSame(
-                'component',
-                'original filename exposed',
-                $originalFilename,
-                data_get(
-                    $component
-                        ->issuePhotos,
-                    '0.original_filename'
-                )
-            );
-
-            $assertSame(
-                'component',
-                'upload property reset',
+                'cancellation',
+                'cancel persists no draft',
                 null,
-                $component
-                    ->photoUpload
-            );
-
-            $assertSame(
-                'component',
-                'upload success exposed',
-                'Fotografia aggiunta alla pratica.',
-                $component
-                    ->photosSuccessMessage
+                ProductCase::query()
+                    ->findOrFail(
+                        $manualCase->id
+                    )
+                    ->request_draft
             );
 
             /*
-             * Il contratto pubblico non deve contenere informazioni
-             * sull’ubicazione fisica del file.
+             |--------------------------------------------------------------------------
+             | Prima bozza manuale
+             |--------------------------------------------------------------------------
              */
-            $photoMetadata =
-                $component
-                    ->issuePhotos[0];
+
+            $component
+                ->startRequestDraftEdit();
+
+            $component->requestDraftBody =
+                "  Buongiorno,\r\n\r\n"
+                . "richiedo assistenza per il prodotto.  ";
+
+            $normalizedDraft =
+                "Buongiorno,\n\n"
+                . 'richiedo assistenza per il prodotto.';
+
+            $eventsBeforeFirstSave =
+                ProductCaseEvent::query()
+                    ->count();
+
+            $component
+                ->saveRequestDraft(
+                    $editor
+                );
+
+            $firstSavedCase =
+                ProductCase::query()
+                    ->findOrFail(
+                        $manualCase->id
+                    );
 
             $assertSame(
-                'privacy',
-                'physical filename not exposed',
-                false,
-                array_key_exists(
-                    'file_name',
-                    $photoMetadata
+                'manual creation',
+                'normalized draft persisted',
+                $normalizedDraft,
+                $firstSavedCase
+                    ->request_draft
+            );
+
+            $assertSame(
+                'manual creation',
+                'manual source stored',
+                ProductCase
+                    ::REQUEST_DRAFT_SOURCE_MANUAL,
+                data_get(
+                    $firstSavedCase->metadata,
+                    ProductCase
+                        ::REQUEST_DRAFT_CURRENT_METADATA_KEY
+                        . '.source'
                 )
             );
 
             $assertSame(
-                'privacy',
-                'disk not exposed',
-                false,
-                array_key_exists(
-                    'disk',
-                    $photoMetadata
+                'manual creation',
+                'current hash stored',
+                hash(
+                    'sha256',
+                    $normalizedDraft
+                ),
+                data_get(
+                    $firstSavedCase->metadata,
+                    ProductCase
+                        ::REQUEST_DRAFT_CURRENT_METADATA_KEY
+                        . '.sha256'
                 )
             );
 
             $assertSame(
-                'privacy',
-                'path not exposed',
-                false,
-                array_key_exists(
-                    'path',
-                    $photoMetadata
-                )
+                'manual creation',
+                'automatic generation timestamp absent',
+                null,
+                $firstSavedCase
+                    ->request_draft_generated_at
             );
 
             $assertSame(
-                'privacy',
-                'url not exposed',
-                false,
-                array_key_exists(
-                    'url',
-                    $photoMetadata
-                )
+                'manual creation',
+                'one edit event created',
+                $eventsBeforeFirstSave + 1,
+                ProductCaseEvent::query()
+                    ->count()
             );
 
-            $photoAddedEvent =
+            $firstEditEvent =
                 ProductCaseEvent::query()
                     ->where(
                         'product_case_id',
-                        $productCase->id
+                        $manualCase->id
                     )
                     ->where(
                         'event_type',
                         ProductCaseEvent
-                            ::TYPE_PHOTO_ADDED
+                            ::TYPE_REQUEST_DRAFT_EDITED
                     )
                     ->orderByDesc('id')
                     ->first();
 
             $assertSame(
                 'event',
-                'photo added event available',
+                'manual edit event available',
                 true,
-                $photoAddedEvent !== null
+                $firstEditEvent !== null
             );
 
             $assertSame(
                 'event',
-                'event references media',
-                (int) $storedMedia->id,
-                (int) data_get(
-                    $photoAddedEvent
+                'previous source is empty',
+                'empty',
+                data_get(
+                    $firstEditEvent
                         ?->metadata,
-                    'media_id'
+                    'previous_source'
                 )
             );
 
             $assertSame(
                 'event',
-                'event references uploader',
-                (int) $user->id,
-                (int) data_get(
-                    $photoAddedEvent
+                'new hash matches draft',
+                hash(
+                    'sha256',
+                    $normalizedDraft
+                ),
+                data_get(
+                    $firstEditEvent
                         ?->metadata,
-                    'uploaded_by_user_id'
+                    'new_sha256'
                 )
             );
 
-            $timelineAdded =
+            $assertSame(
+                'component',
+                'saved draft refreshed',
+                $normalizedDraft,
+                $component
+                    ->productCase
+                    ->request_draft
+            );
+
+            $assertSame(
+                'component',
+                'manual source label refreshed',
+                'Modificata manualmente',
+                $component
+                    ->requestDraftSourceLabel
+            );
+
+            $assertSame(
+                'component',
+                'editor closed after save',
+                false,
+                $component
+                    ->isEditingRequestDraft
+            );
+
+            $assertSame(
+                'component',
+                'draft body reset after save',
+                '',
+                $component
+                    ->requestDraftBody
+            );
+
+            $assertSame(
+                'component',
+                'manual creation success exposed',
+                'Bozza manuale salvata correttamente.',
+                $component
+                    ->requestDraftSuccessMessage
+            );
+
+            $firstTimelineEdit =
                 collect(
                     data_get(
                         $component->timeline,
@@ -936,408 +830,532 @@ final class TestProductCasePhotoManagementUiCommand
                     ->where(
                         'type',
                         ProductCaseEvent
-                            ::TYPE_PHOTO_ADDED
+                            ::TYPE_REQUEST_DRAFT_EDITED
                     )
                     ->last();
 
             $assertSame(
                 'timeline',
-                'added event immediately visible',
+                'manual event immediately visible',
                 true,
-                $timelineAdded !== null
+                $firstTimelineEdit !== null
             );
 
             $assertSame(
                 'timeline',
-                'photo reference available',
-                'available',
+                'manual draft is current',
+                'current',
                 data_get(
-                    $timelineAdded,
+                    $firstTimelineEdit,
                     'reference.state'
                 )
             );
 
-            $assertSame(
-                'timeline',
-                'original filename normalized',
-                $originalFilename,
-                data_get(
-                    $timelineAdded,
-                    'details.original_filename'
-                )
-            );
-
-            $timelineJson =
-                json_encode(
-                    $component->timeline
-                );
-
-            if (! is_string($timelineJson)) {
-                throw new RuntimeException(
-                    'Timeline non serializzabile.'
-                );
-            }
-
-            $assertSame(
-                'privacy',
-                'timeline hides physical filename',
-                false,
-                str_contains(
-                    $timelineJson,
-                    $storedMedia->file_name
-                )
-            );
-
-            $uploadedHtml =
+            $savedHtml =
                 $render(
                     $component
                 );
 
             $assertSame(
                 'html',
-                'original filename rendered',
+                'manual draft rendered',
                 true,
                 str_contains(
-                    $uploadedHtml,
-                    $originalFilename
+                    html_entity_decode(
+                        $savedHtml
+                    ),
+                    'richiedo assistenza per il prodotto.'
                 )
             );
 
             $assertSame(
                 'html',
-                'remove action rendered',
+                'manual edit label rendered',
                 true,
                 str_contains(
-                    $uploadedHtml,
-                    'remove-product-case-photo-'
-                    . $storedMedia->id
-                )
-            );
-
-            $assertSame(
-                'privacy',
-                'physical filename hidden from html',
-                false,
-                str_contains(
-                    $uploadedHtml,
-                    $storedMedia->file_name
+                    $savedHtml,
+                    'Modifica testo'
                 )
             );
 
             /*
              |--------------------------------------------------------------------------
-             | Upload duplicato
+             | No-op dopo normalizzazione
              |--------------------------------------------------------------------------
              */
 
-            $eventsBeforeDuplicate =
+            $component
+                ->startRequestDraftEdit();
+
+            $assertSame(
+                'no-op',
+                'current text loaded into editor',
+                $normalizedDraft,
+                $component
+                    ->requestDraftBody
+            );
+
+            $component->requestDraftBody =
+                " \r\n"
+                . $normalizedDraft
+                . "\r\n ";
+
+            $eventsBeforeNoOp =
                 ProductCaseEvent::query()
                     ->count();
 
-            $mediaBeforeDuplicate =
-                Media::query()->count();
+            $metadataBeforeNoOp =
+                $firstSavedCase
+                    ->metadata;
 
-            $component->photoUpload =
-                $makeUpload(
-                    content:
-                        $pngContent,
+            $updatedAtBeforeNoOp =
+                $firstSavedCase
+                    ->updated_at
+                    ?->toISOString();
 
-                    originalName:
-                        'nome-diverso-stesso-contenuto.png',
+            $component
+                ->saveRequestDraft(
+                    $editor
                 );
 
-            $component->uploadPhoto(
-                $photoManager
+            $noOpCase =
+                ProductCase::query()
+                    ->findOrFail(
+                        $manualCase->id
+                    );
+
+            $assertSame(
+                'no-op',
+                'normalized draft unchanged',
+                $normalizedDraft,
+                $noOpCase
+                    ->request_draft
             );
 
             $assertSame(
-                'deduplication',
-                'duplicate creates no media',
-                $mediaBeforeDuplicate,
-                Media::query()->count()
-            );
-
-            $assertSame(
-                'deduplication',
-                'duplicate creates no event',
-                $eventsBeforeDuplicate,
+                'no-op',
+                'no event created',
+                $eventsBeforeNoOp,
                 ProductCaseEvent::query()
                     ->count()
             );
 
             $assertSame(
-                'deduplication',
-                'single photo remains visible',
-                1,
-                count(
-                    $component
-                        ->issuePhotos
-                )
+                'no-op',
+                'metadata unchanged',
+                $metadataBeforeNoOp,
+                $noOpCase
+                    ->metadata
             );
 
             $assertSame(
-                'deduplication',
-                'duplicate feedback exposed',
-                'La stessa fotografia era già presente nella pratica.',
+                'no-op',
+                'case timestamp unchanged',
+                $updatedAtBeforeNoOp,
+                $noOpCase
+                    ->updated_at
+                    ?->toISOString()
+            );
+
+            $assertSame(
+                'no-op',
+                'no-op feedback exposed',
+                'La bozza non contiene modifiche.',
                 $component
-                    ->photosSuccessMessage
+                    ->requestDraftSuccessMessage
             );
 
             /*
              |--------------------------------------------------------------------------
-             | Rimozione
+             | Seconda modifica manuale
              |--------------------------------------------------------------------------
              */
 
-            $eventsBeforeRemoval =
+            $component
+                ->startRequestDraftEdit();
+
+            $updatedManualDraft =
+                $normalizedDraft
+                . "\n\n"
+                . 'Il problema si presenta a ogni accensione.';
+
+            $component->requestDraftBody =
+                $updatedManualDraft;
+
+            $eventsBeforeSecondSave =
                 ProductCaseEvent::query()
                     ->count();
 
-            $mediaBeforeRemoval =
-                Media::query()->count();
+            $component
+                ->saveRequestDraft(
+                    $editor
+                );
 
-            $component->removePhoto(
-                mediaId:
-                    (int) $storedMedia->id,
+            $secondSavedCase =
+                ProductCase::query()
+                    ->findOrFail(
+                        $manualCase->id
+                    );
 
-                photoManager:
-                    $photoManager,
+            $assertSame(
+                'manual update',
+                'updated draft persisted',
+                $updatedManualDraft,
+                $secondSavedCase
+                    ->request_draft
             );
 
             $assertSame(
-                'removal',
-                'one media removed',
-                $mediaBeforeRemoval - 1,
-                Media::query()->count()
-            );
-
-            $assertSame(
-                'removal',
-                'one event created',
-                $eventsBeforeRemoval + 1,
+                'manual update',
+                'one new event created',
+                $eventsBeforeSecondSave + 1,
                 ProductCaseEvent::query()
                     ->count()
             );
 
             $assertSame(
-                'removal',
-                'media record removed',
-                false,
-                Media::query()
-                    ->whereKey(
-                        $storedMedia->id
-                    )
-                    ->exists()
-            );
-
-            $assertSame(
-                'removal',
-                'physical file removed',
-                false,
-                is_file(
-                    $storedPath
-                )
-            );
-
-            $assertSame(
-                'component',
-                'photo list refreshed',
-                [],
-                $component
-                    ->issuePhotos
-            );
-
-            $assertSame(
-                'component',
-                'removal success exposed',
-                'Fotografia rimossa dalla pratica.',
-                $component
-                    ->photosSuccessMessage
-            );
-
-            $photoRemovedEvent =
-                ProductCaseEvent::query()
-                    ->where(
-                        'product_case_id',
-                        $productCase->id
-                    )
-                    ->where(
-                        'event_type',
-                        ProductCaseEvent
-                            ::TYPE_PHOTO_REMOVED
-                    )
-                    ->orderByDesc('id')
-                    ->first();
-
-            $assertSame(
-                'event',
-                'photo removed event available',
-                true,
-                $photoRemovedEvent !== null
-            );
-
-            $assertSame(
-                'event',
-                'removed filename snapshot preserved',
-                $originalFilename,
+                'manual update',
+                'manual edit count incremented',
+                2,
                 data_get(
-                    $photoRemovedEvent
-                        ?->metadata,
-                    'original_filename'
+                    $secondSavedCase->metadata,
+                    ProductCaseRequestDraftEditor
+                        ::METADATA_KEY
+                        . '.edit_count'
                 )
             );
 
             $assertSame(
-                'event',
-                'remover stored',
-                (int) $user->id,
-                (int) data_get(
-                    $photoRemovedEvent
-                        ?->metadata,
-                    'removed_by_user_id'
-                )
+                'manual update',
+                'update feedback exposed',
+                'Bozza aggiornata manualmente.',
+                $component
+                    ->requestDraftSuccessMessage
             );
 
-            $timelineEvents =
+            $manualTimelineEvents =
                 collect(
                     data_get(
                         $component->timeline,
                         'events',
                         []
                     )
-                );
-
-            $timelineAdded =
-                $timelineEvents
+                )
                     ->where(
                         'type',
                         ProductCaseEvent
-                            ::TYPE_PHOTO_ADDED
+                            ::TYPE_REQUEST_DRAFT_EDITED
                     )
-                    ->last();
-
-            $timelineRemoved =
-                $timelineEvents
-                    ->where(
-                        'type',
-                        ProductCaseEvent
-                            ::TYPE_PHOTO_REMOVED
-                    )
-                    ->last();
+                    ->values();
 
             $assertSame(
                 'timeline',
-                'old add event reflects removal',
-                'removed',
+                'first manual edit superseded',
+                'superseded',
                 data_get(
-                    $timelineAdded,
+                    $manualTimelineEvents
+                        ->first(),
                     'reference.state'
                 )
             );
 
             $assertSame(
                 'timeline',
-                'removal event reflects removal',
-                'removed',
+                'latest manual edit current',
+                'current',
                 data_get(
-                    $timelineRemoved,
+                    $manualTimelineEvents
+                        ->last(),
                     'reference.state'
-                )
-            );
-
-            $assertSame(
-                'timeline',
-                'removal filename preserved',
-                $originalFilename,
-                data_get(
-                    $timelineRemoved,
-                    'details.original_filename'
                 )
             );
 
             /*
              |--------------------------------------------------------------------------
-             | Protezioni e scope
+             | Modifica di una bozza generata
              |--------------------------------------------------------------------------
              */
 
-            $currentCase =
+            $generatedCase =
+                $creator->create(
+                    product:
+                        $product,
+
+                    openedBy:
+                        $user,
+
+                    attributes: [
+                        'title' =>
+                            'Bozza automatica da personalizzare',
+
+                        'description' =>
+                            'Il prodotto non completa correttamente l’avvio.',
+
+                        'occurred_on' =>
+                            today()
+                                ->toDateString(),
+
+                        'usability_status' =>
+                            ProductCase
+                                ::USABILITY_UNUSABLE,
+
+                        'accidental_damage_declared' =>
+                            false,
+                    ],
+                );
+
+            $createdCaseIds[] =
+                (int) $generatedCase->id;
+
+            $generatedCase =
+                $generator->generate(
+                    productCase:
+                        $generatedCase,
+
+                    generatedBy:
+                        $user,
+                );
+
+            $generatedDraft =
+                (string) $generatedCase
+                    ->request_draft;
+
+            $generatedAtBeforeManualEdit =
+                $generatedCase
+                    ->request_draft_generated_at
+                    ?->toISOString();
+
+            $generatedComponent =
+                app(
+                    ProductCaseShow::class
+                );
+
+            $generatedComponent->mount(
+                $generatedCase
+            );
+
+            $generatedComponent
+                ->startRequestDraftEdit();
+
+            $assertSame(
+                'generated edit',
+                'generated text prefilled',
+                $generatedDraft,
+                $generatedComponent
+                    ->requestDraftBody
+            );
+
+            $manuallyCustomizedDraft =
+                $generatedDraft
+                . "\n\n"
+                . 'Nota aggiunta manualmente prima dell’invio.';
+
+            $generatedComponent
+                ->requestDraftBody =
+                    $manuallyCustomizedDraft;
+
+            $eventsBeforeGeneratedEdit =
+                ProductCaseEvent::query()
+                    ->count();
+
+            $generatedComponent
+                ->saveRequestDraft(
+                    $editor
+                );
+
+            $customizedCase =
                 ProductCase::query()
                     ->findOrFail(
-                        $productCase->id
+                        $generatedCase->id
+                    );
+
+            $assertSame(
+                'generated edit',
+                'customized draft persisted',
+                $manuallyCustomizedDraft,
+                $customizedCase
+                    ->request_draft
+            );
+
+            $assertSame(
+                'generated edit',
+                'source changed to manual',
+                ProductCase
+                    ::REQUEST_DRAFT_SOURCE_MANUAL,
+                data_get(
+                    $customizedCase->metadata,
+                    ProductCase
+                        ::REQUEST_DRAFT_CURRENT_METADATA_KEY
+                        . '.source'
+                )
+            );
+
+            $assertSame(
+                'generated edit',
+                'generation timestamp preserved',
+                $generatedAtBeforeManualEdit,
+                $customizedCase
+                    ->request_draft_generated_at
+                    ?->toISOString()
+            );
+
+            $assertSame(
+                'generated edit',
+                'one edit event created',
+                $eventsBeforeGeneratedEdit + 1,
+                ProductCaseEvent::query()
+                    ->count()
+            );
+
+            $assertSame(
+                'generated edit',
+                'manual update feedback exposed',
+                'Bozza aggiornata manualmente.',
+                $generatedComponent
+                    ->requestDraftSuccessMessage
+            );
+
+            $generatedTimeline =
+                collect(
+                    data_get(
+                        $generatedComponent
+                            ->timeline,
+                        'events',
+                        []
+                    )
+                );
+
+            $generationTimelineEvent =
+                $generatedTimeline
+                    ->where(
+                        'type',
+                        ProductCaseEvent
+                            ::TYPE_REQUEST_DRAFT_GENERATED
+                    )
+                    ->last();
+
+            $manualTimelineEvent =
+                $generatedTimeline
+                    ->where(
+                        'type',
+                        ProductCaseEvent
+                            ::TYPE_REQUEST_DRAFT_EDITED
+                    )
+                    ->last();
+
+            $assertSame(
+                'timeline',
+                'automatic generation superseded',
+                'superseded',
+                data_get(
+                    $generationTimelineEvent,
+                    'reference.state'
+                )
+            );
+
+            $assertSame(
+                'timeline',
+                'manual customization current',
+                'current',
+                data_get(
+                    $manualTimelineEvent,
+                    'reference.state'
+                )
+            );
+
+            /*
+             |--------------------------------------------------------------------------
+             | Protezione dalla rigenerazione automatica
+             |--------------------------------------------------------------------------
+             */
+
+            $eventsBeforeProtectedGeneration =
+                ProductCaseEvent::query()
+                    ->count();
+
+            $updatedAtBeforeProtectedGeneration =
+                $customizedCase
+                    ->updated_at
+                    ?->toISOString();
+
+            $generatedComponent
+                ->generateRequestDraft(
+                    $generator
+                );
+
+            $protectedCase =
+                ProductCase::query()
+                    ->findOrFail(
+                        $generatedCase->id
                     );
 
             $assertSame(
                 'protection',
-                'case remains draft',
-                ProductCase::STATUS_DRAFT,
-                $currentCase->status
-            );
-
-            $assertSame(
-                'protection',
-                'case metadata unchanged',
-                $caseMetadataBefore,
-                $currentCase->metadata
-            );
-
-            $assertSame(
-                'protection',
-                'request draft unchanged',
-                $requestDraftBefore,
-                $currentCase
+                'manual customization preserved',
+                $manuallyCustomizedDraft,
+                $protectedCase
                     ->request_draft
             );
 
             $assertSame(
                 'protection',
-                'case timestamp unchanged',
-                $caseUpdatedAtBefore,
-                $currentCase
+                'protected generation creates no event',
+                $eventsBeforeProtectedGeneration,
+                ProductCaseEvent::query()
+                    ->count()
+            );
+
+            $assertSame(
+                'protection',
+                'protected generation changes no timestamp',
+                $updatedAtBeforeProtectedGeneration,
+                $protectedCase
                     ->updated_at
                     ?->toISOString()
             );
 
             $assertSame(
+                'protection',
+                'controlled error exposed',
+                'La bozza è stata modificata manualmente e non può essere sovrascritta automaticamente.',
+                $generatedComponent
+                    ->requestDraftErrorMessage
+            );
+
+            /*
+             |--------------------------------------------------------------------------
+             | Scope
+             |--------------------------------------------------------------------------
+             */
+
+            $manualCaseAfterOperations =
+                ProductCase::query()
+                    ->findOrFail(
+                        $manualCase->id
+                    );
+
+            $assertSame(
+                'scope',
+                'manual case status unchanged',
+                $initialStatus,
+                $manualCaseAfterOperations
+                    ->status
+            );
+
+            $assertSame(
                 'scope',
                 'document links unchanged',
-                $caseDocumentLinksBeforeOperations,
+                $documentLinksBeforeOperations,
                 DB::table(
                     'product_case_documents'
                 )->count()
             );
 
             $assertSame(
-                'readiness',
-                'photo operations do not alter readiness',
-                $readinessBefore,
-                $component
-                    ->readiness
-            );
-
-            /*
-             |--------------------------------------------------------------------------
-             | Chiusura pannello
-             |--------------------------------------------------------------------------
-             */
-
-            $component
-                ->cancelPhotoManagement();
-
-            $assertSame(
-                'cancellation',
-                'photo manager closed',
-                false,
-                $component
-                    ->isManagingPhotos
-            );
-
-            $assertSame(
-                'cancellation',
-                'upload reset',
-                null,
-                $component
-                    ->photoUpload
+                'scope',
+                'media unchanged',
+                $mediaBeforeOperations,
+                Media::query()->count()
             );
 
             /*
@@ -1353,7 +1371,7 @@ final class TestProductCasePhotoManagementUiCommand
                             $user->id,
 
                         'name' =>
-                            'Product Case Photos UI '
+                            'Product Case Draft Edit UI '
                             . Str::uuid(),
 
                         'personal_team' =>
@@ -1393,15 +1411,12 @@ final class TestProductCasePhotoManagementUiCommand
                 ProductCaseEvent::query()
                     ->count();
 
-            $mediaBeforeCrossTeam =
-                Media::query()->count();
-
             $crossTeamRejected =
                 false;
 
             try {
                 $component
-                    ->startPhotoManagement();
+                    ->startRequestDraftEdit();
             } catch (
                 AuthorizationException
             ) {
@@ -1411,7 +1426,7 @@ final class TestProductCasePhotoManagementUiCommand
 
             $assertSame(
                 'authorization',
-                'cross-team management rejected',
+                'cross-team editor rejected',
                 true,
                 $crossTeamRejected
             );
@@ -1422,13 +1437,6 @@ final class TestProductCasePhotoManagementUiCommand
                 $eventsBeforeCrossTeam,
                 ProductCaseEvent::query()
                     ->count()
-            );
-
-            $assertSame(
-                'authorization',
-                'cross-team attempt creates no media',
-                $mediaBeforeCrossTeam,
-                Media::query()->count()
             );
 
             User::query()
@@ -1464,7 +1472,7 @@ final class TestProductCasePhotoManagementUiCommand
                 $transitionService
                     ->transition(
                         productCase:
-                            $currentCase,
+                            $protectedCase,
 
                         performedBy:
                             $user,
@@ -1490,21 +1498,11 @@ final class TestProductCasePhotoManagementUiCommand
 
             $assertSame(
                 'state',
-                'photo action hidden in terminal state',
+                'manual edit action hidden after cancellation',
                 false,
                 str_contains(
                     $terminalHtml,
-                    'start-product-case-photo-management'
-                )
-            );
-
-            $assertSame(
-                'state',
-                'photo manager hidden in terminal state',
-                false,
-                str_contains(
-                    $terminalHtml,
-                    'product-case-photo-manager'
+                    'start-product-case-request-draft-edit'
                 )
             );
 
@@ -1512,15 +1510,12 @@ final class TestProductCasePhotoManagementUiCommand
                 ProductCaseEvent::query()
                     ->count();
 
-            $mediaBeforeTerminalAttempt =
-                Media::query()->count();
-
             $terminalRejected =
                 false;
 
             try {
                 $terminalComponent
-                    ->startPhotoManagement();
+                    ->startRequestDraftEdit();
             } catch (
                 RuntimeException
             ) {
@@ -1530,7 +1525,7 @@ final class TestProductCasePhotoManagementUiCommand
 
             $assertSame(
                 'state',
-                'terminal management rejected',
+                'terminal editor rejected',
                 true,
                 $terminalRejected
             );
@@ -1542,17 +1537,10 @@ final class TestProductCasePhotoManagementUiCommand
                 ProductCaseEvent::query()
                     ->count()
             );
-
-            $assertSame(
-                'state',
-                'terminal attempt creates no media',
-                $mediaBeforeTerminalAttempt,
-                Media::query()->count()
-            );
         } catch (Throwable $exception) {
             $rows[] = [
                 'runtime',
-                'photo management UI workflow completed',
+                'request draft edit UI workflow completed',
                 'FAIL',
             ];
 
@@ -1561,7 +1549,7 @@ final class TestProductCasePhotoManagementUiCommand
                     'runtime',
 
                 'assertion' =>
-                    'photo management UI workflow completed',
+                    'request draft edit UI workflow completed',
 
                 'expected' =>
                     'no exception',
@@ -1581,31 +1569,11 @@ final class TestProductCasePhotoManagementUiCommand
                 );
 
             DB::rollBack();
-
-            /*
-             * Il rollback SQL non elimina eventuali file fisici rimasti
-             * dopo un’interruzione anticipata del test.
-             */
-            foreach (
-                array_unique([
-                    ...$temporaryPaths,
-                    ...$mediaPaths,
-                ]) as $path
-            ) {
-                if (
-                    is_string($path)
-                    && is_file($path)
-                ) {
-                    @unlink(
-                        $path
-                    );
-                }
-            }
         }
 
         /*
          |--------------------------------------------------------------------------
-         | Rollback e pulizia
+         | Rollback
          |--------------------------------------------------------------------------
          */
 
@@ -1633,7 +1601,7 @@ final class TestProductCasePhotoManagementUiCommand
         $assertSame(
             'rollback',
             'document links restored',
-            $caseDocumentLinksBefore,
+            $documentLinksBefore,
             DB::table(
                 'product_case_documents'
             )->count()
@@ -1646,10 +1614,15 @@ final class TestProductCasePhotoManagementUiCommand
             DB::table('teams')->count()
         );
 
-        if ($createdCaseId !== null) {
+        foreach (
+            $createdCaseIds
+            as $createdCaseId
+        ) {
             $assertSame(
                 'rollback',
-                'temporary case removed',
+                'temporary case '
+                    . $createdCaseId
+                    . ' removed',
                 false,
                 ProductCase::query()
                     ->whereKey(
@@ -1658,39 +1631,6 @@ final class TestProductCasePhotoManagementUiCommand
                     ->exists()
             );
         }
-
-        if ($createdMediaId !== null) {
-            $assertSame(
-                'rollback',
-                'temporary media removed',
-                false,
-                Media::query()
-                    ->whereKey(
-                        $createdMediaId
-                    )
-                    ->exists()
-            );
-        }
-
-        $remainingPhysicalFiles =
-            collect([
-                ...$temporaryPaths,
-                ...$mediaPaths,
-            ])
-                ->filter(
-                    fn (mixed $path): bool =>
-                        is_string($path)
-                        && is_file($path)
-                )
-                ->values()
-                ->all();
-
-        $assertSame(
-            'cleanup',
-            'physical files removed',
-            [],
-            $remainingPhysicalFiles
-        );
 
         $this->table(
             [
@@ -1736,7 +1676,7 @@ final class TestProductCasePhotoManagementUiCommand
         }
 
         $this->info(
-            'Product case photo management UI checks passed.'
+            'Product case request draft edit UI checks passed.'
         );
 
         return self::SUCCESS;

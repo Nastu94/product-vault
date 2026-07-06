@@ -678,6 +678,14 @@ final class TestProductCaseShowReadOnlyCommand
                         'requestDraftErrorMessage' =>
                             $component
                                 ->requestDraftErrorMessage,
+
+                        'isEditingRequestDraft' =>
+                            $component
+                                ->isEditingRequestDraft,
+
+                        'requestDraftBody' =>
+                            $component
+                                ->requestDraftBody,
                     ])
                     ->render();
 

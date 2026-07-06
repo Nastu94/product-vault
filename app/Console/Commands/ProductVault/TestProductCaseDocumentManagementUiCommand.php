@@ -219,6 +219,14 @@ final class TestProductCaseDocumentManagementUiCommand
                     'requestDraftErrorMessage' =>
                         $component
                             ->requestDraftErrorMessage,
+
+                    'isEditingRequestDraft' =>
+                        $component
+                            ->isEditingRequestDraft,
+
+                    'requestDraftBody' =>
+                        $component
+                            ->requestDraftBody,
                 ])
                 ->render();
         };

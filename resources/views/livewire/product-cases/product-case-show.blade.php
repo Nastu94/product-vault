@@ -432,7 +432,23 @@
                                             ! $isEditingDetails
                                             && ! $isManagingDocuments
                                             && ! $isManagingPhotos
+                                            && ! $isEditingRequestDraft
                                         )
+                                            <button
+                                                type="button"
+                                                data-testid="start-product-case-request-draft-edit"
+                                                wire:click="startRequestDraftEdit"
+                                                class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                            >
+                                                @if (
+                                                    is_string($productCase->request_draft)
+                                                    && trim($productCase->request_draft) !== ''
+                                                )
+                                                    Modifica testo
+                                                @else
+                                                    Scrivi manualmente
+                                                @endif
+                                            </button>
                                             <button
                                                 type="button"
                                                 data-testid="generate-product-case-request-draft"
@@ -478,7 +494,11 @@
                             </div>
                         @endif
 
-                        @if (
+                        @if ($isEditingRequestDraft)
+                            @include(
+                                'livewire.product-cases.partials.request-draft-editor'
+                            )
+                        @elseif (
                             is_string($productCase->request_draft)
                             && trim($productCase->request_draft) !== ''
                         )

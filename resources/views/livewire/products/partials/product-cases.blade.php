@@ -19,6 +19,20 @@
                     {{ count($productCases) }}
                 </span>
 
+                <a
+                    data-testid="product-case-product-archive-link"
+                    href="{{ route(
+                        'product-cases.index',
+                        [
+                            'scope' => 'all',
+                            'product' => $product->id,
+                        ]
+                    ) }}"
+                    class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                    Archivio pratiche
+                </a>
+
                 @can(
                     'create',
                     [

@@ -9,6 +9,8 @@ use App\Services\ProductCases\ProductCaseStatusTransitionService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Livewire\Component;
 use RuntimeException;
 
@@ -21,6 +23,12 @@ final class ProductCaseWorkflowBar extends Component
     public ?string $successMessage = null;
 
     public ?string $errorMessage = null;
+
+    public bool $isResolving = false;
+
+    public string $resolutionOutcome = '';
+
+    public ?string $resolutionNotes = null;
 
     /**
      * Carica soltanto la pratica corrente e gli eventuali feedback flash.
@@ -73,6 +81,7 @@ final class ProductCaseWorkflowBar extends Component
         );
 
         $this->resetMessages();
+        $this->resetResolutionForm();
 
         if (
             $currentCase->status
@@ -124,6 +133,7 @@ final class ProductCaseWorkflowBar extends Component
         );
 
         $this->resetMessages();
+        $this->resetResolutionForm();
 
         if (
             $currentCase->status
@@ -169,6 +179,166 @@ final class ProductCaseWorkflowBar extends Component
         );
     }
 
+    /**
+     * Apre la registrazione esplicita dell’esito della pratica.
+     */
+    public function startResolution(): void
+    {
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->resetValidation();
+        $this->resetMessages();
+        $this->resetResolutionForm();
+
+        if (
+            $currentCase->status
+                !== ProductCase::STATUS_CONTACTED
+        ) {
+            $this->redirectWithError(
+                $currentCase,
+                'Soltanto una pratica contattata può essere registrata come risolta.'
+            );
+
+            return;
+        }
+
+        $this->productCase =
+            $currentCase;
+
+        $this->isResolving = true;
+    }
+
+    /**
+     * Chiude il form senza registrare alcun esito.
+     */
+    public function cancelResolution(): void
+    {
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->resetValidation();
+        $this->resetMessages();
+        $this->resetResolutionForm();
+    }
+
+    /**
+     * Registra esito e note tramite il service di transizione.
+     */
+    public function resolveProductCase(
+        ProductCaseStatusTransitionService $transitionService
+    ): void {
+        if (! $this->isResolving) {
+            throw new RuntimeException(
+                'Il form di risoluzione non è aperto.'
+            );
+        }
+
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->resetMessages();
+
+        if (
+            $currentCase->status
+                !== ProductCase::STATUS_CONTACTED
+        ) {
+            $this->resetResolutionForm();
+
+            $this->redirectWithError(
+                $currentCase,
+                'Soltanto una pratica contattata può essere registrata come risolta.'
+            );
+
+            return;
+        }
+
+        $validated = Validator::make(
+            [
+                'resolutionOutcome' =>
+                    $this->resolutionOutcome,
+
+                'resolutionNotes' =>
+                    $this->resolutionNotes,
+            ],
+            [
+                'resolutionOutcome' => [
+                    'required',
+                    'string',
+                    Rule::in(
+                        ProductCase::OUTCOMES
+                    ),
+                ],
+
+                'resolutionNotes' => [
+                    'nullable',
+                    'string',
+                    'max:20000',
+                ],
+            ],
+            [
+                'resolutionOutcome.required' =>
+                    'Seleziona l’esito della pratica.',
+
+                'resolutionOutcome.in' =>
+                    'Seleziona un esito valido.',
+
+                'resolutionNotes.max' =>
+                    'Le note di risoluzione sono troppo lunghe.',
+            ]
+        )->validate();
+
+        $updatedCase =
+            $transitionService->transition(
+                productCase:
+                    $currentCase,
+
+                performedBy:
+                    $this->authenticatedUser(),
+
+                targetStatus:
+                    ProductCase::STATUS_RESOLVED,
+
+                attributes: [
+                    'outcome' =>
+                        $validated[
+                            'resolutionOutcome'
+                        ],
+
+                    'resolution_notes' =>
+                        $validated[
+                            'resolutionNotes'
+                        ] ?? null,
+                ],
+            );
+
+        $this->productCase =
+            $updatedCase;
+
+        $this->resetValidation();
+        $this->resetResolutionForm();
+
+        $this->redirectWithSuccess(
+            $updatedCase,
+            'La pratica è stata registrata come risolta.'
+        );
+    }
+
     private function freshProductCase(): ProductCase
     {
         return $this->productCase->fresh()
@@ -194,6 +364,13 @@ final class ProductCaseWorkflowBar extends Component
     {
         $this->successMessage = null;
         $this->errorMessage = null;
+    }
+
+    private function resetResolutionForm(): void
+    {
+        $this->isResolving = false;
+        $this->resolutionOutcome = '';
+        $this->resolutionNotes = null;
     }
 
     private function redirectWithSuccess(

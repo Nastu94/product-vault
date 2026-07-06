@@ -7,20 +7,48 @@
                 </p>
 
                 <h1 class="mt-2 text-3xl font-bold tracking-tight text-slate-950">
-                    Pratiche prodotto
+                    @if ($productFilterName)
+                        Pratiche per {{ $productFilterName }}
+                    @else
+                        Pratiche prodotto
+                    @endif
                 </h1>
 
                 <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                    Consulta le pratiche aperte, concluse o annullate del workspace attivo.
+                    @if ($productFilterName)
+                        Consulta soltanto le pratiche associate a questo prodotto.
+                    @else
+                        Consulta le pratiche aperte, concluse o annullate del workspace attivo.
+                    @endif
                 </p>
             </div>
 
-            <a
-                href="{{ route('products.index') }}"
-                class="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-            >
-                Vai ai prodotti
-            </a>
+            <div class="flex flex-wrap gap-3">
+                @if ($productId)
+                    <a
+                        data-testid="product-case-product-link"
+                        href="{{ route('products.show', $productId) }}"
+                        class="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                        Torna al prodotto
+                    </a>
+
+                    <a
+                        data-testid="clear-product-case-product-filter"
+                        href="{{ route('product-cases.index', ['scope' => $scope]) }}"
+                        class="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                        Mostra tutte le pratiche
+                    </a>
+                @else
+                    <a
+                        href="{{ route('products.index') }}"
+                        class="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                        Vai ai prodotti
+                    </a>
+                @endif
+            </div>
         </div>
 
         <section class="mt-8 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">

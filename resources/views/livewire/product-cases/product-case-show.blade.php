@@ -275,47 +275,111 @@
                             data-testid="product-case-photos"
                             class="mt-8"
                         >
-                            <h3 class="text-sm font-semibold text-gray-900">
-                                Fotografie private
-                            </h3>
+                            <div class="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                    <h3 class="text-sm font-semibold text-gray-900">
+                                        Fotografie private
+                                    </h3>
+
+                                    <p class="mt-1 text-xs text-gray-500">
+                                        Immagini conservate privatamente come evidenze
+                                        della pratica.
+                                    </p>
+                                </div>
+
+                                @if (
+                                    ! in_array(
+                                        $productCase->status,
+                                        [
+                                            \App\Models\ProductCase::STATUS_CLOSED,
+                                            \App\Models\ProductCase::STATUS_CANCELLED,
+                                        ],
+                                        true
+                                    )
+                                )
+                                    @can('update', $productCase)
+                                        @if (
+                                            ! $isManagingPhotos
+                                            && ! $isManagingDocuments
+                                            && ! $isEditingDetails
+                                        )
+                                            <button
+                                                type="button"
+                                                data-testid="start-product-case-photo-management"
+                                                wire:click="startPhotoManagement"
+                                                class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                            >
+                                                Gestisci fotografie
+                                            </button>
+                                        @endif
+                                    @endcan
+                                @endif
+                            </div>
+
+                            @if ($photosSuccessMessage)
+                                <div
+                                    data-testid="product-case-photos-success"
+                                    class="mt-4 rounded-md bg-green-50 p-4 text-sm text-green-800 ring-1 ring-inset ring-green-600/20"
+                                >
+                                    {{ $photosSuccessMessage }}
+                                </div>
+                            @endif
 
                             @if ($issuePhotos !== [])
                                 <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                                     @foreach ($issuePhotos as $photo)
                                         <div class="rounded-md border border-gray-200 p-4">
-                                            <div class="text-sm font-medium text-gray-900">
-                                                {{ $photo['original_filename'] }}
-                                            </div>
-
-                                            <div class="mt-2 space-y-1 text-xs text-gray-500">
-                                                <div>
-                                                    Tipo:
-                                                    {{ $photo['mime_type'] ?? '—' }}
-                                                </div>
-
-                                                <div>
-                                                    Dimensione:
-                                                    {{ number_format(
-                                                        ((int) $photo['size']) / 1024,
-                                                        1,
-                                                        ',',
-                                                        '.'
-                                                    ) }}
-                                                    KB
-                                                </div>
-
-                                                @if ($photo['uploaded_at'])
-                                                    <div>
-                                                        Caricata:
-                                                        {{ \Illuminate\Support\Carbon::parse(
-                                                            $photo['uploaded_at']
-                                                        )->format('d/m/Y H:i') }}
+                                            <div class="flex items-start justify-between gap-4">
+                                                <div class="min-w-0 flex-1">
+                                                    <div class="break-words text-sm font-medium text-gray-900">
+                                                        {{ $photo['original_filename'] }}
                                                     </div>
+
+                                                    <div class="mt-2 space-y-1 text-xs text-gray-500">
+                                                        <div>
+                                                            Tipo:
+                                                            {{ $photo['mime_type'] ?? '—' }}
+                                                        </div>
+
+                                                        <div>
+                                                            Dimensione:
+                                                            {{ number_format(
+                                                                ((int) $photo['size']) / 1024,
+                                                                1,
+                                                                ',',
+                                                                '.'
+                                                            ) }}
+                                                            KB
+                                                        </div>
+
+                                                        @if ($photo['uploaded_at'])
+                                                            <div>
+                                                                Caricata:
+                                                                {{ \Illuminate\Support\Carbon::parse(
+                                                                    $photo['uploaded_at']
+                                                                )->format('d/m/Y H:i') }}
+                                                            </div>
+                                                        @endif
+                                                    </div>
+                                                </div>
+
+                                                @if ($isManagingPhotos)
+                                                    <button
+                                                        type="button"
+                                                        data-testid="remove-product-case-photo-{{ $photo['id'] }}"
+                                                        wire:click="removePhoto({{ $photo['id'] }})"
+                                                        wire:loading.attr="disabled"
+                                                        wire:target="removePhoto({{ $photo['id'] }})"
+                                                        class="shrink-0 rounded-md border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    >
+                                                        Rimuovi
+                                                    </button>
                                                 @endif
                                             </div>
 
                                             <p class="mt-3 text-xs leading-5 text-gray-500">
-                                                File privato. Anteprima e download non sono ancora disponibili in questa pagina.
+                                                File privato. Anteprima e download non sono
+                                                ancora disponibili in questa pagina.
                                             </p>
                                         </div>
                                     @endforeach
@@ -324,6 +388,12 @@
                                 <div class="mt-3 rounded-md bg-gray-50 p-4 text-sm text-gray-600">
                                     Nessuna fotografia collegata.
                                 </div>
+                            @endif
+
+                            @if ($isManagingPhotos)
+                                @include(
+                                    'livewire.product-cases.partials.photo-manager'
+                                )
                             @endif
                         </div>
                     </div>

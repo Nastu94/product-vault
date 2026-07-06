@@ -191,6 +191,18 @@ final class TestProductCaseDetailsEditUiCommand
                     'documentsSuccessMessage' =>
                         $component
                             ->documentsSuccessMessage,
+
+                    'isManagingPhotos' =>
+                        $component
+                            ->isManagingPhotos,
+
+                    'photoUpload' =>
+                        $component
+                            ->photoUpload,
+
+                    'photosSuccessMessage' =>
+                        $component
+                            ->photosSuccessMessage,
                 ])
                 ->render();
         };

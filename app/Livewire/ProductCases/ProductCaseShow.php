@@ -17,10 +17,14 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Livewire\Component;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
+use App\Services\ProductCases\ProductCasePhotoManager;
+use Illuminate\Http\UploadedFile;
+use Livewire\WithFileUploads;
 
 final class ProductCaseShow extends Component
 {
     use AuthorizesRequests;
+    use WithFileUploads;
 
     /**
      * Pratica visualizzata.
@@ -79,6 +83,21 @@ final class ProductCaseShow extends Component
     public ?string $documentSelectionNotes = null;
 
     public ?string $documentsSuccessMessage = null;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Gestione fotografie private
+    |--------------------------------------------------------------------------
+    */
+
+    public bool $isManagingPhotos = false;
+
+    /**
+     * File temporaneo gestito da Livewire.
+     */
+    public $photoUpload = null;
+
+    public ?string $photosSuccessMessage = null;
 
     /**
      * Snapshot read-only della readiness.
@@ -174,8 +193,12 @@ final class ProductCaseShow extends Component
         $this->resetValidation();
 
         $this->resetDocumentManagementForm();
+        $this->resetPhotoManagementForm();
 
         $this->documentsSuccessMessage =
+            null;
+
+        $this->photosSuccessMessage =
             null;
 
         $this->detailsSuccessMessage =
@@ -451,8 +474,12 @@ final class ProductCaseShow extends Component
 
         $this->resetValidation();
         $this->resetDetailsForm();
+        $this->resetPhotoManagementForm();
 
         $this->detailsSuccessMessage =
+            null;
+
+        $this->photosSuccessMessage =
             null;
 
         $this->documentsSuccessMessage =
@@ -706,6 +733,349 @@ final class ProductCaseShow extends Component
             $deselected
                 ? 'Documento rimosso dalla pratica.'
                 : 'Il documento non era più selezionato.';
+    }
+
+    /**
+     * Apre la gestione delle fotografie private.
+     */
+    public function startPhotoManagement(): void
+    {
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->ensurePhotosAreMutable(
+            $currentCase
+        );
+
+        $this->loadProductCaseState(
+            $currentCase
+        );
+
+        $this->resetValidation();
+        $this->resetDetailsForm();
+        $this->resetDocumentManagementForm();
+
+        $this->detailsSuccessMessage =
+            null;
+
+        $this->documentsSuccessMessage =
+            null;
+
+        $this->photosSuccessMessage =
+            null;
+
+        $this->photoUpload =
+            null;
+
+        $this->isManagingPhotos =
+            true;
+    }
+
+    /**
+     * Chiude il pannello senza modificare le fotografie.
+     */
+    public function cancelPhotoManagement(): void
+    {
+        $this->authorize(
+            'update',
+            $this->productCase
+        );
+
+        $this->resetValidation();
+        $this->resetPhotoManagementForm();
+
+        $this->photosSuccessMessage =
+            null;
+    }
+
+    /**
+     * Carica una fotografia privata tramite il service di dominio.
+     */
+    public function uploadPhoto(
+        ProductCasePhotoManager $photoManager
+    ): void {
+        $this->ensurePhotoManagementIsOpen();
+
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->ensurePhotosAreMutable(
+            $currentCase
+        );
+
+        $this->loadProductCaseState(
+            $currentCase
+        );
+
+        $validated = Validator::make(
+            [
+                'photoUpload' =>
+                    $this->photoUpload,
+            ],
+            [
+                'photoUpload' => [
+                    'required',
+                    'file',
+                    'image',
+                    'mimetypes:'
+                        . implode(
+                            ',',
+                            ProductCase
+                                ::ISSUE_PHOTO_MIME_TYPES
+                        ),
+                    'max:'
+                        . ProductCasePhotoManager
+                            ::MAX_PHOTO_SIZE_KB,
+                ],
+            ],
+            [
+                'photoUpload.required' =>
+                    'Seleziona una fotografia da caricare.',
+
+                'photoUpload.file' =>
+                    'Il contenuto selezionato non è un file valido.',
+
+                'photoUpload.image' =>
+                    'Il file selezionato non è un’immagine valida.',
+
+                'photoUpload.mimetypes' =>
+                    'Sono ammesse soltanto immagini JPG, PNG o WEBP.',
+
+                'photoUpload.max' =>
+                    'La fotografia non può superare i 10 MB.',
+            ]
+        )->validate();
+
+        $photo =
+            $validated['photoUpload'];
+
+        if (! $photo instanceof UploadedFile) {
+            throw new RuntimeException(
+                'La fotografia selezionata non è disponibile.'
+            );
+        }
+
+        $uploadedBy =
+            Auth::user();
+
+        if (! $uploadedBy instanceof User) {
+            throw new RuntimeException(
+                'Utente autenticato non disponibile.'
+            );
+        }
+
+        $existingMediaIds =
+            collect(
+                $this->issuePhotos
+            )
+                ->pluck('id')
+                ->map(
+                    fn (mixed $id): int =>
+                        (int) $id
+                )
+                ->all();
+
+        $media =
+            $photoManager->addPhoto(
+                productCase:
+                    $currentCase,
+
+                uploadedBy:
+                    $uploadedBy,
+
+                photo:
+                    $photo,
+            );
+
+        $wasAlreadyPresent =
+            in_array(
+                (int) $media->id,
+                $existingMediaIds,
+                true
+            );
+
+        $this->photoUpload =
+            null;
+
+        $this->loadProductCaseState(
+            $this->freshProductCase()
+        );
+
+        $this->photosSuccessMessage =
+            $wasAlreadyPresent
+                ? 'La stessa fotografia era già presente nella pratica.'
+                : 'Fotografia aggiunta alla pratica.';
+    }
+
+    /**
+     * Rimuove una fotografia privata dalla pratica.
+     */
+    public function removePhoto(
+        int $mediaId,
+        ProductCasePhotoManager $photoManager
+    ): void {
+        $this->ensurePhotoManagementIsOpen();
+
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->ensurePhotosAreMutable(
+            $currentCase
+        );
+
+        $this->loadProductCaseState(
+            $currentCase
+        );
+
+        $allowedMediaIds =
+            collect(
+                $this->issuePhotos
+            )
+                ->pluck('id')
+                ->map(
+                    fn (mixed $id): int =>
+                        (int) $id
+                )
+                ->all();
+
+        $validated = Validator::make(
+            [
+                'media_id' =>
+                    $mediaId,
+            ],
+            [
+                'media_id' => [
+                    'required',
+                    'integer',
+                    Rule::in(
+                        $allowedMediaIds
+                    ),
+                ],
+            ],
+            [
+                'media_id.in' =>
+                    'La fotografia non è disponibile per questa pratica.',
+            ]
+        )->validate();
+
+        $removedBy =
+            Auth::user();
+
+        if (! $removedBy instanceof User) {
+            throw new RuntimeException(
+                'Utente autenticato non disponibile.'
+            );
+        }
+
+        $media = Media::query()
+            ->whereKey(
+                (int) $validated[
+                    'media_id'
+                ]
+            )
+            ->first();
+
+        if ($media === null) {
+            throw new RuntimeException(
+                'La fotografia non è più disponibile.'
+            );
+        }
+
+        $removed =
+            $photoManager->removePhoto(
+                productCase:
+                    $currentCase,
+
+                removedBy:
+                    $removedBy,
+
+                media:
+                    $media,
+            );
+
+        $this->loadProductCaseState(
+            $this->freshProductCase()
+        );
+
+        $this->photosSuccessMessage =
+            $removed
+                ? 'Fotografia rimossa dalla pratica.'
+                : 'La fotografia non era più presente.';
+    }
+
+    /**
+     * Verifica che l’azione provenga dal pannello fotografie aperto.
+     */
+    private function ensurePhotoManagementIsOpen(): void
+    {
+        if (! $this->isManagingPhotos) {
+            throw new RuntimeException(
+                'La gestione delle fotografie non è aperta.'
+            );
+        }
+    }
+
+    /**
+     * Replica nella UI il vincolo di mutabilità del service.
+     *
+     * Il service resta comunque l’autorità finale.
+     */
+    private function ensurePhotosAreMutable(
+        ProductCase $productCase
+    ): void {
+        if (
+            ! in_array(
+                $productCase->status,
+                ProductCase::STATUSES,
+                true
+            )
+        ) {
+            throw new RuntimeException(
+                'Lo stato corrente della pratica non è valido.'
+            );
+        }
+
+        if (
+            in_array(
+                $productCase->status,
+                [
+                    ProductCase::STATUS_CLOSED,
+                    ProductCase::STATUS_CANCELLED,
+                ],
+                true
+            )
+        ) {
+            throw new RuntimeException(
+                'Le fotografie non possono essere modificate quando la pratica è chiusa o annullata.'
+            );
+        }
+    }
+
+    /**
+     * Ripristina lo stato interno della gestione fotografie.
+     */
+    private function resetPhotoManagementForm(): void
+    {
+        $this->isManagingPhotos =
+            false;
+
+        $this->photoUpload =
+            null;
     }
 
     /**

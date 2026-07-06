@@ -3,15 +3,16 @@
 namespace App\Console\Commands\ProductVault;
 
 use App\Livewire\ProductCases\ProductCaseShow;
-use App\Models\Document;
 use App\Models\Product;
 use App\Models\ProductCase;
 use App\Models\ProductCaseEvent;
 use App\Models\User;
 use App\Services\ProductCases\ProductCaseCreator;
-use App\Services\ProductCases\ProductCaseDocumentSelector;
+use App\Services\ProductCases\ProductCasePhotoManager;
+use App\Services\ProductCases\ProductCaseStatusTransitionService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Console\Command;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -22,24 +23,28 @@ use Spatie\MediaLibrary\MediaCollections\Models\Media;
 use Spatie\Permission\PermissionRegistrar;
 use Throwable;
 
-final class TestProductCaseDocumentManagementUiCommand
+final class TestProductCasePhotoManagementUiCommand
     extends Command
 {
     protected $signature =
-        'product-vault:test-product-case-document-management-ui';
+        'product-vault:test-product-case-photo-management-ui';
 
     protected $description =
-        'Verifica con rollback la gestione UI dei documenti di una pratica.';
+        'Verifica con rollback la gestione UI delle fotografie private della pratica.';
 
     public function handle(
         ProductCaseCreator $creator,
-        ProductCaseDocumentSelector $selector
+        ProductCasePhotoManager $photoManager,
+        ProductCaseStatusTransitionService $transitionService
     ): int {
         $rows = [];
         $failures = [];
 
         $createdCaseId = null;
-        $createdDocumentId = null;
+        $createdMediaId = null;
+
+        $temporaryPaths = [];
+        $mediaPaths = [];
 
         $casesBefore =
             ProductCase::query()->count();
@@ -47,20 +52,12 @@ final class TestProductCaseDocumentManagementUiCommand
         $eventsBefore =
             ProductCaseEvent::query()->count();
 
-        $documentsBefore =
-            Document::query()->count();
-
         $mediaBefore =
             Media::query()->count();
 
         $caseDocumentLinksBefore =
             DB::table(
                 'product_case_documents'
-            )->count();
-
-        $productDocumentLinksBefore =
-            DB::table(
-                'product_documents'
             )->count();
 
         $teamsBefore =
@@ -101,6 +98,102 @@ final class TestProductCaseDocumentManagementUiCommand
                         $actual,
                 ];
             }
+        };
+
+        /*
+         * PNG RGB 1x1 valido, generato senza dipendenze esterne.
+         */
+        $makePngContent = function (): string {
+            $chunk = function (
+                string $type,
+                string $data
+            ): string {
+                return pack(
+                    'N',
+                    strlen($data)
+                )
+                    . $type
+                    . $data
+                    . pack(
+                        'N',
+                        crc32($type . $data)
+                    );
+            };
+
+            $header = pack(
+                'NNCCCCC',
+                1,
+                1,
+                8,
+                2,
+                0,
+                0,
+                0
+            );
+
+            $pixel =
+                "\x00\x35\x79\xBD";
+
+            return "\x89PNG\r\n\x1a\n"
+                . $chunk(
+                    'IHDR',
+                    $header
+                )
+                . $chunk(
+                    'IDAT',
+                    gzcompress($pixel)
+                )
+                . $chunk(
+                    'IEND',
+                    ''
+                );
+        };
+
+        $makeUpload = function (
+            string $content,
+            string $originalName
+        ) use (&$temporaryPaths): UploadedFile {
+            $path = tempnam(
+                sys_get_temp_dir(),
+                'pv-case-photo-ui-'
+            );
+
+            if ($path === false) {
+                throw new RuntimeException(
+                    'Impossibile creare il file temporaneo.'
+                );
+            }
+
+            if (
+                file_put_contents(
+                    $path,
+                    $content
+                ) === false
+            ) {
+                throw new RuntimeException(
+                    'Impossibile scrivere il file temporaneo.'
+                );
+            }
+
+            $temporaryPaths[] =
+                $path;
+
+            return new UploadedFile(
+                path:
+                    $path,
+
+                originalName:
+                    $originalName,
+
+                mimeType:
+                    'image/png',
+
+                error:
+                    UPLOAD_ERR_OK,
+
+                test:
+                    true,
+            );
         };
 
         $render = function (
@@ -225,26 +318,9 @@ final class TestProductCaseDocumentManagementUiCommand
              */
 
             $product = Product::query()
-                ->with([
-                    'team',
-                    'documents',
-                    'warranties',
-                ])
+                ->with('team')
                 ->whereNotNull(
                     'team_id'
-                )
-                ->whereHas(
-                    'documents'
-                )
-                ->whereHas(
-                    'warranties',
-                    fn ($query) => $query
-                        ->whereNotNull(
-                            'starts_at'
-                        )
-                        ->whereNotNull(
-                            'ends_at'
-                        )
                 )
                 ->orderBy('id')
                 ->first();
@@ -252,10 +328,9 @@ final class TestProductCaseDocumentManagementUiCommand
             if (
                 $product === null
                 || $product->team === null
-                || $product->documents->isEmpty()
             ) {
                 throw new RuntimeException(
-                    'Nessun prodotto con team, documenti e garanzia utilizzabile per il test.'
+                    'Nessun prodotto con team utilizzabile per il test.'
                 );
             }
 
@@ -295,59 +370,6 @@ final class TestProductCaseDocumentManagementUiCommand
                 $user
             );
 
-            $primaryDocument =
-                $product
-                    ->documents
-                    ->first();
-
-            if ($primaryDocument === null) {
-                throw new RuntimeException(
-                    'Documento principale non disponibile.'
-                );
-            }
-
-            /*
-             * Creiamo un secondo documento controllato, così il test non
-             * dipende dal numero di documenti realmente presenti nel database.
-             */
-            $secondaryDocument =
-                $primaryDocument
-                    ->replicate();
-
-            $secondaryDocument->forceFill([
-                'team_id' =>
-                    $product->team_id,
-
-                'uploaded_by_user_id' =>
-                    $user->id,
-
-                'original_filename' =>
-                    'PV_CASE_SECONDARY_'
-                    . Str::uuid()
-                    . '.pdf',
-            ]);
-
-            $secondaryDocument->save();
-
-            $createdDocumentId =
-                (int) $secondaryDocument->id;
-
-            $product
-                ->documents()
-                ->attach(
-                    $secondaryDocument->id,
-                    [
-                        'relationship_type_id' =>
-                            null,
-
-                        'linked_by_user_id' =>
-                            $user->id,
-
-                        'notes' =>
-                            'Documento sintetico per il test UI.',
-                    ]
-                );
-
             $productCase =
                 $creator->create(
                     product:
@@ -358,10 +380,10 @@ final class TestProductCaseDocumentManagementUiCommand
 
                     attributes: [
                         'title' =>
-                            'Problema completo per gestione documenti',
+                            'Problema con fotografie private',
 
                         'description' =>
-                            'Il prodotto non funziona correttamente durante il normale utilizzo.',
+                            'Il prodotto presenta un difetto visibile da documentare.',
 
                         'occurred_on' =>
                             today()
@@ -369,7 +391,7 @@ final class TestProductCaseDocumentManagementUiCommand
 
                         'usability_status' =>
                             ProductCase
-                                ::USABILITY_UNUSABLE,
+                                ::USABILITY_PARTIALLY_USABLE,
 
                         'accidental_damage_declared' =>
                             false,
@@ -391,6 +413,11 @@ final class TestProductCaseDocumentManagementUiCommand
                     ->updated_at
                     ?->toISOString();
 
+            $caseDocumentLinksBeforeOperations =
+                DB::table(
+                    'product_case_documents'
+                )->count();
+
             $component =
                 app(
                     ProductCaseShow::class
@@ -400,6 +427,9 @@ final class TestProductCaseDocumentManagementUiCommand
                 $productCase
             );
 
+            $readinessBefore =
+                $component->readiness;
+
             /*
              |--------------------------------------------------------------------------
              | Stato iniziale
@@ -408,100 +438,52 @@ final class TestProductCaseDocumentManagementUiCommand
 
             $assertSame(
                 'initial',
-                'manager starts closed',
+                'photo manager starts closed',
                 false,
                 $component
-                    ->isManagingDocuments
-            );
-
-            $selectableIds =
-                collect(
-                    $component
-                        ->selectableDocuments
-                )
-                    ->pluck('id')
-                    ->map(
-                        fn (mixed $id): int =>
-                            (int) $id
-                    )
-                    ->all();
-
-            $assertSame(
-                'initial',
-                'primary document selectable',
-                true,
-                in_array(
-                    (int) $primaryDocument->id,
-                    $selectableIds,
-                    true
-                )
+                    ->isManagingPhotos
             );
 
             $assertSame(
                 'initial',
-                'secondary document selectable',
-                true,
-                in_array(
-                    (int) $secondaryDocument->id,
-                    $selectableIds,
-                    true
-                )
+                'case starts without photos',
+                [],
+                $component
+                    ->issuePhotos
             );
 
-            $assertSame(
-                'readiness',
-                'case starts incomplete',
-                false,
-                data_get(
-                    $component->readiness,
-                    'is_ready_to_contact'
-                )
-            );
-
-            $initialBlockerCodes =
-                collect(
-                    data_get(
-                        $component->readiness,
-                        'blocking_information',
-                        []
-                    )
-                )
-                    ->pluck('code')
-                    ->all();
-
-            $assertSame(
-                'readiness',
-                'missing document blocker present',
-                true,
-                in_array(
-                    'selected_document',
-                    $initialBlockerCodes,
-                    true
-                )
-            );
-
-            $closedHtml =
+            $initialHtml =
                 $render(
                     $component
                 );
 
             $assertSame(
                 'html',
-                'management action visible',
+                'photo management action visible',
                 true,
                 str_contains(
-                    $closedHtml,
-                    'start-product-case-document-management'
+                    $initialHtml,
+                    'start-product-case-photo-management'
                 )
             );
 
             $assertSame(
                 'html',
-                'manager hidden initially',
+                'photo manager hidden initially',
                 false,
                 str_contains(
-                    $closedHtml,
-                    'product-case-document-manager'
+                    $initialHtml,
+                    'product-case-photo-manager'
+                )
+            );
+
+            $assertSame(
+                'html',
+                'no file input before opening',
+                false,
+                str_contains(
+                    $initialHtml,
+                    'type="file"'
                 )
             );
 
@@ -512,12 +494,28 @@ final class TestProductCaseDocumentManagementUiCommand
              */
 
             $component
-                ->startDocumentManagement();
+                ->startPhotoManagement();
 
             $assertSame(
                 'manager',
-                'manager opened',
+                'photo manager opened',
                 true,
+                $component
+                    ->isManagingPhotos
+            );
+
+            $assertSame(
+                'manager',
+                'details editor closed',
+                false,
+                $component
+                    ->isEditingDetails
+            );
+
+            $assertSame(
+                'manager',
+                'document manager closed',
+                false,
                 $component
                     ->isManagingDocuments
             );
@@ -529,37 +527,47 @@ final class TestProductCaseDocumentManagementUiCommand
 
             $assertSame(
                 'html',
-                'manager rendered',
+                'photo manager rendered',
                 true,
                 str_contains(
                     $openHtml,
-                    'product-case-document-manager'
+                    'product-case-photo-manager'
                 )
             );
 
             $assertSame(
                 'html',
-                'selection action rendered',
+                'upload action rendered',
                 true,
                 str_contains(
                     $openHtml,
-                    'wire:submit.prevent="selectDocument"'
+                    'wire:submit.prevent="uploadPhoto"'
                 )
             );
 
             $assertSame(
-                'scope',
-                'no file input rendered',
-                false,
+                'html',
+                'private image input rendered',
+                true,
                 str_contains(
                     $openHtml,
                     'type="file"'
                 )
             );
 
+            $assertSame(
+                'html',
+                'input accepts supported formats',
+                true,
+                str_contains(
+                    $openHtml,
+                    '.jpg,.jpeg,.png,.webp'
+                )
+            );
+
             /*
              |--------------------------------------------------------------------------
-             | Validazione selezione vuota
+             | Validazione upload vuoto
              |--------------------------------------------------------------------------
              */
 
@@ -567,25 +575,23 @@ final class TestProductCaseDocumentManagementUiCommand
                 ProductCaseEvent::query()
                     ->count();
 
-            $linksBeforeInvalid =
-                DB::table(
-                    'product_case_documents'
-                )->count();
+            $mediaBeforeInvalid =
+                Media::query()->count();
 
-            $emptySelectionRejected =
+            $emptyUploadRejected =
                 false;
 
             $invalidFields =
                 [];
 
             try {
-                $component->selectDocument(
-                    $selector
+                $component->uploadPhoto(
+                    $photoManager
                 );
             } catch (
                 ValidationException $exception
             ) {
-                $emptySelectionRejected =
+                $emptyUploadRejected =
                     true;
 
                 $invalidFields =
@@ -596,115 +602,271 @@ final class TestProductCaseDocumentManagementUiCommand
 
             $assertSame(
                 'validation',
-                'empty selection rejected',
+                'empty upload rejected',
                 true,
-                $emptySelectionRejected
+                $emptyUploadRejected
             );
 
             $assertSame(
                 'validation',
-                'document field reported',
+                'photo field reported',
                 [
-                    'documentToSelectId',
+                    'photoUpload',
                 ],
                 $invalidFields
             );
 
             $assertSame(
                 'validation',
-                'invalid selection creates no event',
+                'invalid upload creates no media',
+                $mediaBeforeInvalid,
+                Media::query()->count()
+            );
+
+            $assertSame(
+                'validation',
+                'invalid upload creates no event',
                 $eventsBeforeInvalid,
                 ProductCaseEvent::query()
                     ->count()
             );
 
-            $assertSame(
-                'validation',
-                'invalid selection creates no link',
-                $linksBeforeInvalid,
-                DB::table(
-                    'product_case_documents'
-                )->count()
-            );
-
             /*
              |--------------------------------------------------------------------------
-             | Selezione valida
+             | Upload valido
              |--------------------------------------------------------------------------
              */
 
-            $eventsBeforeSelection =
+            $pngContent =
+                $makePngContent();
+
+            $originalFilename =
+                'foto-problema-privata.png';
+
+            $eventsBeforeUpload =
                 ProductCaseEvent::query()
                     ->count();
 
-            $linksBeforeSelection =
-                DB::table(
-                    'product_case_documents'
-                )->count();
+            $mediaBeforeUpload =
+                Media::query()->count();
 
-            $component->documentToSelectId =
-                (string) $primaryDocument->id;
+            $component->photoUpload =
+                $makeUpload(
+                    content:
+                        $pngContent,
 
-            $component->documentSelectionNotes =
-                '  Documento principale della pratica.  ';
+                    originalName:
+                        $originalFilename,
+                );
 
-            $component->selectDocument(
-                $selector
+            $component->uploadPhoto(
+                $photoManager
             );
 
-            $selection = DB::table(
-                'product_case_documents'
-            )
+            $storedMedia = Media::query()
                 ->where(
-                    'product_case_id',
+                    'model_type',
+                    $productCase
+                        ->getMorphClass()
+                )
+                ->where(
+                    'model_id',
                     $productCase->id
                 )
                 ->where(
-                    'document_id',
-                    $primaryDocument->id
+                    'collection_name',
+                    ProductCase
+                        ::MEDIA_COLLECTION_ISSUE_PHOTOS
                 )
+                ->orderByDesc('id')
                 ->first();
 
+            if ($storedMedia === null) {
+                throw new RuntimeException(
+                    'Fotografia caricata non disponibile.'
+                );
+            }
+
+            $createdMediaId =
+                (int) $storedMedia->id;
+
+            $storedPath =
+                $storedMedia->getPath();
+
+            $mediaPaths[] =
+                $storedPath;
+
             $assertSame(
-                'selection',
-                'document link created',
-                true,
-                $selection !== null
+                'upload',
+                'one media created',
+                $mediaBeforeUpload + 1,
+                Media::query()->count()
             );
 
             $assertSame(
-                'selection',
-                'selection note normalized',
-                'Documento principale della pratica.',
-                $selection?->notes
-            );
-
-            $assertSame(
-                'selection',
-                'selector stored',
-                (int) $user->id,
-                (int) $selection
-                    ?->selected_by_user_id
-            );
-
-            $assertSame(
-                'selection',
-                'one link created',
-                $linksBeforeSelection + 1,
-                DB::table(
-                    'product_case_documents'
-                )->count()
-            );
-
-            $assertSame(
-                'selection',
+                'upload',
                 'one event created',
-                $eventsBeforeSelection + 1,
+                $eventsBeforeUpload + 1,
                 ProductCaseEvent::query()
                     ->count()
             );
 
-            $selectionEvent =
+            $assertSame(
+                'upload',
+                'private disk used',
+                'local',
+                $storedMedia->disk
+            );
+
+            $assertSame(
+                'upload',
+                'issue photo collection used',
+                ProductCase
+                    ::MEDIA_COLLECTION_ISSUE_PHOTOS,
+                $storedMedia
+                    ->collection_name
+            );
+
+            $assertSame(
+                'upload',
+                'original filename preserved',
+                $originalFilename,
+                $storedMedia
+                    ->getCustomProperty(
+                        'original_filename'
+                    )
+            );
+
+            $assertSame(
+                'upload',
+                'physical filename randomized',
+                false,
+                $storedMedia->file_name
+                    === $originalFilename
+            );
+
+            $assertSame(
+                'upload',
+                'physical file exists',
+                true,
+                is_file(
+                    $storedPath
+                )
+            );
+
+            $storedHash =
+                $storedMedia
+                    ->getCustomProperty(
+                        'sha256'
+                    );
+
+            $assertSame(
+                'upload',
+                'sha256 stored',
+                hash(
+                    'sha256',
+                    $pngContent
+                ),
+                $storedHash
+            );
+
+            $assertSame(
+                'component',
+                'one photo immediately visible',
+                1,
+                count(
+                    $component
+                        ->issuePhotos
+                )
+            );
+
+            $assertSame(
+                'component',
+                'photo id exposed',
+                (int) $storedMedia->id,
+                (int) data_get(
+                    $component
+                        ->issuePhotos,
+                    '0.id'
+                )
+            );
+
+            $assertSame(
+                'component',
+                'original filename exposed',
+                $originalFilename,
+                data_get(
+                    $component
+                        ->issuePhotos,
+                    '0.original_filename'
+                )
+            );
+
+            $assertSame(
+                'component',
+                'upload property reset',
+                null,
+                $component
+                    ->photoUpload
+            );
+
+            $assertSame(
+                'component',
+                'upload success exposed',
+                'Fotografia aggiunta alla pratica.',
+                $component
+                    ->photosSuccessMessage
+            );
+
+            /*
+             * Il contratto pubblico non deve contenere informazioni
+             * sull’ubicazione fisica del file.
+             */
+            $photoMetadata =
+                $component
+                    ->issuePhotos[0];
+
+            $assertSame(
+                'privacy',
+                'physical filename not exposed',
+                false,
+                array_key_exists(
+                    'file_name',
+                    $photoMetadata
+                )
+            );
+
+            $assertSame(
+                'privacy',
+                'disk not exposed',
+                false,
+                array_key_exists(
+                    'disk',
+                    $photoMetadata
+                )
+            );
+
+            $assertSame(
+                'privacy',
+                'path not exposed',
+                false,
+                array_key_exists(
+                    'path',
+                    $photoMetadata
+                )
+            );
+
+            $assertSame(
+                'privacy',
+                'url not exposed',
+                false,
+                array_key_exists(
+                    'url',
+                    $photoMetadata
+                )
+            );
+
+            $photoAddedEvent =
                 ProductCaseEvent::query()
                     ->where(
                         'product_case_id',
@@ -713,123 +875,41 @@ final class TestProductCaseDocumentManagementUiCommand
                     ->where(
                         'event_type',
                         ProductCaseEvent
-                            ::TYPE_DOCUMENT_SELECTED
+                            ::TYPE_PHOTO_ADDED
                     )
                     ->orderByDesc('id')
                     ->first();
 
             $assertSame(
-                'selection',
-                'selection event available',
+                'event',
+                'photo added event available',
                 true,
-                $selectionEvent !== null
+                $photoAddedEvent !== null
             );
 
             $assertSame(
-                'selection',
-                'event document id',
-                (int) $primaryDocument->id,
+                'event',
+                'event references media',
+                (int) $storedMedia->id,
                 (int) data_get(
-                    $selectionEvent?->metadata,
-                    'document_id'
+                    $photoAddedEvent
+                        ?->metadata,
+                    'media_id'
                 )
             );
 
             $assertSame(
-                'selection',
-                'event note stored',
-                'Documento principale della pratica.',
-                data_get(
-                    $selectionEvent?->metadata,
-                    'notes'
+                'event',
+                'event references uploader',
+                (int) $user->id,
+                (int) data_get(
+                    $photoAddedEvent
+                        ?->metadata,
+                    'uploaded_by_user_id'
                 )
             );
 
-            $selectedIds =
-                $component
-                    ->productCase
-                    ->documents
-                    ->pluck('id')
-                    ->map(
-                        fn (mixed $id): int =>
-                            (int) $id
-                    )
-                    ->all();
-
-            $assertSame(
-                'component',
-                'selected document immediately visible',
-                true,
-                in_array(
-                    (int) $primaryDocument->id,
-                    $selectedIds,
-                    true
-                )
-            );
-
-            $selectableAfterSelection =
-                collect(
-                    $component
-                        ->selectableDocuments
-                )
-                    ->pluck('id')
-                    ->map(
-                        fn (mixed $id): int =>
-                            (int) $id
-                    )
-                    ->all();
-
-            $assertSame(
-                'component',
-                'selected document removed from choices',
-                false,
-                in_array(
-                    (int) $primaryDocument->id,
-                    $selectableAfterSelection,
-                    true
-                )
-            );
-
-            $assertSame(
-                'component',
-                'secondary document remains selectable',
-                true,
-                in_array(
-                    (int) $secondaryDocument->id,
-                    $selectableAfterSelection,
-                    true
-                )
-            );
-
-            $assertSame(
-                'readiness',
-                'case becomes ready after selection',
-                true,
-                data_get(
-                    $component->readiness,
-                    'is_ready_to_contact'
-                )
-            );
-
-            $assertSame(
-                'readiness',
-                'one valid selected document',
-                1,
-                data_get(
-                    $component->readiness,
-                    'facts.evidence.valid_selected_document_count'
-                )
-            );
-
-            $assertSame(
-                'component',
-                'selection success exposed',
-                'Documento aggiunto alla pratica.',
-                $component
-                    ->documentsSuccessMessage
-            );
-
-            $timelineSelection =
+            $timelineAdded =
                 collect(
                     data_get(
                         $component->timeline,
@@ -840,30 +920,97 @@ final class TestProductCaseDocumentManagementUiCommand
                     ->where(
                         'type',
                         ProductCaseEvent
-                            ::TYPE_DOCUMENT_SELECTED
+                            ::TYPE_PHOTO_ADDED
                     )
                     ->last();
 
             $assertSame(
                 'timeline',
-                'selection immediately visible',
+                'added event immediately visible',
                 true,
-                $timelineSelection !== null
+                $timelineAdded !== null
             );
 
             $assertSame(
                 'timeline',
-                'selection reference current',
-                'selected',
+                'photo reference available',
+                'available',
                 data_get(
-                    $timelineSelection,
+                    $timelineAdded,
                     'reference.state'
+                )
+            );
+
+            $assertSame(
+                'timeline',
+                'original filename normalized',
+                $originalFilename,
+                data_get(
+                    $timelineAdded,
+                    'details.original_filename'
+                )
+            );
+
+            $timelineJson =
+                json_encode(
+                    $component->timeline
+                );
+
+            if (! is_string($timelineJson)) {
+                throw new RuntimeException(
+                    'Timeline non serializzabile.'
+                );
+            }
+
+            $assertSame(
+                'privacy',
+                'timeline hides physical filename',
+                false,
+                str_contains(
+                    $timelineJson,
+                    $storedMedia->file_name
+                )
+            );
+
+            $uploadedHtml =
+                $render(
+                    $component
+                );
+
+            $assertSame(
+                'html',
+                'original filename rendered',
+                true,
+                str_contains(
+                    $uploadedHtml,
+                    $originalFilename
+                )
+            );
+
+            $assertSame(
+                'html',
+                'remove action rendered',
+                true,
+                str_contains(
+                    $uploadedHtml,
+                    'remove-product-case-photo-'
+                    . $storedMedia->id
+                )
+            );
+
+            $assertSame(
+                'privacy',
+                'physical filename hidden from html',
+                false,
+                str_contains(
+                    $uploadedHtml,
+                    $storedMedia->file_name
                 )
             );
 
             /*
              |--------------------------------------------------------------------------
-             | Duplicazione rifiutata dalla UI
+             | Upload duplicato
              |--------------------------------------------------------------------------
              */
 
@@ -871,159 +1018,128 @@ final class TestProductCaseDocumentManagementUiCommand
                 ProductCaseEvent::query()
                     ->count();
 
-            $linksBeforeDuplicate =
-                DB::table(
-                    'product_case_documents'
-                )->count();
+            $mediaBeforeDuplicate =
+                Media::query()->count();
 
-            $component->documentToSelectId =
-                (string) $primaryDocument->id;
+            $component->photoUpload =
+                $makeUpload(
+                    content:
+                        $pngContent,
 
-            $duplicateRejected =
-                false;
-
-            try {
-                $component->selectDocument(
-                    $selector
+                    originalName:
+                        'nome-diverso-stesso-contenuto.png',
                 );
-            } catch (
-                ValidationException
-            ) {
-                $duplicateRejected =
-                    true;
-            }
 
-            $assertSame(
-                'idempotence',
-                'already selected document rejected by UI',
-                true,
-                $duplicateRejected
+            $component->uploadPhoto(
+                $photoManager
             );
 
             $assertSame(
-                'idempotence',
-                'duplicate attempt creates no event',
+                'deduplication',
+                'duplicate creates no media',
+                $mediaBeforeDuplicate,
+                Media::query()->count()
+            );
+
+            $assertSame(
+                'deduplication',
+                'duplicate creates no event',
                 $eventsBeforeDuplicate,
                 ProductCaseEvent::query()
                     ->count()
             );
 
             $assertSame(
-                'idempotence',
-                'duplicate attempt creates no link',
-                $linksBeforeDuplicate,
-                DB::table(
-                    'product_case_documents'
-                )->count()
-            );
-
-            /*
-             |--------------------------------------------------------------------------
-             | Rendering della selezione
-             |--------------------------------------------------------------------------
-             */
-
-            $selectedHtml =
-                $render(
+                'deduplication',
+                'single photo remains visible',
+                1,
+                count(
                     $component
-                );
-
-            $assertSame(
-                'html',
-                'selected filename visible',
-                true,
-                str_contains(
-                    $selectedHtml,
-                    e(
-                        $primaryDocument
-                            ->original_filename
-                    )
+                        ->issuePhotos
                 )
             );
 
             $assertSame(
-                'html',
-                'selection note visible',
-                true,
-                str_contains(
-                    $selectedHtml,
-                    'Documento principale della pratica.'
-                )
-            );
-
-            $assertSame(
-                'html',
-                'remove action visible',
-                true,
-                str_contains(
-                    $selectedHtml,
-                    'deselect-product-case-document-'
-                    . $primaryDocument->id
-                )
+                'deduplication',
+                'duplicate feedback exposed',
+                'La stessa fotografia era già presente nella pratica.',
+                $component
+                    ->photosSuccessMessage
             );
 
             /*
              |--------------------------------------------------------------------------
-             | Deselezione
+             | Rimozione
              |--------------------------------------------------------------------------
              */
 
-            $eventsBeforeDeselection =
+            $eventsBeforeRemoval =
                 ProductCaseEvent::query()
                     ->count();
 
-            $linksBeforeDeselection =
-                DB::table(
-                    'product_case_documents'
-                )->count();
+            $mediaBeforeRemoval =
+                Media::query()->count();
 
-            $component->deselectDocument(
-                documentId:
-                    (int) $primaryDocument->id,
+            $component->removePhoto(
+                mediaId:
+                    (int) $storedMedia->id,
 
-                selector:
-                    $selector,
-            );
-
-            $linkStillExists =
-                DB::table(
-                    'product_case_documents'
-                )
-                    ->where(
-                        'product_case_id',
-                        $productCase->id
-                    )
-                    ->where(
-                        'document_id',
-                        $primaryDocument->id
-                    )
-                    ->exists();
-
-            $assertSame(
-                'deselection',
-                'case link removed',
-                false,
-                $linkStillExists
+                photoManager:
+                    $photoManager,
             );
 
             $assertSame(
-                'deselection',
-                'one link removed',
-                $linksBeforeDeselection - 1,
-                DB::table(
-                    'product_case_documents'
-                )->count()
+                'removal',
+                'one media removed',
+                $mediaBeforeRemoval - 1,
+                Media::query()->count()
             );
 
             $assertSame(
-                'deselection',
+                'removal',
                 'one event created',
-                $eventsBeforeDeselection + 1,
+                $eventsBeforeRemoval + 1,
                 ProductCaseEvent::query()
                     ->count()
             );
 
-            $deselectionEvent =
+            $assertSame(
+                'removal',
+                'media record removed',
+                false,
+                Media::query()
+                    ->whereKey(
+                        $storedMedia->id
+                    )
+                    ->exists()
+            );
+
+            $assertSame(
+                'removal',
+                'physical file removed',
+                false,
+                is_file(
+                    $storedPath
+                )
+            );
+
+            $assertSame(
+                'component',
+                'photo list refreshed',
+                [],
+                $component
+                    ->issuePhotos
+            );
+
+            $assertSame(
+                'component',
+                'removal success exposed',
+                'Fotografia rimossa dalla pratica.',
+                $component
+                    ->photosSuccessMessage
+            );
+
+            $photoRemovedEvent =
                 ProductCaseEvent::query()
                     ->where(
                         'product_case_id',
@@ -1032,90 +1148,37 @@ final class TestProductCaseDocumentManagementUiCommand
                     ->where(
                         'event_type',
                         ProductCaseEvent
-                            ::TYPE_DOCUMENT_DESELECTED
+                            ::TYPE_PHOTO_REMOVED
                     )
                     ->orderByDesc('id')
                     ->first();
 
             $assertSame(
-                'deselection',
-                'deselection event available',
+                'event',
+                'photo removed event available',
                 true,
-                $deselectionEvent !== null
+                $photoRemovedEvent !== null
             );
 
             $assertSame(
-                'deselection',
-                'original selector preserved',
+                'event',
+                'removed filename snapshot preserved',
+                $originalFilename,
+                data_get(
+                    $photoRemovedEvent
+                        ?->metadata,
+                    'original_filename'
+                )
+            );
+
+            $assertSame(
+                'event',
+                'remover stored',
                 (int) $user->id,
                 (int) data_get(
-                    $deselectionEvent?->metadata,
-                    'original_selected_by_user_id'
-                )
-            );
-
-            $assertSame(
-                'deselection',
-                'selection note preserved',
-                'Documento principale della pratica.',
-                data_get(
-                    $deselectionEvent?->metadata,
-                    'notes'
-                )
-            );
-
-            $selectableAfterDeselection =
-                collect(
-                    $component
-                        ->selectableDocuments
-                )
-                    ->pluck('id')
-                    ->map(
-                        fn (mixed $id): int =>
-                            (int) $id
-                    )
-                    ->all();
-
-            $assertSame(
-                'component',
-                'removed document becomes selectable',
-                true,
-                in_array(
-                    (int) $primaryDocument->id,
-                    $selectableAfterDeselection,
-                    true
-                )
-            );
-
-            $assertSame(
-                'readiness',
-                'case becomes incomplete after removal',
-                false,
-                data_get(
-                    $component->readiness,
-                    'is_ready_to_contact'
-                )
-            );
-
-            $blockerCodesAfterRemoval =
-                collect(
-                    data_get(
-                        $component->readiness,
-                        'blocking_information',
-                        []
-                    )
-                )
-                    ->pluck('code')
-                    ->all();
-
-            $assertSame(
-                'readiness',
-                'document blocker restored',
-                true,
-                in_array(
-                    'selected_document',
-                    $blockerCodesAfterRemoval,
-                    true
+                    $photoRemovedEvent
+                        ?->metadata,
+                    'removed_by_user_id'
                 )
             );
 
@@ -1128,60 +1191,52 @@ final class TestProductCaseDocumentManagementUiCommand
                     )
                 );
 
-            $timelineSelection =
+            $timelineAdded =
                 $timelineEvents
                     ->where(
                         'type',
                         ProductCaseEvent
-                            ::TYPE_DOCUMENT_SELECTED
+                            ::TYPE_PHOTO_ADDED
                     )
                     ->last();
 
-            $timelineDeselection =
+            $timelineRemoved =
                 $timelineEvents
                     ->where(
                         'type',
                         ProductCaseEvent
-                            ::TYPE_DOCUMENT_DESELECTED
+                            ::TYPE_PHOTO_REMOVED
                     )
                     ->last();
 
             $assertSame(
                 'timeline',
-                'old selection reflects removal',
+                'old add event reflects removal',
                 'removed',
                 data_get(
-                    $timelineSelection,
+                    $timelineAdded,
                     'reference.state'
                 )
             );
 
             $assertSame(
                 'timeline',
-                'deselection reference removed',
+                'removal event reflects removal',
                 'removed',
                 data_get(
-                    $timelineDeselection,
+                    $timelineRemoved,
                     'reference.state'
                 )
             );
 
             $assertSame(
                 'timeline',
-                'deselection note exposed',
-                'Documento principale della pratica.',
+                'removal filename preserved',
+                $originalFilename,
                 data_get(
-                    $timelineDeselection,
-                    'details.notes'
+                    $timelineRemoved,
+                    'details.original_filename'
                 )
-            );
-
-            $assertSame(
-                'component',
-                'deselection success exposed',
-                'Documento rimosso dalla pratica.',
-                $component
-                    ->documentsSuccessMessage
             );
 
             /*
@@ -1189,38 +1244,6 @@ final class TestProductCaseDocumentManagementUiCommand
              | Protezioni e scope
              |--------------------------------------------------------------------------
              */
-
-            $productLinkPreserved =
-                DB::table(
-                    'product_documents'
-                )
-                    ->where(
-                        'product_id',
-                        $product->id
-                    )
-                    ->where(
-                        'document_id',
-                        $primaryDocument->id
-                    )
-                    ->exists();
-
-            $assertSame(
-                'protection',
-                'product document link preserved',
-                true,
-                $productLinkPreserved
-            );
-
-            $assertSame(
-                'protection',
-                'document record preserved',
-                true,
-                Document::query()
-                    ->whereKey(
-                        $primaryDocument->id
-                    )
-                    ->exists()
-            );
 
             $currentCase =
                 ProductCase::query()
@@ -1261,9 +1284,19 @@ final class TestProductCaseDocumentManagementUiCommand
 
             $assertSame(
                 'scope',
-                'media unchanged',
-                $mediaBefore,
-                Media::query()->count()
+                'document links unchanged',
+                $caseDocumentLinksBeforeOperations,
+                DB::table(
+                    'product_case_documents'
+                )->count()
+            );
+
+            $assertSame(
+                'readiness',
+                'photo operations do not alter readiness',
+                $readinessBefore,
+                $component
+                    ->readiness
             );
 
             /*
@@ -1273,30 +1306,22 @@ final class TestProductCaseDocumentManagementUiCommand
              */
 
             $component
-                ->cancelDocumentManagement();
+                ->cancelPhotoManagement();
 
             $assertSame(
                 'cancellation',
-                'manager closed',
+                'photo manager closed',
                 false,
                 $component
-                    ->isManagingDocuments
+                    ->isManagingPhotos
             );
 
             $assertSame(
                 'cancellation',
-                'document selection reset',
-                '',
-                $component
-                    ->documentToSelectId
-            );
-
-            $assertSame(
-                'cancellation',
-                'selection notes reset',
+                'upload reset',
                 null,
                 $component
-                    ->documentSelectionNotes
+                    ->photoUpload
             );
 
             /*
@@ -1312,7 +1337,7 @@ final class TestProductCaseDocumentManagementUiCommand
                             $user->id,
 
                         'name' =>
-                            'Product Case Documents UI '
+                            'Product Case Photos UI '
                             . Str::uuid(),
 
                         'personal_team' =>
@@ -1352,17 +1377,15 @@ final class TestProductCaseDocumentManagementUiCommand
                 ProductCaseEvent::query()
                     ->count();
 
-            $linksBeforeCrossTeam =
-                DB::table(
-                    'product_case_documents'
-                )->count();
+            $mediaBeforeCrossTeam =
+                Media::query()->count();
 
             $crossTeamRejected =
                 false;
 
             try {
                 $component
-                    ->startDocumentManagement();
+                    ->startPhotoManagement();
             } catch (
                 AuthorizationException
             ) {
@@ -1387,11 +1410,9 @@ final class TestProductCaseDocumentManagementUiCommand
 
             $assertSame(
                 'authorization',
-                'cross-team attempt changes no link',
-                $linksBeforeCrossTeam,
-                DB::table(
-                    'product_case_documents'
-                )->count()
+                'cross-team attempt creates no media',
+                $mediaBeforeCrossTeam,
+                Media::query()->count()
             );
 
             User::query()
@@ -1416,10 +1437,106 @@ final class TestProductCaseDocumentManagementUiCommand
             Auth::setUser(
                 $user
             );
+
+            /*
+             |--------------------------------------------------------------------------
+             | Stato terminale
+             |--------------------------------------------------------------------------
+             */
+
+            $cancelledCase =
+                $transitionService
+                    ->transition(
+                        productCase:
+                            $currentCase,
+
+                        performedBy:
+                            $user,
+
+                        targetStatus:
+                            ProductCase
+                                ::STATUS_CANCELLED,
+                    );
+
+            $terminalComponent =
+                app(
+                    ProductCaseShow::class
+                );
+
+            $terminalComponent->mount(
+                $cancelledCase
+            );
+
+            $terminalHtml =
+                $render(
+                    $terminalComponent
+                );
+
+            $assertSame(
+                'state',
+                'photo action hidden in terminal state',
+                false,
+                str_contains(
+                    $terminalHtml,
+                    'start-product-case-photo-management'
+                )
+            );
+
+            $assertSame(
+                'state',
+                'photo manager hidden in terminal state',
+                false,
+                str_contains(
+                    $terminalHtml,
+                    'product-case-photo-manager'
+                )
+            );
+
+            $eventsBeforeTerminalAttempt =
+                ProductCaseEvent::query()
+                    ->count();
+
+            $mediaBeforeTerminalAttempt =
+                Media::query()->count();
+
+            $terminalRejected =
+                false;
+
+            try {
+                $terminalComponent
+                    ->startPhotoManagement();
+            } catch (
+                RuntimeException
+            ) {
+                $terminalRejected =
+                    true;
+            }
+
+            $assertSame(
+                'state',
+                'terminal management rejected',
+                true,
+                $terminalRejected
+            );
+
+            $assertSame(
+                'state',
+                'terminal attempt creates no event',
+                $eventsBeforeTerminalAttempt,
+                ProductCaseEvent::query()
+                    ->count()
+            );
+
+            $assertSame(
+                'state',
+                'terminal attempt creates no media',
+                $mediaBeforeTerminalAttempt,
+                Media::query()->count()
+            );
         } catch (Throwable $exception) {
             $rows[] = [
                 'runtime',
-                'document management UI workflow completed',
+                'photo management UI workflow completed',
                 'FAIL',
             ];
 
@@ -1428,7 +1545,7 @@ final class TestProductCaseDocumentManagementUiCommand
                     'runtime',
 
                 'assertion' =>
-                    'document management UI workflow completed',
+                    'photo management UI workflow completed',
 
                 'expected' =>
                     'no exception',
@@ -1448,11 +1565,31 @@ final class TestProductCaseDocumentManagementUiCommand
                 );
 
             DB::rollBack();
+
+            /*
+             * Il rollback SQL non elimina eventuali file fisici rimasti
+             * dopo un’interruzione anticipata del test.
+             */
+            foreach (
+                array_unique([
+                    ...$temporaryPaths,
+                    ...$mediaPaths,
+                ]) as $path
+            ) {
+                if (
+                    is_string($path)
+                    && is_file($path)
+                ) {
+                    @unlink(
+                        $path
+                    );
+                }
+            }
         }
 
         /*
          |--------------------------------------------------------------------------
-         | Rollback
+         | Rollback e pulizia
          |--------------------------------------------------------------------------
          */
 
@@ -1472,13 +1609,6 @@ final class TestProductCaseDocumentManagementUiCommand
 
         $assertSame(
             'rollback',
-            'document count restored',
-            $documentsBefore,
-            Document::query()->count()
-        );
-
-        $assertSame(
-            'rollback',
             'media count restored',
             $mediaBefore,
             Media::query()->count()
@@ -1486,19 +1616,10 @@ final class TestProductCaseDocumentManagementUiCommand
 
         $assertSame(
             'rollback',
-            'case document links restored',
+            'document links restored',
             $caseDocumentLinksBefore,
             DB::table(
                 'product_case_documents'
-            )->count()
-        );
-
-        $assertSame(
-            'rollback',
-            'product document links restored',
-            $productDocumentLinksBefore,
-            DB::table(
-                'product_documents'
             )->count()
         );
 
@@ -1522,18 +1643,38 @@ final class TestProductCaseDocumentManagementUiCommand
             );
         }
 
-        if ($createdDocumentId !== null) {
+        if ($createdMediaId !== null) {
             $assertSame(
                 'rollback',
-                'temporary document removed',
+                'temporary media removed',
                 false,
-                Document::withTrashed()
+                Media::query()
                     ->whereKey(
-                        $createdDocumentId
+                        $createdMediaId
                     )
                     ->exists()
             );
         }
+
+        $remainingPhysicalFiles =
+            collect([
+                ...$temporaryPaths,
+                ...$mediaPaths,
+            ])
+                ->filter(
+                    fn (mixed $path): bool =>
+                        is_string($path)
+                        && is_file($path)
+                )
+                ->values()
+                ->all();
+
+        $assertSame(
+            'cleanup',
+            'physical files removed',
+            [],
+            $remainingPhysicalFiles
+        );
 
         $this->table(
             [
@@ -1579,7 +1720,7 @@ final class TestProductCaseDocumentManagementUiCommand
         }
 
         $this->info(
-            'Product case document management UI checks passed.'
+            'Product case photo management UI checks passed.'
         );
 
         return self::SUCCESS;

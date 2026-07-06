@@ -2,6 +2,7 @@
 
 namespace App\Livewire\ProductCases;
 
+use App\Exceptions\ProductCases\ProductCaseNotReadyException;
 use App\Models\ProductCase;
 use App\Models\User;
 use App\Services\ProductCases\ProductCaseStatusTransitionService;
@@ -64,48 +65,25 @@ final class ProductCaseWorkflowBar extends Component
         ProductCaseStatusTransitionService $transitionService
     ): void {
         $currentCase =
-            $this->productCase->fresh();
-
-        if ($currentCase === null) {
-            throw new RuntimeException(
-                'La pratica non è più disponibile.'
-            );
-        }
+            $this->freshProductCase();
 
         $this->authorize(
             'update',
             $currentCase
         );
 
-        $this->successMessage = null;
-        $this->errorMessage = null;
+        $this->resetMessages();
 
         if (
             $currentCase->status
                 !== ProductCase::STATUS_READY_TO_CONTACT
         ) {
-            session()->flash(
-                'product_case_workflow_error',
+            $this->redirectWithError(
+                $currentCase,
                 'Soltanto una pratica pronta per il contatto può tornare in bozza.'
             );
 
-            $this->redirectRoute(
-                'product-cases.show',
-                [
-                    'productCase' =>
-                        $currentCase->id,
-                ]
-            );
-
             return;
-        }
-
-        $performedBy = Auth::user();
-
-        if (! $performedBy instanceof User) {
-            throw new RuntimeException(
-                'Utente autenticato non disponibile.'
-            );
         }
 
         $updatedCase =
@@ -114,7 +92,7 @@ final class ProductCaseWorkflowBar extends Component
                     $currentCase,
 
                 performedBy:
-                    $performedBy,
+                    $this->authenticatedUser(),
 
                 targetStatus:
                     ProductCase::STATUS_DRAFT,
@@ -123,20 +101,140 @@ final class ProductCaseWorkflowBar extends Component
         $this->productCase =
             $updatedCase;
 
-        session()->flash(
-            'product_case_workflow_success',
+        $this->redirectWithSuccess(
+            $updatedCase,
             'La pratica è tornata in bozza.'
         );
+    }
 
-        /*
-         * Il redirect ricarica anche lo stato derivato e la timeline
-         * del componente principale della pagina.
-         */
+    /**
+     * Registra che il contatto è stato realmente effettuato.
+     *
+     * Questa azione non invia messaggi e non contatta servizi esterni.
+     */
+    public function markContacted(
+        ProductCaseStatusTransitionService $transitionService
+    ): void {
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->resetMessages();
+
+        if (
+            $currentCase->status
+                !== ProductCase::STATUS_READY_TO_CONTACT
+        ) {
+            $this->redirectWithError(
+                $currentCase,
+                'Soltanto una pratica pronta per il contatto può essere registrata come contattata.'
+            );
+
+            return;
+        }
+
+        try {
+            $updatedCase =
+                $transitionService->transition(
+                    productCase:
+                        $currentCase,
+
+                    performedBy:
+                        $this->authenticatedUser(),
+
+                    targetStatus:
+                        ProductCase::STATUS_CONTACTED,
+                );
+        } catch (
+            ProductCaseNotReadyException
+        ) {
+            $this->redirectWithError(
+                $this->freshProductCase(),
+                'La pratica non è più completa. Verifica le informazioni bloccanti prima di registrare il contatto.'
+            );
+
+            return;
+        }
+
+        $this->productCase =
+            $updatedCase;
+
+        $this->redirectWithSuccess(
+            $updatedCase,
+            'Il contatto è stato registrato correttamente.'
+        );
+    }
+
+    private function freshProductCase(): ProductCase
+    {
+        return $this->productCase->fresh()
+            ?? throw new RuntimeException(
+                'La pratica non è più disponibile.'
+            );
+    }
+
+    private function authenticatedUser(): User
+    {
+        $user = Auth::user();
+
+        if (! $user instanceof User) {
+            throw new RuntimeException(
+                'Utente autenticato non disponibile.'
+            );
+        }
+
+        return $user;
+    }
+
+    private function resetMessages(): void
+    {
+        $this->successMessage = null;
+        $this->errorMessage = null;
+    }
+
+    private function redirectWithSuccess(
+        ProductCase $productCase,
+        string $message
+    ): void {
+        session()->flash(
+            'product_case_workflow_success',
+            $message
+        );
+
+        $this->redirectToCase(
+            $productCase
+        );
+    }
+
+    private function redirectWithError(
+        ProductCase $productCase,
+        string $message
+    ): void {
+        session()->flash(
+            'product_case_workflow_error',
+            $message
+        );
+
+        $this->redirectToCase(
+            $productCase
+        );
+    }
+
+    /**
+     * Il redirect ricarica stato, readiness e timeline del componente principale.
+     */
+    private function redirectToCase(
+        ProductCase $productCase
+    ): void {
         $this->redirectRoute(
             'product-cases.show',
             [
                 'productCase' =>
-                    $updatedCase->id,
+                    $productCase->id,
             ]
         );
     }

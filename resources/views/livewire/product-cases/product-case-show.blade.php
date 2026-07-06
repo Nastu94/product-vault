@@ -882,27 +882,56 @@
                 </section>
 
                 @if ($productCase->outcome || $productCase->resolution_notes)
+                    @php
+                        $outcomeLabel = match ($productCase->outcome) {
+                            \App\Models\ProductCase::OUTCOME_REPAIRED =>
+                                'Prodotto riparato',
+
+                            \App\Models\ProductCase::OUTCOME_REPLACED =>
+                                'Prodotto sostituito',
+
+                            \App\Models\ProductCase::OUTCOME_REFUNDED =>
+                                'Importo rimborsato',
+
+                            \App\Models\ProductCase::OUTCOME_REJECTED =>
+                                'Richiesta respinta',
+
+                            \App\Models\ProductCase::OUTCOME_ABANDONED =>
+                                'Procedura abbandonata',
+
+                            \App\Models\ProductCase::OUTCOME_OTHER =>
+                                'Altro esito',
+
+                            default =>
+                                'Esito non disponibile',
+                        };
+                    @endphp
+
                     <section class="bg-white shadow-sm ring-1 ring-gray-200 sm:rounded-lg">
                         <div class="p-6">
                             <h2 class="text-lg font-medium text-gray-900">
-                                Esito
+                                Esito della pratica
                             </h2>
+
+                            <p class="mt-1 text-sm text-gray-600">
+                                Risultato registrato al termine della gestione.
+                            </p>
 
                             <dl class="mt-5 space-y-4">
                                 <div>
                                     <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                        Codice esito
+                                        Risultato
                                     </dt>
 
-                                    <dd class="mt-1 text-sm text-gray-900">
-                                        {{ $productCase->outcome ?? '—' }}
+                                    <dd class="mt-1 text-sm font-medium text-gray-900">
+                                        {{ $outcomeLabel }}
                                     </dd>
                                 </div>
 
                                 @if ($productCase->resolution_notes)
                                     <div>
                                         <dt class="text-xs font-medium uppercase tracking-wider text-gray-500">
-                                            Note
+                                            Dettagli della risoluzione
                                         </dt>
 
                                         <dd class="mt-1 whitespace-pre-wrap text-sm leading-6 text-gray-900">{{ $productCase->resolution_notes }}</dd>

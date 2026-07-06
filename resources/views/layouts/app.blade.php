@@ -34,6 +34,30 @@
 
             <!-- Page Content -->
             <main>
+                @if (request()->routeIs('product-cases.show'))
+                    @php
+                        $workflowProductCase =
+                            request()->route('productCase');
+                    @endphp
+
+                    @if (
+                        $workflowProductCase
+                            instanceof \App\Models\ProductCase
+                    )
+                        @livewire(
+                            'product-cases.product-case-workflow-bar',
+                            [
+                                'productCase' =>
+                                    $workflowProductCase,
+                            ],
+                            key(
+                                'product-case-workflow-bar-'
+                                . $workflowProductCase->getKey()
+                            )
+                        )
+                    @endif
+                @endif
+
                 {{ $slot }}
             </main>
         </div>

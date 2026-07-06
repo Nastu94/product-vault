@@ -416,10 +416,67 @@
                                 </p>
                             </div>
 
-                            <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20">
-                                {{ $requestDraftSourceLabel }}
-                            </span>
+                            <div class="flex flex-wrap items-center justify-end gap-3">
+                                @if (
+                                    in_array(
+                                        $productCase->status,
+                                        [
+                                            \App\Models\ProductCase::STATUS_DRAFT,
+                                            \App\Models\ProductCase::STATUS_READY_TO_CONTACT,
+                                        ],
+                                        true
+                                    )
+                                )
+                                    @can('update', $productCase)
+                                        @if (
+                                            ! $isEditingDetails
+                                            && ! $isManagingDocuments
+                                            && ! $isManagingPhotos
+                                        )
+                                            <button
+                                                type="button"
+                                                data-testid="generate-product-case-request-draft"
+                                                wire:click="generateRequestDraft"
+                                                wire:loading.attr="disabled"
+                                                wire:target="generateRequestDraft"
+                                                class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                                @if (
+                                                    is_string($productCase->request_draft)
+                                                    && trim($productCase->request_draft) !== ''
+                                                )
+                                                    Rigenera bozza
+                                                @else
+                                                    Genera bozza
+                                                @endif
+                                            </button>
+                                        @endif
+                                    @endcan
+                                @endif
+
+                                <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-500/20">
+                                    {{ $requestDraftSourceLabel }}
+                                </span>
+                            </div>
                         </div>
+
+                        @if ($requestDraftSuccessMessage)
+                            <div
+                                data-testid="product-case-request-draft-success"
+                                class="mt-5 rounded-md bg-green-50 p-4 text-sm text-green-800 ring-1 ring-inset ring-green-600/20"
+                            >
+                                {{ $requestDraftSuccessMessage }}
+                            </div>
+                        @endif
+
+                        @if ($requestDraftErrorMessage)
+                            <div
+                                data-testid="product-case-request-draft-error"
+                                class="mt-5 rounded-md bg-red-50 p-4 text-sm text-red-800 ring-1 ring-inset ring-red-600/20"
+                            >
+                                {{ $requestDraftErrorMessage }}
+                            </div>
+                        @endif
 
                         @if (
                             is_string($productCase->request_draft)

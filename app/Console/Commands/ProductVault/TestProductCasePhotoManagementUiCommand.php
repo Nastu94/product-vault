@@ -304,6 +304,14 @@ final class TestProductCasePhotoManagementUiCommand
                     'photosSuccessMessage' =>
                         $component
                             ->photosSuccessMessage,
+
+                    'requestDraftSuccessMessage' =>
+                        $component
+                            ->requestDraftSuccessMessage,
+
+                    'requestDraftErrorMessage' =>
+                        $component
+                            ->requestDraftErrorMessage,
                 ])
                 ->render();
         };

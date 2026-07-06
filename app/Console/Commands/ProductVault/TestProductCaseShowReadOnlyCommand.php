@@ -670,6 +670,14 @@ final class TestProductCaseShowReadOnlyCommand
                         'photosSuccessMessage' =>
                             $component
                                 ->photosSuccessMessage,
+
+                        'requestDraftSuccessMessage' =>
+                            $component
+                                ->requestDraftSuccessMessage,
+
+                        'requestDraftErrorMessage' =>
+                            $component
+                                ->requestDraftErrorMessage,
                     ])
                     ->render();
 

@@ -13,6 +13,8 @@ use App\Services\ProductCases\ProductCaseDocumentSelector;
 use RuntimeException;
 use App\Services\ProductCases\ProductCaseReadinessResolver;
 use App\Services\ProductCases\ProductCaseTimelineResolver;
+use App\Exceptions\ProductCases\ProductCaseRequestDraftProtectedException;
+use App\Services\ProductCases\ProductCaseRequestDraftGenerator;
 use Illuminate\Contracts\View\View;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Livewire\Component;
@@ -98,6 +100,16 @@ final class ProductCaseShow extends Component
     public $photoUpload = null;
 
     public ?string $photosSuccessMessage = null;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Generazione bozza di richiesta
+    |--------------------------------------------------------------------------
+    */
+
+    public ?string $requestDraftSuccessMessage = null;
+
+    public ?string $requestDraftErrorMessage = null;
 
     /**
      * Snapshot read-only della readiness.
@@ -194,6 +206,7 @@ final class ProductCaseShow extends Component
 
         $this->resetDocumentManagementForm();
         $this->resetPhotoManagementForm();
+        $this->resetRequestDraftMessages();
 
         $this->documentsSuccessMessage =
             null;
@@ -475,6 +488,7 @@ final class ProductCaseShow extends Component
         $this->resetValidation();
         $this->resetDetailsForm();
         $this->resetPhotoManagementForm();
+        $this->resetRequestDraftMessages();
 
         $this->detailsSuccessMessage =
             null;
@@ -759,6 +773,7 @@ final class ProductCaseShow extends Component
         $this->resetValidation();
         $this->resetDetailsForm();
         $this->resetDocumentManagementForm();
+        $this->resetRequestDraftMessages();
 
         $this->detailsSuccessMessage =
             null;
@@ -1019,6 +1034,110 @@ final class ProductCaseShow extends Component
     }
 
     /**
+     * Genera o rigenera la bozza tramite il service di dominio.
+     */
+    public function generateRequestDraft(
+        ProductCaseRequestDraftGenerator $generator
+    ): void {
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->ensureRequestDraftIsMutable(
+            $currentCase
+        );
+
+        $this->resetValidation();
+        $this->resetDetailsForm();
+        $this->resetDocumentManagementForm();
+        $this->resetPhotoManagementForm();
+        $this->resetRequestDraftMessages();
+
+        $this->detailsSuccessMessage =
+            null;
+
+        $this->documentsSuccessMessage =
+            null;
+
+        $this->photosSuccessMessage =
+            null;
+
+        $previousDraft =
+            is_string(
+                $currentCase->request_draft
+            )
+                ? $currentCase->request_draft
+                : null;
+
+        $hadDraft =
+            $previousDraft !== null
+            && trim($previousDraft) !== '';
+
+        $generatedBy =
+            Auth::user();
+
+        if (! $generatedBy instanceof User) {
+            throw new RuntimeException(
+                'Utente autenticato non disponibile.'
+            );
+        }
+
+        try {
+            $updatedCase =
+                $generator->generate(
+                    productCase:
+                        $currentCase,
+
+                    generatedBy:
+                        $generatedBy,
+                );
+        } catch (
+            ProductCaseRequestDraftProtectedException $exception
+        ) {
+            $this->loadProductCaseState(
+                $this->freshProductCase()
+            );
+
+            $this->requestDraftErrorMessage =
+                $exception->getMessage();
+
+            return;
+        }
+
+        $currentDraft =
+            is_string(
+                $updatedCase->request_draft
+            )
+                ? $updatedCase->request_draft
+                : null;
+
+        $this->loadProductCaseState(
+            $updatedCase
+        );
+
+        if (! $hadDraft) {
+            $this->requestDraftSuccessMessage =
+                'Bozza generata correttamente.';
+
+            return;
+        }
+
+        if ($previousDraft === $currentDraft) {
+            $this->requestDraftSuccessMessage =
+                'La bozza era già aggiornata.';
+
+            return;
+        }
+
+        $this->requestDraftSuccessMessage =
+            'Bozza rigenerata correttamente.';
+    }
+
+    /**
      * Verifica che l’azione provenga dal pannello fotografie aperto.
      */
     private function ensurePhotoManagementIsOpen(): void
@@ -1147,6 +1266,54 @@ final class ProductCaseShow extends Component
             null;
 
         $this->detailsAccidentalDamageNotes =
+            null;
+    }
+
+    /**
+     * Replica nella UI il vincolo temporale del generator.
+     *
+     * Il service resta l’autorità finale.
+     */
+    private function ensureRequestDraftIsMutable(
+        ProductCase $productCase
+    ): void {
+        if (
+            ! in_array(
+                $productCase->status,
+                ProductCase::STATUSES,
+                true
+            )
+        ) {
+            throw new RuntimeException(
+                'Lo stato corrente della pratica non è valido.'
+            );
+        }
+
+        if (
+            ! in_array(
+                $productCase->status,
+                [
+                    ProductCase::STATUS_DRAFT,
+                    ProductCase::STATUS_READY_TO_CONTACT,
+                ],
+                true
+            )
+        ) {
+            throw new RuntimeException(
+                'La bozza può essere generata soltanto prima che il contatto venga registrato.'
+            );
+        }
+    }
+
+    /**
+     * Azzera i feedback della generazione automatica.
+     */
+    private function resetRequestDraftMessages(): void
+    {
+        $this->requestDraftSuccessMessage =
+            null;
+
+        $this->requestDraftErrorMessage =
             null;
     }
 

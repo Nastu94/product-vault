@@ -2,6 +2,7 @@
 
 namespace App\Livewire\ProductCases;
 
+use App\Models\Product;
 use App\Models\ProductCase;
 use App\Models\User;
 use Illuminate\Contracts\View\View;
@@ -23,6 +24,10 @@ final class ProductCaseIndex extends Component
 
     public int $perPage = 10;
 
+    public ?int $productId = null;
+
+    public ?string $productFilterName = null;
+
     public function mount(): void
     {
         $requestedScope = request()->query('scope');
@@ -33,6 +38,29 @@ final class ProductCaseIndex extends Component
         ) {
             $this->scope = $requestedScope;
         }
+
+        $user = Auth::user();
+        $requestedProductId = request()->query('product');
+
+        if (
+            ! $user instanceof User
+            || $user->current_team_id === null
+            || ! is_numeric($requestedProductId)
+        ) {
+            return;
+        }
+
+        $product = Product::query()
+            ->whereKey((int) $requestedProductId)
+            ->where('team_id', (int) $user->current_team_id)
+            ->first();
+
+        if ($product === null) {
+            return;
+        }
+
+        $this->productId = (int) $product->id;
+        $this->productFilterName = $product->name;
     }
 
     public function updatedScope(): void
@@ -129,6 +157,8 @@ final class ProductCaseIndex extends Component
         $baseQuery = ProductCase::query()
             ->where('team_id', $teamId);
 
+        $this->applyProductFilter($baseQuery);
+
         $counts = [
             'open' => (clone $baseQuery)
                 ->whereIn('status', $this->openStatuses())
@@ -159,6 +189,8 @@ final class ProductCaseIndex extends Component
                 'counts' => $counts,
                 'scope' => $this->scope,
                 'presenter' => $this,
+                'productId' => $this->productId,
+                'productFilterName' => $this->productFilterName,
             ]
         )->layout('layouts.app');
     }
@@ -167,6 +199,8 @@ final class ProductCaseIndex extends Component
     {
         $query = ProductCase::query()
             ->where('team_id', $teamId);
+
+        $this->applyProductFilter($query);
 
         match ($this->scope) {
             'closed' => $query->where(
@@ -229,6 +263,13 @@ final class ProductCaseIndex extends Component
             )
             ->orderByDesc('updated_at')
             ->orderByDesc('id');
+    }
+
+    private function applyProductFilter(Builder $query): void
+    {
+        if ($this->productId !== null) {
+            $query->where('product_id', $this->productId);
+        }
     }
 
     /**

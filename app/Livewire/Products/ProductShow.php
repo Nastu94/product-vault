@@ -161,7 +161,7 @@ class ProductShow extends Component
      */
     public function createProductCase(
         ProductCaseCreator $creator
-    ): RedirectResponse {
+    ): mixed {
         $this->authorize(
             'create',
             [
@@ -897,7 +897,6 @@ class ProductShow extends Component
         |
         | Questo ramo deve stare prima della modifica, perché quando stiamo creando
         | una garanzia il prodotto non ha ancora una primaryWarranty.
-        |
         */
         if ($this->isCreatingWarranty) {
             if ($this->primaryWarranty) {
@@ -978,7 +977,6 @@ class ProductShow extends Component
 
         if (! $warranty) {
             $this->addError('warranty', 'Nessuna garanzia da modificare.');
-
             return;
         }
 

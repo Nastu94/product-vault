@@ -171,6 +171,26 @@ final class TestProductCaseDetailsEditUiCommand
                     'detailsSuccessMessage' =>
                         $component
                             ->detailsSuccessMessage,
+
+                    'selectableDocuments' =>
+                        $component
+                            ->selectableDocuments,
+
+                    'isManagingDocuments' =>
+                        $component
+                            ->isManagingDocuments,
+
+                    'documentToSelectId' =>
+                        $component
+                            ->documentToSelectId,
+
+                    'documentSelectionNotes' =>
+                        $component
+                            ->documentSelectionNotes,
+
+                    'documentsSuccessMessage' =>
+                        $component
+                            ->documentsSuccessMessage,
                 ])
                 ->render();
         };

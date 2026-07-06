@@ -638,6 +638,26 @@ final class TestProductCaseShowReadOnlyCommand
                         'detailsSuccessMessage' =>
                             $component
                                 ->detailsSuccessMessage,
+
+                        'selectableDocuments' =>
+                            $component
+                                ->selectableDocuments,
+
+                        'isManagingDocuments' =>
+                            $component
+                                ->isManagingDocuments,
+
+                        'documentToSelectId' =>
+                            $component
+                                ->documentToSelectId,
+
+                        'documentSelectionNotes' =>
+                            $component
+                                ->documentSelectionNotes,
+
+                        'documentsSuccessMessage' =>
+                            $component
+                                ->documentsSuccessMessage,
                     ])
                     ->render();
 
@@ -731,12 +751,22 @@ final class TestProductCaseShowReadOnlyCommand
             );
 
             $assertSame(
-                'read_only',
-                'no wire click action rendered',
+                'document_management',
+                'document management action available',
+                true,
+                str_contains(
+                    $html,
+                    'start-product-case-document-management'
+                )
+            );
+
+            $assertSame(
+                'document_management',
+                'document manager starts closed',
                 false,
                 str_contains(
                     $html,
-                    'wire:click'
+                    'product-case-document-manager'
                 )
             );
 

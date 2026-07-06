@@ -8,6 +8,8 @@ use App\Services\ProductCases\ProductCaseDetailsUpdater;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
+use App\Models\Document;
+use App\Services\ProductCases\ProductCaseDocumentSelector;
 use RuntimeException;
 use App\Services\ProductCases\ProductCaseReadinessResolver;
 use App\Services\ProductCases\ProductCaseTimelineResolver;
@@ -56,6 +58,27 @@ final class ProductCaseShow extends Component
 
     public ?string $detailsSuccessMessage =
         null;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Gestione documenti della pratica
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Documenti collegati al prodotto ma non ancora selezionati.
+     *
+     * @var list<array<string, mixed>>
+     */
+    public array $selectableDocuments = [];
+
+    public bool $isManagingDocuments = false;
+
+    public string $documentToSelectId = '';
+
+    public ?string $documentSelectionNotes = null;
+
+    public ?string $documentsSuccessMessage = null;
 
     /**
      * Snapshot read-only della readiness.
@@ -149,6 +172,11 @@ final class ProductCaseShow extends Component
         );
 
         $this->resetValidation();
+
+        $this->resetDocumentManagementForm();
+
+        $this->documentsSuccessMessage =
+            null;
 
         $this->detailsSuccessMessage =
             null;
@@ -405,6 +433,327 @@ final class ProductCaseShow extends Component
     }
 
     /**
+     * Apre la gestione dei documenti usando lo stato corrente della pratica.
+     */
+    public function startDocumentManagement(): void
+    {
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->loadProductCaseState(
+            $currentCase
+        );
+
+        $this->resetValidation();
+        $this->resetDetailsForm();
+
+        $this->detailsSuccessMessage =
+            null;
+
+        $this->documentsSuccessMessage =
+            null;
+
+        $this->documentToSelectId =
+            '';
+
+        $this->documentSelectionNotes =
+            null;
+
+        $this->isManagingDocuments =
+            true;
+    }
+
+    /**
+     * Chiude la gestione senza modificare i collegamenti.
+     */
+    public function cancelDocumentManagement(): void
+    {
+        $this->authorize(
+            'update',
+            $this->productCase
+        );
+
+        $this->resetValidation();
+        $this->resetDocumentManagementForm();
+
+        $this->documentsSuccessMessage =
+            null;
+    }
+
+    /**
+     * Seleziona un documento già collegato al prodotto.
+     */
+    public function selectDocument(
+        ProductCaseDocumentSelector $selector
+    ): void {
+        $this->ensureDocumentManagementIsOpen();
+
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->loadProductCaseState(
+            $currentCase
+        );
+
+        $allowedDocumentIds =
+            array_map(
+                static fn (array $document): string =>
+                    (string) $document['id'],
+
+                $this->selectableDocuments
+            );
+
+        $validated = Validator::make(
+            [
+                'documentToSelectId' =>
+                    $this->documentToSelectId,
+
+                'documentSelectionNotes' =>
+                    $this->documentSelectionNotes,
+            ],
+            [
+                'documentToSelectId' => [
+                    'required',
+                    'integer',
+                    Rule::in(
+                        $allowedDocumentIds
+                    ),
+                ],
+
+                'documentSelectionNotes' => [
+                    'nullable',
+                    'string',
+                    'max:10000',
+                ],
+            ],
+            [
+                'documentToSelectId.required' =>
+                    'Seleziona un documento da aggiungere.',
+
+                'documentToSelectId.integer' =>
+                    'Il documento selezionato non è valido.',
+
+                'documentToSelectId.in' =>
+                    'Il documento non è disponibile per questa pratica.',
+
+                'documentSelectionNotes.max' =>
+                    'La nota non può superare 10.000 caratteri.',
+            ]
+        )->validate();
+
+        $selectedBy =
+            Auth::user();
+
+        if (! $selectedBy instanceof User) {
+            throw new RuntimeException(
+                'Utente autenticato non disponibile.'
+            );
+        }
+
+        $document = Document::query()
+            ->whereKey(
+                (int) $validated[
+                    'documentToSelectId'
+                ]
+            )
+            ->where(
+                'team_id',
+                $currentCase->team_id
+            )
+            ->first();
+
+        if ($document === null) {
+            throw new RuntimeException(
+                'Il documento selezionato non è più disponibile.'
+            );
+        }
+
+        $selected =
+            $selector->select(
+                productCase:
+                    $currentCase,
+
+                document:
+                    $document,
+
+                selectedBy:
+                    $selectedBy,
+
+                notes:
+                    $validated[
+                        'documentSelectionNotes'
+                    ] ?? null,
+            );
+
+        $this->loadProductCaseState(
+            $this->freshProductCase()
+        );
+
+        $this->documentToSelectId =
+            '';
+
+        $this->documentSelectionNotes =
+            null;
+
+        $this->documentsSuccessMessage =
+            $selected
+                ? 'Documento aggiunto alla pratica.'
+                : 'Il documento era già selezionato.';
+    }
+
+    /**
+     * Rimuove un documento dalle evidenze correnti della pratica.
+     */
+    public function deselectDocument(
+        int $documentId,
+        ProductCaseDocumentSelector $selector
+    ): void {
+        $this->ensureDocumentManagementIsOpen();
+
+        $currentCase =
+            $this->freshProductCase();
+
+        $this->authorize(
+            'update',
+            $currentCase
+        );
+
+        $this->loadProductCaseState(
+            $currentCase
+        );
+
+        $selectedDocumentIds =
+            $this->productCase
+                ->documents
+                ->pluck('id')
+                ->map(
+                    fn (mixed $id): int =>
+                        (int) $id
+                )
+                ->values()
+                ->all();
+
+        $validated = Validator::make(
+            [
+                'document_id' =>
+                    $documentId,
+            ],
+            [
+                'document_id' => [
+                    'required',
+                    'integer',
+                    Rule::in(
+                        $selectedDocumentIds
+                    ),
+                ],
+            ]
+        )->validate();
+
+        $deselectedBy =
+            Auth::user();
+
+        if (! $deselectedBy instanceof User) {
+            throw new RuntimeException(
+                'Utente autenticato non disponibile.'
+            );
+        }
+
+        $document = Document::query()
+            ->whereKey(
+                (int) $validated[
+                    'document_id'
+                ]
+            )
+            ->where(
+                'team_id',
+                $currentCase->team_id
+            )
+            ->first();
+
+        if ($document === null) {
+            throw new RuntimeException(
+                'Il documento selezionato non è più disponibile.'
+            );
+        }
+
+        $deselected =
+            $selector->deselect(
+                productCase:
+                    $currentCase,
+
+                document:
+                    $document,
+
+                deselectedBy:
+                    $deselectedBy,
+            );
+
+        $this->loadProductCaseState(
+            $this->freshProductCase()
+        );
+
+        $this->documentsSuccessMessage =
+            $deselected
+                ? 'Documento rimosso dalla pratica.'
+                : 'Il documento non era più selezionato.';
+    }
+
+    /**
+     * Verifica che l’azione provenga dal pannello aperto.
+     */
+    private function ensureDocumentManagementIsOpen(): void
+    {
+        if (! $this->isManagingDocuments) {
+            throw new RuntimeException(
+                'La gestione dei documenti non è aperta.'
+            );
+        }
+    }
+
+    /**
+     * Recupera una copia aggiornata della pratica.
+     */
+    private function freshProductCase(): ProductCase
+    {
+        $productCase =
+            $this->productCase
+                ->fresh();
+
+        if ($productCase === null) {
+            throw new RuntimeException(
+                'La pratica non è più disponibile.'
+            );
+        }
+
+        return $productCase;
+    }
+
+    /**
+     * Ripristina lo stato interno della gestione documenti.
+     */
+    private function resetDocumentManagementForm(): void
+    {
+        $this->isManagingDocuments =
+            false;
+
+        $this->documentToSelectId =
+            '';
+
+        $this->documentSelectionNotes =
+            null;
+    }
+
+    /**
      * Ripristina lo stato interno del form.
      */
     private function resetDetailsForm(): void
@@ -443,6 +792,8 @@ final class ProductCaseShow extends Component
                 'product.category',
                 'product.merchant',
                 'product.currency',
+                'product.documents.documentType',
+                'product.documents.merchant',
                 'openedBy',
                 'documents.documentType',
                 'documents.merchant',
@@ -493,6 +844,63 @@ final class ProductCaseShow extends Component
                             $this->photoUploadedAt(
                                 $media
                             ),
+                    ]
+                )
+                ->values()
+                ->all();
+
+        $selectedDocumentIds =
+            $this->productCase
+                ->documents
+                ->pluck('id')
+                ->map(
+                    fn (mixed $id): int =>
+                        (int) $id
+                )
+                ->all();
+
+        $productDocuments =
+            $this->productCase
+                ->product
+                ?->documents
+            ?? collect();
+
+        $this->selectableDocuments =
+            $productDocuments
+                ->reject(
+                    fn (Document $document): bool =>
+                        in_array(
+                            (int) $document->id,
+                            $selectedDocumentIds,
+                            true
+                        )
+                )
+                ->sortByDesc('id')
+                ->map(
+                    fn (Document $document): array => [
+                        'id' =>
+                            (int) $document->id,
+
+                        'original_filename' =>
+                            $document->original_filename,
+
+                        'document_type' =>
+                            $document
+                                ->documentType
+                                ?->name
+                            ?? 'Documento',
+
+                        'merchant' =>
+                            $document
+                                ->merchant
+                                ?->name,
+
+                        'purchase_date' =>
+                            $document
+                                ->purchase_date
+                                ?->format(
+                                    'd/m/Y'
+                                ),
                     ]
                 )
                 ->values()
@@ -710,7 +1118,7 @@ final class ProductCaseShow extends Component
     }
 
     /**
-     * Renderizza il dettaglio senza esporre azioni di modifica.
+     * Renderizza il dettaglio della pratica.
      */
     public function render(): View
     {

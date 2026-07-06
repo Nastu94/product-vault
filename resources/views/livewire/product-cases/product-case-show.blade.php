@@ -33,7 +33,7 @@
             </div>
 
             <p class="mt-2 text-sm text-gray-600">
-                Dettaglio read-only della pratica relativa a
+                Dettaglio della pratica relativa a
                 <span class="font-medium text-gray-900">
                     {{ $productCase->product?->name ?? 'prodotto non disponibile' }}
                 </span>.
@@ -173,45 +173,101 @@
                             data-testid="product-case-documents"
                             class="mt-6"
                         >
-                            <h3 class="text-sm font-semibold text-gray-900">
-                                Documenti
-                            </h3>
+                            <div class="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                    <h3 class="text-sm font-semibold text-gray-900">
+                                        Documenti
+                                    </h3>
+
+                                    <p class="mt-1 text-xs text-gray-500">
+                                        Documenti scelti come evidenze della pratica.
+                                    </p>
+                                </div>
+
+                                @can('update', $productCase)
+                                    @if (
+                                        ! $isManagingDocuments
+                                        && ! $isEditingDetails
+                                    )
+                                        <button
+                                            type="button"
+                                            data-testid="start-product-case-document-management"
+                                            wire:click="startDocumentManagement"
+                                            class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                        >
+                                            Gestisci documenti
+                                        </button>
+                                    @endif
+                                @endcan
+                            </div>
+
+                            @if ($documentsSuccessMessage)
+                                <div
+                                    data-testid="product-case-documents-success"
+                                    class="mt-4 rounded-md bg-green-50 p-4 text-sm text-green-800 ring-1 ring-inset ring-green-600/20"
+                                >
+                                    {{ $documentsSuccessMessage }}
+                                </div>
+                            @endif
 
                             @if ($productCase->documents->isNotEmpty())
                                 <div class="mt-3 space-y-3">
                                     @foreach ($productCase->documents as $document)
-                                        <a
-                                            href="{{ route('documents.show', $document) }}"
-                                            class="block rounded-md border border-gray-200 p-4 hover:bg-gray-50"
-                                        >
-                                            <div class="text-sm font-medium text-gray-900">
-                                                {{ $document->original_filename }}
-                                            </div>
+                                        <div class="rounded-md border border-gray-200 p-4">
+                                            <div class="flex items-start justify-between gap-4">
+                                                <a
+                                                    href="{{ route('documents.show', $document) }}"
+                                                    class="min-w-0 flex-1 hover:opacity-80"
+                                                >
+                                                    <div class="break-words text-sm font-medium text-gray-900">
+                                                        {{ $document->original_filename }}
+                                                    </div>
 
-                                            <div class="mt-1 flex flex-wrap gap-2 text-xs text-gray-500">
-                                                <span>
-                                                    {{ $document->documentType?->name ?? 'Documento' }}
-                                                </span>
+                                                    <div class="mt-1 flex flex-wrap gap-2 text-xs text-gray-500">
+                                                        <span>
+                                                            {{ $document->documentType?->name ?? 'Documento' }}
+                                                        </span>
 
-                                                @if ($document->merchant)
-                                                    <span>
-                                                        {{ $document->merchant->name }}
-                                                    </span>
+                                                        @if ($document->merchant)
+                                                            <span>
+                                                                {{ $document->merchant->name }}
+                                                            </span>
+                                                        @endif
+                                                    </div>
+                                                </a>
+
+                                                @if ($isManagingDocuments)
+                                                    <button
+                                                        type="button"
+                                                        data-testid="deselect-product-case-document-{{ $document->id }}"
+                                                        wire:click="deselectDocument({{ $document->id }})"
+                                                        wire:loading.attr="disabled"
+                                                        wire:target="deselectDocument({{ $document->id }})"
+                                                        class="shrink-0 rounded-md border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    >
+                                                        Rimuovi
+                                                    </button>
                                                 @endif
                                             </div>
 
                                             @if ($document->pivot?->notes)
-                                                <p class="mt-2 text-xs leading-5 text-gray-600">
+                                                <p class="mt-3 text-xs leading-5 text-gray-600">
                                                     {{ $document->pivot->notes }}
                                                 </p>
                                             @endif
-                                        </a>
+                                        </div>
                                     @endforeach
                                 </div>
                             @else
                                 <div class="mt-3 rounded-md bg-gray-50 p-4 text-sm text-gray-600">
                                     Nessun documento selezionato.
                                 </div>
+                            @endif
+
+                            @if ($isManagingDocuments)
+                                @include(
+                                    'livewire.product-cases.partials.document-manager'
+                                )
                             @endif
                         </div>
 

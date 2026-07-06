@@ -26,7 +26,6 @@ final class TestDashboardProductCaseResultsCommand extends Command
     {
         $rows = [];
         $failures = [];
-        $createdCaseIds = [];
 
         $casesBefore = ProductCase::query()->count();
         $teamsBefore = DB::table('teams')->count();
@@ -124,43 +123,41 @@ final class TestDashboardProductCaseResultsCommand extends Command
                 string $title,
                 ?string $outcome,
                 ?string $closedAt
-            ) use ($product, $user, &$createdCaseIds): ProductCase {
-                $productCase = ProductCase::query()->create([
-                    'team_id' => $teamId,
-                    'product_id' => $product->id,
-                    'opened_by_user_id' => $user->id,
-                    'status' => $status,
-                    'title' => $title,
-                    'original_description' =>
-                        'Fixture dashboard risultati.',
-                    'description' =>
-                        'Fixture dashboard risultati.',
-                    'usability_status' =>
-                        ProductCase::USABILITY_UNKNOWN,
-                    'opened_at' => now(),
-                    'contacted_at' =>
-                        $status === ProductCase::STATUS_CLOSED
-                            ? now()
-                            : null,
-                    'resolved_at' =>
-                        $status === ProductCase::STATUS_CLOSED
-                            ? now()
-                            : null,
-                    'closed_at' => $closedAt,
-                    'cancelled_at' =>
-                        $status === ProductCase::STATUS_CANCELLED
-                            ? now()
-                            : null,
-                    'outcome' => $outcome,
-                    'resolution_notes' =>
-                        $outcome !== null
-                            ? 'Esito di prova.'
-                            : null,
-                ]);
-
-                $createdCaseIds[] = (int) $productCase->id;
-
-                return $productCase;
+            ) use ($product, $user): ProductCase {
+                return ProductCase::unguarded(
+                    fn (): ProductCase => ProductCase::query()->create([
+                        'team_id' => $teamId,
+                        'product_id' => $product->id,
+                        'opened_by_user_id' => $user->id,
+                        'status' => $status,
+                        'title' => $title,
+                        'original_description' =>
+                            'Fixture dashboard risultati.',
+                        'description' =>
+                            'Fixture dashboard risultati.',
+                        'usability_status' =>
+                            ProductCase::USABILITY_UNKNOWN,
+                        'opened_at' => now(),
+                        'contacted_at' =>
+                            $status === ProductCase::STATUS_CLOSED
+                                ? now()
+                                : null,
+                        'resolved_at' =>
+                            $status === ProductCase::STATUS_CLOSED
+                                ? now()
+                                : null,
+                        'closed_at' => $closedAt,
+                        'cancelled_at' =>
+                            $status === ProductCase::STATUS_CANCELLED
+                                ? now()
+                                : null,
+                        'outcome' => $outcome,
+                        'resolution_notes' =>
+                            $outcome !== null
+                                ? 'Esito di prova.'
+                                : null,
+                    ])
+                );
             };
 
             $repairedCase = $createCase(
@@ -242,7 +239,8 @@ final class TestDashboardProductCaseResultsCommand extends Command
                 $component->refundedCount
             );
 
-            $listedIds = collect($component->recentResults)
+            $listedResults = collect($component->recentResults);
+            $listedIds = $listedResults
                 ->pluck('id')
                 ->map(fn (mixed $id): int => (int) $id)
                 ->all();
@@ -273,7 +271,7 @@ final class TestDashboardProductCaseResultsCommand extends Command
                 in_array((int) $otherTeamCase->id, $listedIds, true)
             );
 
-            $labelsById = collect($component->recentResults)
+            $labelsById = $listedResults
                 ->keyBy('id')
                 ->map(fn (array $item): string => $item['outcome_label'])
                 ->all();
@@ -367,15 +365,6 @@ final class TestDashboardProductCaseResultsCommand extends Command
             $teamsBefore,
             DB::table('teams')->count()
         );
-
-        foreach ($createdCaseIds as $createdCaseId) {
-            $assertSame(
-                'rollback',
-                'temporary case ' . $createdCaseId . ' removed',
-                false,
-                ProductCase::query()->whereKey($createdCaseId)->exists()
-            );
-        }
 
         $this->table(['Scenario', 'Assertion', 'Status'], $rows);
 

@@ -1,7 +1,3 @@
-@php
-    $scope = $scope ?? $this->scope;
-@endphp
-
 <div class="py-8">
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -80,7 +76,7 @@
                 <div class="space-y-4">
                     @foreach ($productCases as $productCase)
                         @php
-                            $outcomeLabel = $this->outcomeLabel(
+                            $outcomeLabel = $presenter->outcomeLabel(
                                 $productCase->outcome
                             );
                         @endphp
@@ -96,8 +92,8 @@
                                             {{ $productCase->title }}
                                         </h2>
 
-                                        <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $this->statusBadgeClasses($productCase->status) }}">
-                                            {{ $this->statusLabel($productCase->status) }}
+                                        <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset {{ $presenter->statusBadgeClasses($productCase->status) }}">
+                                            {{ $presenter->statusLabel($productCase->status) }}
                                         </span>
 
                                         @if ($outcomeLabel)
@@ -138,7 +134,7 @@
                                     href="{{ route('product-cases.show', $productCase) }}"
                                     class="inline-flex shrink-0 items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700"
                                 >
-                                    {{ $this->actionLabel($productCase->status) }}
+                                    {{ $presenter->actionLabel($productCase->status) }}
                                 </a>
                             </div>
                         </article>

@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\ProductVault;
 
+use App\Services\Release\MigrationReadinessProbe;
 use App\Services\Release\ReleaseReadinessInspector;
 use Illuminate\Console\Command;
 
@@ -16,11 +17,25 @@ final class ReleaseReadinessCommand extends Command
         'Verifica configurazione, storage, code, strumenti, sicurezza, dati e monetizzazione prima del rilascio.';
 
     public function handle(
-        ReleaseReadinessInspector $inspector
+        ReleaseReadinessInspector $inspector,
+        MigrationReadinessProbe $migrationProbe
     ): int {
         $production = (bool) $this->option('production')
             || app()->environment('production');
         $report = $inspector->inspect($production);
+        $report['checks'][] = $migrationProbe->inspect();
+
+        $counts = collect($report['checks'])
+            ->countBy('status')
+            ->all();
+        $report['counts'] = [
+            'pass' => (int) ($counts['pass'] ?? 0),
+            'warning' => (int) ($counts['warning'] ?? 0),
+            'fail' => (int) ($counts['fail'] ?? 0),
+        ];
+        $report['status'] = $report['counts']['fail'] > 0
+            ? 'fail'
+            : ($report['counts']['warning'] > 0 ? 'warning' : 'pass');
 
         if ((bool) $this->option('json')) {
             $this->line((string) json_encode(

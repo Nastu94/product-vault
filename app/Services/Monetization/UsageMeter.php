@@ -172,7 +172,7 @@ final class UsageMeter
             ],
             MonetizationKeys::EVENT_STORAGE_BYTES_ADDED => [
                 'counter_key' => 'storage_bytes_added',
-                'limit_key' => MonetizationKeys::LIMIT_MAX_STORAGE_MB,
+                'limit_key' => null,
                 'period' => 'none',
             ],
             MonetizationKeys::EVENT_PRODUCT_CREATED => [

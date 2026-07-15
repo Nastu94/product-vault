@@ -71,6 +71,7 @@ return [
         'product-vault:test-monetization-overview-ui',
         'product-vault:test-release-readiness',
         'product-vault:test-release-legal-ui',
+        'product-vault:test-release-failure-safety',
     ],
 
     'legal' => [

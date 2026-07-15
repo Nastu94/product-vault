@@ -53,6 +53,20 @@
 
             {{ $slot }}
         </main>
+
+        <footer class="border-t border-slate-200 bg-white">
+            <div class="mx-auto flex max-w-7xl flex-col gap-3 px-6 py-5 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+                <p>
+                    Product Vault organizza dati e stime: verifica sempre il documento originale.
+                </p>
+
+                <div class="flex flex-wrap gap-4 font-medium">
+                    <a href="{{ route('legal.privacy') }}" class="hover:text-slate-900">Privacy</a>
+                    <a href="{{ route('legal.terms') }}" class="hover:text-slate-900">Termini</a>
+                    <a href="{{ route('legal.document-processing') }}" class="hover:text-slate-900">Trattamento documenti</a>
+                </div>
+            </div>
+        </footer>
     </div>
 
     @stack('modals')

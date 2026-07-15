@@ -13,10 +13,18 @@ use App\Livewire\Products\ProductIndex;
 use App\Livewire\Products\ProductShow;
 use App\Livewire\Reviews\ReviewIndex;
 use App\Livewire\Warranties\WarrantyIndex;
+use App\Services\Monetization\PlanCatalogResolver;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', function () {
-    return view('welcome');
+Route::get('/', function (PlanCatalogResolver $catalogResolver) {
+    $offers = config('monetization.one_time_offers', []);
+
+    return view('welcome', [
+        'planCatalog' => $catalogResolver->resolve(),
+        'oneTimeOffers' => is_array($offers)
+            ? array_values($offers)
+            : [],
+    ]);
 })->name('welcome');
 
 Route::middleware([

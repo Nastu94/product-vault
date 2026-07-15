@@ -3,28 +3,18 @@
 ])
 
 @php
-    /*
-    |--------------------------------------------------------------------------
-    | Link di navigazione della welcome page
-    |--------------------------------------------------------------------------
-    |
-    | Desktop: link orizzontali nella navbar.
-    | Mobile: link verticali dentro il menu hamburger.
-    |
-    */
-
     $links = [
         [
             'label' => 'Come funziona',
             'href' => '#come-funziona',
         ],
         [
-            'label' => 'Documenti',
-            'href' => '#documenti',
-        ],
-        [
             'label' => 'Benefici',
             'href' => '#benefici',
+        ],
+        [
+            'label' => 'Piani',
+            'href' => '#piani',
         ],
         [
             'label' => 'Sicurezza',

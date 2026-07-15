@@ -4,12 +4,15 @@ namespace App\Console\Commands\ProductVault;
 
 use App\Livewire\Account\PlanOverview;
 use App\Models\Plan;
+use App\Models\PlanLimit;
 use App\Models\Team;
 use App\Models\User;
+use App\Services\Monetization\MonetizationNoticeResolver;
 use App\Services\Monetization\MonetizationValueMetricsResolver;
 use App\Services\Monetization\PlanCatalogResolver;
 use App\Services\Monetization\PlanEntitlementResolver;
 use App\Services\Monetization\UsageSnapshotResolver;
+use App\Support\Monetization\MonetizationKeys;
 use Database\Seeders\PlanSeeder;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Auth;
@@ -31,7 +34,8 @@ final class TestMonetizationOverviewUiCommand extends Command
         PlanEntitlementResolver $entitlementResolver,
         UsageSnapshotResolver $snapshotResolver,
         MonetizationValueMetricsResolver $metricsResolver,
-        PlanCatalogResolver $catalogResolver
+        PlanCatalogResolver $catalogResolver,
+        MonetizationNoticeResolver $noticeResolver
     ): int {
         $rows = [];
         $failures = [];
@@ -85,12 +89,30 @@ final class TestMonetizationOverviewUiCommand extends Command
             $user->refresh();
             Auth::login($user);
 
+            $baseline = $snapshotResolver->resolve($team);
+            $documentsUsed = (int) data_get(
+                $baseline,
+                'resources.'
+                . MonetizationKeys::LIMIT_MAX_DOCUMENTS
+                . '.used',
+                0
+            );
+
+            PlanLimit::query()
+                ->where('plan_id', $freePlan->id)
+                ->where(
+                    'limit_key',
+                    MonetizationKeys::LIMIT_MAX_DOCUMENTS
+                )
+                ->update(['limit_value' => $documentsUsed]);
+
             $component = app(PlanOverview::class);
             $component->mount(
                 entitlementResolver: $entitlementResolver,
                 usageSnapshotResolver: $snapshotResolver,
                 valueMetricsResolver: $metricsResolver,
                 catalogResolver: $catalogResolver,
+                noticeResolver: $noticeResolver,
             );
 
             $assertSame(
@@ -117,6 +139,12 @@ final class TestMonetizationOverviewUiCommand extends Command
                 4,
                 count($component->oneTimeOffers)
             );
+            $assertSame(
+                'component',
+                'plan notice resolved',
+                true,
+                array_key_exists('has_alerts', $component->notice)
+            );
 
             $html = $component
                 ->render()
@@ -124,6 +152,7 @@ final class TestMonetizationOverviewUiCommand extends Command
                     'entitlements' => $component->entitlements,
                     'usageSnapshot' => $component->usageSnapshot,
                     'valueMetrics' => $component->valueMetrics,
+                    'notice' => $component->notice,
                     'catalog' => $component->catalog,
                     'oneTimeOffers' => $component->oneTimeOffers,
                     'workspaceName' => $component->workspaceName,
@@ -164,6 +193,13 @@ final class TestMonetizationOverviewUiCommand extends Command
                 str_contains($html, 'data-testid="one-time-offers"')
                     && str_contains($html, 'Fascicolo assistenza')
                     && str_contains($html, 'Prezzo da definire')
+            );
+            $assertSame(
+                'html',
+                'exhausted capacity rendered',
+                true,
+                str_contains($html, 'data-testid="plan-overview-alerts"')
+                    && str_contains($html, 'Esaurito')
             );
 
             $assertSame(

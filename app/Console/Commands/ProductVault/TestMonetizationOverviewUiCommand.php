@@ -90,21 +90,21 @@ final class TestMonetizationOverviewUiCommand extends Command
             Auth::login($user);
 
             $baseline = $snapshotResolver->resolve($team);
-            $membersUsed = (int) data_get(
+            $documentsUsed = (int) data_get(
                 $baseline,
                 'resources.'
-                . MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
+                . MonetizationKeys::LIMIT_MAX_DOCUMENTS
                 . '.used',
-                1
+                0
             );
 
             PlanLimit::query()
                 ->where('plan_id', $freePlan->id)
                 ->where(
                     'limit_key',
-                    MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
+                    MonetizationKeys::LIMIT_MAX_DOCUMENTS
                 )
-                ->update(['limit_value' => $membersUsed]);
+                ->update(['limit_value' => $documentsUsed]);
 
             $component = app(PlanOverview::class);
             $component->mount(

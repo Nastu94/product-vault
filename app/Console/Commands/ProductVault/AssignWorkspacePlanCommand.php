@@ -91,7 +91,7 @@ final class AssignWorkspacePlanCommand extends Command
 
         if (! $this->option('apply')) {
             $this->warn(
-                'Anteprima בלבד: nessuna modifica applicata. Usa --apply per confermare.'
+                'Solo anteprima: nessuna modifica applicata. Usa --apply per confermare.'
             );
 
             return self::SUCCESS;

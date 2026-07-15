@@ -90,6 +90,32 @@ final class TestWelcomeMonetizationCommand extends Command
             );
             $assertSame(
                 'welcome source',
+                'plan code label removed',
+                false,
+                str_contains(
+                    $welcome,
+                    "{{ \$plan['code'] ?? 'piano' }}"
+                )
+            );
+            $assertSame(
+                'welcome source',
+                'recommended badge aligned with title',
+                true,
+                str_contains(
+                    $welcome,
+                    'class="flex items-start justify-between gap-3"'
+                )
+                    && str_contains(
+                        $welcome,
+                        'class="shrink-0 rounded-full bg-slate-900'
+                    )
+                    && ! str_contains(
+                        $welcome,
+                        'class="absolute right-5 top-5'
+                    )
+            );
+            $assertSame(
+                'welcome source',
                 'checkout inactivity explained',
                 true,
                 str_contains(

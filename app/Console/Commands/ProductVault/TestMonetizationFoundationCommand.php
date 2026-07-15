@@ -77,36 +77,45 @@ final class TestMonetizationFoundationCommand extends Command
                 $codes
             );
 
+            $expectedLimitKeys = collect(
+                MonetizationKeys::limitKeys()
+            )->sort()->values()->all();
+
+            $expectedFeatureKeys = collect(
+                MonetizationKeys::featureKeys()
+            )->sort()->values()->all();
+
             foreach ($codes as $code) {
                 $plan = Plan::query()
                     ->with(['limits', 'features'])
                     ->where('code', $code)
                     ->firstOrFail();
 
+                $actualLimitKeys = $plan->limits
+                    ->where('is_active', true)
+                    ->pluck('limit_key')
+                    ->sort()
+                    ->values()
+                    ->all();
+
+                $actualFeatureKeys = $plan->features
+                    ->pluck('feature_key')
+                    ->sort()
+                    ->values()
+                    ->all();
+
                 $assertSame(
                     'limits',
                     $code . ' has complete limit contract',
-                    MonetizationKeys::limitKeys(),
-                    $plan->limits
-                        ->where('is_active', true)
-                        ->pluck('limit_key')
-                        ->sort()
-                        ->values()
-                        ->all() === collect(
-                            MonetizationKeys::limitKeys()
-                        )->sort()->values()->all()
-                            ? MonetizationKeys::limitKeys()
-                            : $plan->limits
-                                ->where('is_active', true)
-                                ->pluck('limit_key')
-                                ->all()
+                    $expectedLimitKeys,
+                    $actualLimitKeys
                 );
 
                 $assertSame(
                     'features',
                     $code . ' has complete feature contract',
-                    count(MonetizationKeys::featureKeys()),
-                    $plan->features->count()
+                    $expectedFeatureKeys,
+                    $actualFeatureKeys
                 );
             }
 

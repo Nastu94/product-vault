@@ -124,6 +124,9 @@ final class TestReleaseLegalUiCommand extends Command
             $navigation = File::get(
                 resource_path('views/navigation-menu.blade.php')
             );
+            $welcome = File::get(
+                resource_path('views/welcome.blade.php')
+            );
 
             $assertSame(
                 'layout',
@@ -133,6 +136,17 @@ final class TestReleaseLegalUiCommand extends Command
                     && str_contains($layout, "route('legal.terms')")
                     && str_contains(
                         $layout,
+                        "route('legal.document-processing')"
+                    )
+            );
+            $assertSame(
+                'welcome',
+                'public legal footer links present',
+                true,
+                str_contains($welcome, "route('legal.privacy')")
+                    && str_contains($welcome, "route('legal.terms')")
+                    && str_contains(
+                        $welcome,
                         "route('legal.document-processing')"
                     )
             );

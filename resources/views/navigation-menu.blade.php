@@ -100,6 +100,10 @@
                                 Profilo
                             </x-dropdown-link>
 
+                            <x-dropdown-link href="{{ route('account.getting-started') }}">
+                                Guida iniziale
+                            </x-dropdown-link>
+
                             <x-dropdown-link href="{{ route('account.plan') }}">
                                 Piano e utilizzo
                             </x-dropdown-link>
@@ -249,6 +253,10 @@
             <div class="mt-3 space-y-1 px-4">
                 <x-responsive-nav-link href="{{ route('profile.show') }}" :active="request()->routeIs('profile.show')">
                     Profilo
+                </x-responsive-nav-link>
+
+                <x-responsive-nav-link href="{{ route('account.getting-started') }}" :active="request()->routeIs('account.getting-started')">
+                    Guida iniziale
                 </x-responsive-nav-link>
 
                 <x-responsive-nav-link href="{{ route('account.plan') }}" :active="request()->routeIs('account.plan')">

@@ -190,6 +190,7 @@ php artisan product-vault:audit-monetization
 php artisan product-vault:test-monetization-foundation
 php artisan product-vault:test-monetization-usage-guard
 php artisan product-vault:test-monetization-domain-metering
+php artisan product-vault:test-monetization-value-metrics
 php artisan product-vault:test-monetization-overview-ui
 ```
 

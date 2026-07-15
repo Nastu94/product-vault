@@ -127,6 +127,9 @@ final class TestReleaseLegalUiCommand extends Command
             $welcome = File::get(
                 resource_path('views/welcome.blade.php')
             );
+            $gettingStartedSource = File::get(
+                app_path('Livewire/Account/GettingStarted.php')
+            );
 
             $assertSame(
                 'layout',
@@ -157,6 +160,24 @@ final class TestReleaseLegalUiCommand extends Command
                 substr_count(
                     $navigation,
                     "route('account.getting-started')"
+                )
+            );
+            $assertSame(
+                'onboarding layout',
+                'application layout explicitly selected',
+                true,
+                str_contains(
+                    $gettingStartedSource,
+                    "->layout('layouts.app')"
+                )
+            );
+            $assertSame(
+                'onboarding layout',
+                'default missing layout not referenced',
+                false,
+                str_contains(
+                    $gettingStartedSource,
+                    'components.layouts.app'
                 )
             );
 

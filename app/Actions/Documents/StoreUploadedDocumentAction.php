@@ -176,6 +176,80 @@ class StoreUploadedDocumentAction
                 return $document->refresh();
             });
         } catch (Throwable $exception) {
+            $this->cleanupFailedPersistence(
+                document: $document,
+                storedMediaPath: $storedMediaPath,
+                originalException: $exception,
+            );
+
+            Log::error('Document upload persistence failed.', [
+                'team_id' => $teamId,
+                'user_id' => $user->id,
+                'original_filename' => $originalName,
+                'exception_class' => $exception::class,
+                'exception' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
+
+        try {
+            ProcessDocumentJob::dispatch($document->id);
+        } catch (Throwable $exception) {
+            try {
+                $document->update([
+                    'status' => 'failed',
+                    'text_extraction_status' => 'failed',
+                ]);
+
+                DocumentProcessingAttempt::query()->create([
+                    'document_id' => $document->id,
+                    'step' => 'dispatch',
+                    'status' => 'failed',
+                    'handler' => ProcessDocumentJob::class,
+                    'attempt_number' => 1,
+                    'error_message' => $exception->getMessage(),
+                    'exception_class' => $exception::class,
+                    'metadata' => [
+                        'queue_connection' => config('queue.default'),
+                        'original_filename' => $originalName,
+                    ],
+                    'started_at' => now(),
+                    'completed_at' => now(),
+                ]);
+            } catch (Throwable $recordingException) {
+                Log::critical(
+                    'Document dispatch failure could not be recorded.',
+                    [
+                        'document_id' => $document->id,
+                        'dispatch_exception' => $exception->getMessage(),
+                        'recording_exception_class' =>
+                            $recordingException::class,
+                        'recording_exception' =>
+                            $recordingException->getMessage(),
+                    ]
+                );
+            }
+
+            Log::error('Document processing dispatch failed.', [
+                'document_id' => $document->id,
+                'team_id' => $teamId,
+                'exception_class' => $exception::class,
+                'exception' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
+
+        return $document->refresh();
+    }
+
+    private function cleanupFailedPersistence(
+        ?Document $document,
+        ?string $storedMediaPath,
+        Throwable $originalException
+    ): void {
+        try {
             if (
                 is_string($storedMediaPath)
                 && $storedMediaPath !== ''
@@ -198,52 +272,17 @@ class StoreUploadedDocumentAction
                         $storedDocument->forceDelete();
                     });
             }
-
-            Log::error('Document upload persistence failed.', [
-                'team_id' => $teamId,
-                'user_id' => $user->id,
-                'original_filename' => $originalName,
-                'exception_class' => $exception::class,
-                'exception' => $exception->getMessage(),
+        } catch (Throwable $cleanupException) {
+            Log::critical('Document upload cleanup failed.', [
+                'document_id' => $document?->getKey(),
+                'stored_media_path' => $storedMediaPath,
+                'original_exception_class' =>
+                    $originalException::class,
+                'original_exception' =>
+                    $originalException->getMessage(),
+                'cleanup_exception_class' => $cleanupException::class,
+                'cleanup_exception' => $cleanupException->getMessage(),
             ]);
-
-            throw $exception;
         }
-
-        try {
-            ProcessDocumentJob::dispatch($document->id);
-        } catch (Throwable $exception) {
-            $document->update([
-                'status' => 'failed',
-                'text_extraction_status' => 'failed',
-            ]);
-
-            DocumentProcessingAttempt::query()->create([
-                'document_id' => $document->id,
-                'step' => 'dispatch',
-                'status' => 'failed',
-                'handler' => ProcessDocumentJob::class,
-                'attempt_number' => 1,
-                'error_message' => $exception->getMessage(),
-                'exception_class' => $exception::class,
-                'metadata' => [
-                    'queue_connection' => config('queue.default'),
-                    'original_filename' => $originalName,
-                ],
-                'started_at' => now(),
-                'completed_at' => now(),
-            ]);
-
-            Log::error('Document processing dispatch failed.', [
-                'document_id' => $document->id,
-                'team_id' => $teamId,
-                'exception_class' => $exception::class,
-                'exception' => $exception->getMessage(),
-            ]);
-
-            throw $exception;
-        }
-
-        return $document->refresh();
     }
 }

@@ -7,6 +7,7 @@ use App\Models\Document;
 use App\Models\Team;
 use App\Services\Monetization\PlanLimitDecisionService;
 use App\Services\Monetization\UsageMeter;
+use App\Services\Monetization\UsageSnapshotResolver;
 use App\Support\Monetization\MonetizationKeys;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
@@ -17,6 +18,7 @@ class StoreUploadedDocumentAction
 {
     public function __construct(
         private readonly PlanLimitDecisionService $limitDecisionService,
+        private readonly UsageSnapshotResolver $usageSnapshotResolver,
         private readonly UsageMeter $usageMeter
     ) {
     }
@@ -31,9 +33,27 @@ class StoreUploadedDocumentAction
 
         $team = Team::query()->findOrFail($teamId);
         $fileSize = max(0, (int) $file->getSize());
-        $storageMbIncrement = $fileSize > 0
-            ? (int) ceil($fileSize / 1024 / 1024)
+        $snapshot = $this->usageSnapshotResolver->resolve($team);
+        $currentStorageBytes = (int) data_get(
+            $snapshot,
+            'raw.storage_bytes',
+            0
+        );
+        $currentStorageMb = (int) data_get(
+            $snapshot,
+            'resources.'
+            . MonetizationKeys::LIMIT_MAX_STORAGE_MB
+            . '.used',
+            0
+        );
+        $projectedStorageBytes = $currentStorageBytes + $fileSize;
+        $projectedStorageMb = $projectedStorageBytes > 0
+            ? (int) ceil($projectedStorageBytes / 1024 / 1024)
             : 0;
+        $storageMbIncrement = max(
+            0,
+            $projectedStorageMb - $currentStorageMb
+        );
 
         $this->limitDecisionService->ensureCanConsume(
             $team,
@@ -119,6 +139,7 @@ class StoreUploadedDocumentAction
                 subject: $document,
                 metadata: [
                     'storage_disk' => 'local',
+                    'projected_storage_mb' => $projectedStorageMb,
                 ],
             );
         }

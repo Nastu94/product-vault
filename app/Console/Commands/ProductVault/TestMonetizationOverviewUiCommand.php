@@ -4,6 +4,7 @@ namespace App\Console\Commands\ProductVault;
 
 use App\Livewire\Account\PlanOverview;
 use App\Models\Plan;
+use App\Models\PlanLimit;
 use App\Models\Team;
 use App\Models\User;
 use App\Services\Monetization\MonetizationNoticeResolver;
@@ -11,6 +12,7 @@ use App\Services\Monetization\MonetizationValueMetricsResolver;
 use App\Services\Monetization\PlanCatalogResolver;
 use App\Services\Monetization\PlanEntitlementResolver;
 use App\Services\Monetization\UsageSnapshotResolver;
+use App\Support\Monetization\MonetizationKeys;
 use Database\Seeders\PlanSeeder;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Auth;
@@ -86,6 +88,23 @@ final class TestMonetizationOverviewUiCommand extends Command
             $user->forceFill(['current_team_id' => $team->id])->save();
             $user->refresh();
             Auth::login($user);
+
+            $baseline = $snapshotResolver->resolve($team);
+            $membersUsed = (int) data_get(
+                $baseline,
+                'resources.'
+                . MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
+                . '.used',
+                1
+            );
+
+            PlanLimit::query()
+                ->where('plan_id', $freePlan->id)
+                ->where(
+                    'limit_key',
+                    MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
+                )
+                ->update(['limit_value' => $membersUsed]);
 
             $component = app(PlanOverview::class);
             $component->mount(
@@ -177,9 +196,10 @@ final class TestMonetizationOverviewUiCommand extends Command
             );
             $assertSame(
                 'html',
-                'exhausted capacity language available',
+                'exhausted capacity rendered',
                 true,
-                str_contains($html, 'Esaurito')
+                str_contains($html, 'data-testid="plan-overview-alerts"')
+                    && str_contains($html, 'Esaurito')
             );
 
             $assertSame(

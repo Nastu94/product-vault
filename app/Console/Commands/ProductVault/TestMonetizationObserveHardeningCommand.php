@@ -98,6 +98,13 @@ final class TestMonetizationObserveHardeningCommand extends Command
             Auth::login($user);
 
             $snapshot = $snapshotResolver->resolve($team);
+            $documentsUsed = (int) data_get(
+                $snapshot,
+                'resources.'
+                . MonetizationKeys::LIMIT_MAX_DOCUMENTS
+                . '.used',
+                0
+            );
             $membersUsed = (int) data_get(
                 $snapshot,
                 'resources.'
@@ -110,9 +117,9 @@ final class TestMonetizationObserveHardeningCommand extends Command
                 ->where('plan_id', $freePlan->id)
                 ->where(
                     'limit_key',
-                    MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
+                    MonetizationKeys::LIMIT_MAX_DOCUMENTS
                 )
-                ->update(['limit_value' => $membersUsed]);
+                ->update(['limit_value' => $documentsUsed]);
 
             $exhaustedNotice = $noticeResolver->resolve($team);
 
@@ -123,7 +130,7 @@ final class TestMonetizationObserveHardeningCommand extends Command
                 collect(data_get($exhaustedNotice, 'items', []))
                     ->contains(
                         fn (array $item): bool =>
-                            $item['key'] === MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
+                            $item['key'] === MonetizationKeys::LIMIT_MAX_DOCUMENTS
                             && $item['status'] === 'exhausted'
                     )
             );
@@ -174,6 +181,14 @@ final class TestMonetizationObserveHardeningCommand extends Command
                 'danger',
                 data_get($exceededNotice, 'highest_severity')
             );
+
+            PlanLimit::query()
+                ->where('plan_id', $premiumPlan->id)
+                ->where(
+                    'limit_key',
+                    MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
+                )
+                ->update(['limit_value' => $membersUsed]);
 
             $premiumPreview = $assignmentService->preview(
                 $team,

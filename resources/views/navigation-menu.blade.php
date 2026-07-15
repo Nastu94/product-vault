@@ -1,9 +1,7 @@
 <nav x-data="{ open: false }" class="sticky top-0 z-50 border-b border-slate-200 bg-white/90 backdrop-blur-xl">
-    {{-- Primary Navigation Menu --}}
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div class="flex h-16 justify-between">
             <div class="flex">
-                {{-- Logo --}}
                 <div class="flex shrink-0 items-center">
                     <a href="{{ route('dashboard') }}" class="flex items-center gap-3">
                         <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-sm font-bold text-white">
@@ -21,7 +19,6 @@
                     </a>
                 </div>
 
-                {{-- Desktop Navigation Links --}}
                 <div class="hidden space-x-7 sm:-my-px sm:ms-10 sm:flex">
                     <x-nav-link href="{{ route('dashboard') }}" :active="request()->routeIs('dashboard')">
                         Dashboard
@@ -50,7 +47,6 @@
             </div>
 
             <div class="hidden sm:flex sm:items-center sm:gap-4 sm:ms-6">
-                {{-- Account attivo --}}
                 <div class="hidden rounded-2xl bg-slate-50 px-4 py-2 lg:block">
                     <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
                         Account attivo
@@ -61,7 +57,6 @@
                     </p>
                 </div>
 
-                {{-- Azione principale --}}
                 <a
                     href="{{ route('documents.upload') }}"
                     class="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700"
@@ -69,7 +64,6 @@
                     Carica documento
                 </a>
 
-                {{-- Settings Dropdown --}}
                 <div class="relative">
                     <x-dropdown align="right" width="60">
                         <x-slot name="trigger">
@@ -98,7 +92,6 @@
                         </x-slot>
 
                         <x-slot name="content">
-                            {{-- Account Management --}}
                             <div class="block px-4 py-2 text-xs text-slate-400">
                                 Account
                             </div>
@@ -107,13 +100,16 @@
                                 Profilo
                             </x-dropdown-link>
 
+                            <x-dropdown-link href="{{ route('account.plan') }}">
+                                Piano e utilizzo
+                            </x-dropdown-link>
+
                             @if (Laravel\Jetstream\Jetstream::hasApiFeatures())
                                 <x-dropdown-link href="{{ route('api-tokens.index') }}">
                                     API Token
                                 </x-dropdown-link>
                             @endif
 
-                            {{-- Team Management --}}
                             @if (Laravel\Jetstream\Jetstream::hasTeamFeatures())
                                 <div class="border-t border-slate-200"></div>
 
@@ -156,7 +152,6 @@
 
                             <div class="border-t border-slate-200"></div>
 
-                            {{-- Authentication --}}
                             <form method="POST" action="{{ route('logout') }}" x-data>
                                 @csrf
 
@@ -170,7 +165,6 @@
                 </div>
             </div>
 
-            {{-- Hamburger --}}
             <div class="-me-2 flex items-center sm:hidden">
                 <button
                     @click="open = ! open"
@@ -200,7 +194,6 @@
         </div>
     </div>
 
-    {{-- Responsive Navigation Menu --}}
     <div :class="{'block': open, 'hidden': ! open}" class="hidden border-t border-slate-200 bg-white sm:hidden">
         <div class="space-y-1 px-4 pb-3 pt-3">
             <x-responsive-nav-link href="{{ route('dashboard') }}" :active="request()->routeIs('dashboard')">
@@ -232,7 +225,6 @@
             </x-responsive-nav-link>
         </div>
 
-        {{-- Responsive Settings Options --}}
         <div class="border-t border-slate-200 pb-1 pt-4">
             <div class="px-4">
                 <div class="text-base font-medium text-slate-800">
@@ -259,13 +251,16 @@
                     Profilo
                 </x-responsive-nav-link>
 
+                <x-responsive-nav-link href="{{ route('account.plan') }}" :active="request()->routeIs('account.plan')">
+                    Piano e utilizzo
+                </x-responsive-nav-link>
+
                 @if (Laravel\Jetstream\Jetstream::hasApiFeatures())
                     <x-responsive-nav-link href="{{ route('api-tokens.index') }}" :active="request()->routeIs('api-tokens.index')">
                         API Token
                     </x-responsive-nav-link>
                 @endif
 
-                {{-- Team Management --}}
                 @if (Laravel\Jetstream\Jetstream::hasTeamFeatures())
                     <x-responsive-nav-link href="{{ route('teams.show', Auth::user()->currentTeam->id) }}" :active="request()->routeIs('teams.show')">
                         Impostazioni team

@@ -8,9 +8,6 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Plan extends Model
 {
-    /**
-     * Campi assegnabili in massa.
-     */
     protected $fillable = [
         'code',
         'name',
@@ -21,9 +18,6 @@ class Plan extends Model
         'sort_order',
     ];
 
-    /**
-     * Conversione automatica dei tipi dato.
-     */
     protected function casts(): array
     {
         return [
@@ -33,21 +27,23 @@ class Plan extends Model
         ];
     }
 
-    /**
-     * Valuta del prezzo del piano.
-     */
     public function currency(): BelongsTo
     {
         return $this->belongsTo(Currency::class);
     }
 
-    /**
-     * Limiti associati al piano.
-     *
-     * Il model PlanLimit verrà creato nel prossimo step.
-     */
     public function limits(): HasMany
     {
         return $this->hasMany(PlanLimit::class);
+    }
+
+    public function features(): HasMany
+    {
+        return $this->hasMany(PlanFeature::class);
+    }
+
+    public function teams(): HasMany
+    {
+        return $this->hasMany(Team::class);
     }
 }

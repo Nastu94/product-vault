@@ -4,6 +4,10 @@ namespace App\Actions\Documents;
 
 use App\Jobs\ProcessDocumentJob;
 use App\Models\Document;
+use App\Models\Team;
+use App\Services\Monetization\PlanLimitDecisionService;
+use App\Services\Monetization\UsageMeter;
+use App\Support\Monetization\MonetizationKeys;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
@@ -11,46 +15,52 @@ use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
 
 class StoreUploadedDocumentAction
 {
-    /**
-     * Salva il record Document e associa il file originale
-     * alla media collection original_file.
-     *
-     * In questo punto non facciamo ancora OCR, parsing o classificazione:
-     * salviamo solo la prova originale in modo privato e tracciabile.
-     */
-    public function handle(TemporaryUploadedFile|UploadedFile $file): Document
-    {
-        $user = Auth::user();
+    public function __construct(
+        private readonly PlanLimitDecisionService $limitDecisionService,
+        private readonly UsageMeter $usageMeter
+    ) {
+    }
 
+    public function handle(
+        TemporaryUploadedFile|UploadedFile $file
+    ): Document {
+        $user = Auth::user();
         $teamId = $user->current_team_id ?? $user->currentTeam?->id;
 
         abort_unless($user && $teamId, 403, 'Nessun workspace attivo.');
 
-        $document = new Document();
+        $team = Team::query()->findOrFail($teamId);
+        $fileSize = max(0, (int) $file->getSize());
+        $storageMbIncrement = $fileSize > 0
+            ? (int) ceil($fileSize / 1024 / 1024)
+            : 0;
 
+        $this->limitDecisionService->ensureCanConsume(
+            $team,
+            MonetizationKeys::LIMIT_MAX_DOCUMENTS,
+            1
+        );
+
+        if ($storageMbIncrement > 0) {
+            $this->limitDecisionService->ensureCanConsume(
+                $team,
+                MonetizationKeys::LIMIT_MAX_STORAGE_MB,
+                $storageMbIncrement
+            );
+        }
+
+        $document = new Document();
         $document->team_id = $teamId;
         $document->uploaded_by_user_id = $user->id;
         $document->status = 'uploaded';
         $document->source = 'manual_upload';
         $document->original_filename = $file->getClientOriginalName();
         $document->mime_type = $file->getMimeType();
-        $document->file_size = $file->getSize();
-
+        $document->file_size = $fileSize;
         $document->save();
 
-        /*
-        |--------------------------------------------------------------------------
-        | Nome file sicuro
-        |--------------------------------------------------------------------------
-        |
-        | Manteniamo il nome originale nei metadati del documento, ma salviamo
-        | fisicamente il file con un nome normalizzato per evitare caratteri strani,
-        | collisioni e problemi futuri su filesystem diversi.
-        |
-        */
         $originalName = $file->getClientOriginalName();
         $baseName = pathinfo($originalName, PATHINFO_FILENAME);
-
         $safeBaseName = Str::slug(Str::ascii($baseName));
 
         if ($safeBaseName === '') {
@@ -71,15 +81,6 @@ class StoreUploadedDocumentAction
             . '.'
             . $extension;
 
-        /*
-        |--------------------------------------------------------------------------
-        | Media Library
-        |--------------------------------------------------------------------------
-        |
-        | La collection original_file deve restare privata.
-        | Non usiamo cartelle pubbliche e non esponiamo direttamente il path.
-        |
-        */
         $document
             ->addMedia($file->getRealPath())
             ->usingName($originalName)
@@ -92,23 +93,42 @@ class StoreUploadedDocumentAction
             ])
             ->toMediaCollection('original_file', 'local');
 
-            $document = $document->refresh();
+        $document = $document->refresh();
 
-            /*
-            |--------------------------------------------------------------------------
-            | Processing asincrono
-            |--------------------------------------------------------------------------
-            |
-            | Segniamo subito l'estrazione come "in attesa", così la UI capisce che
-            | il processing è già stato accodato anche prima che il worker lo esegua.
-            |
-            */
-            $document->update([
-                'text_extraction_status' => 'pending',
-            ]);
+        $this->usageMeter->record(
+            team: $team,
+            eventKey: MonetizationKeys::EVENT_DOCUMENT_UPLOADED,
+            quantity: 1,
+            idempotencyKey: 'document:' . $document->id . ':uploaded',
+            userId: (int) $user->id,
+            subject: $document,
+            metadata: [
+                'original_filename' => $originalName,
+                'mime_type' => $document->mime_type,
+                'file_size' => $fileSize,
+            ],
+        );
 
-            ProcessDocumentJob::dispatch($document->id);
+        if ($fileSize > 0) {
+            $this->usageMeter->record(
+                team: $team,
+                eventKey: MonetizationKeys::EVENT_STORAGE_BYTES_ADDED,
+                quantity: $fileSize,
+                idempotencyKey: 'document:' . $document->id . ':storage',
+                userId: (int) $user->id,
+                subject: $document,
+                metadata: [
+                    'storage_disk' => 'local',
+                ],
+            );
+        }
 
-            return $document->refresh();
+        $document->update([
+            'text_extraction_status' => 'pending',
+        ]);
+
+        ProcessDocumentJob::dispatch($document->id);
+
+        return $document->refresh();
     }
 }

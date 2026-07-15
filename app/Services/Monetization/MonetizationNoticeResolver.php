@@ -3,11 +3,13 @@
 namespace App\Services\Monetization;
 
 use App\Models\Team;
+use App\Support\Monetization\MonetizationKeys;
 
 final class MonetizationNoticeResolver
 {
     public function __construct(
-        private readonly UsageSnapshotResolver $snapshotResolver
+        private readonly UsageSnapshotResolver $snapshotResolver,
+        private readonly PlanEntitlementResolver $entitlementResolver
     ) {
     }
 
@@ -17,10 +19,19 @@ final class MonetizationNoticeResolver
     public function resolve(Team $team): array
     {
         $snapshot = $this->snapshotResolver->resolve($team);
+        $entitlements = $this->entitlementResolver->resolve($team);
         $mode = (string) data_get(
             $snapshot,
             'enforcement_mode',
             'observe'
+        );
+
+        $sharedWorkspaceEnabled = (bool) data_get(
+            $entitlements,
+            'features.'
+            . MonetizationKeys::FEATURE_SHARED_WORKSPACE
+            . '.enabled',
+            false
         );
 
         $items = collect(data_get($snapshot, 'resources', []))
@@ -30,6 +41,12 @@ final class MonetizationNoticeResolver
                     ['warning', 'exhausted', 'exceeded'],
                     true
                 )
+            )
+            ->reject(
+                fn (array $resource, string $key): bool =>
+                    $key === MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
+                    && ($resource['status'] ?? null) === 'exhausted'
+                    && ! $sharedWorkspaceEnabled
             )
             ->map(function (array $resource, string $key): array {
                 $status = (string) ($resource['status'] ?? 'warning');

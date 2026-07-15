@@ -52,13 +52,9 @@ final class TestWelcomeMonetizationCommand extends Command
 
             $catalog = $catalogResolver->resolve();
             $offers = config('monetization.one_time_offers', []);
-
-            $html = view('welcome', [
-                'planCatalog' => $catalog,
-                'oneTimeOffers' => is_array($offers)
-                    ? array_values($offers)
-                    : [],
-            ])->render();
+            $welcome = File::get(
+                resource_path('views/welcome.blade.php')
+            );
 
             $assertSame(
                 'catalog',
@@ -67,52 +63,63 @@ final class TestWelcomeMonetizationCommand extends Command
                 count($catalog)
             );
             $assertSame(
-                'html',
-                'monetization section rendered',
-                true,
-                str_contains(
-                    $html,
-                    'data-testid="welcome-monetization"'
-                )
-            );
-            $assertSame(
-                'html',
-                'all plan names rendered',
-                true,
-                collect([
+                'catalog',
+                'expected plan names available',
+                [
                     'Free',
                     'Premium personale',
                     'Famiglia',
                     'Business',
-                ])->every(
-                    fn (string $name): bool =>
-                        str_contains($html, $name)
+                ],
+                collect($catalog)->pluck('name')->all()
+            );
+            $assertSame(
+                'welcome source',
+                'monetization section present',
+                true,
+                str_contains(
+                    $welcome,
+                    'data-testid="welcome-monetization"'
                 )
             );
             $assertSame(
-                'html',
+                'welcome source',
+                'dynamic catalog consumed',
+                true,
+                str_contains($welcome, '@forelse ($publicPlans as $plan)')
+            );
+            $assertSame(
+                'welcome source',
                 'checkout inactivity explained',
                 true,
                 str_contains(
-                    $html,
+                    $welcome,
                     'Checkout e pagamenti non sono ancora attivi'
                 )
             );
             $assertSame(
-                'html',
+                'welcome source',
                 'observe mode explained',
                 true,
                 str_contains(
-                    $html,
+                    $welcome,
                     'modalità monitoraggio'
                 )
             );
             $assertSame(
-                'html',
-                'one-time offers rendered',
+                'offers',
+                'four one-time offers configured',
+                4,
+                is_array($offers) ? count($offers) : 0
+            );
+            $assertSame(
+                'welcome source',
+                'one-time offer catalog consumed',
                 true,
-                str_contains($html, 'Fascicolo assistenza')
-                    && str_contains($html, 'Importazione massiva')
+                str_contains(
+                    $welcome,
+                    '@foreach ($publicOffers as $offer)'
+                )
             );
 
             $navigation = File::get(

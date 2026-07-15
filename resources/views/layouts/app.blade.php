@@ -43,6 +43,14 @@
                 @endif
             @endif
 
+            @if (! request()->routeIs('account.plan'))
+                @livewire(
+                    'account.plan-usage-notice',
+                    [],
+                    key('global-plan-usage-notice')
+                )
+            @endif
+
             {{ $slot }}
         </main>
     </div>

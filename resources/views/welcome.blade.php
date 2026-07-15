@@ -329,9 +329,17 @@
         </main>
 
         <footer class="border-t border-slate-200 bg-white">
-            <div class="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-6 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-                <p>© {{ date('Y') }} Product Vault. Tutti i diritti riservati.</p>
-                <p>MVP in validazione — piano Free attivo, catalogo premium senza pagamenti.</p>
+            <div class="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-6 text-sm text-slate-500 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <p>© {{ date('Y') }} Product Vault. Tutti i diritti riservati.</p>
+                    <p class="mt-1 text-xs">MVP in validazione — piano Free attivo, catalogo premium senza pagamenti.</p>
+                </div>
+
+                <div class="flex flex-wrap gap-x-5 gap-y-2 font-medium">
+                    <a href="{{ route('legal.privacy') }}" class="hover:text-slate-900">Privacy</a>
+                    <a href="{{ route('legal.terms') }}" class="hover:text-slate-900">Termini</a>
+                    <a href="{{ route('legal.document-processing') }}" class="hover:text-slate-900">Trattamento documenti</a>
+                </div>
             </div>
         </footer>
     </div>

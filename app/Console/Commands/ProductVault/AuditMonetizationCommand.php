@@ -62,14 +62,23 @@ final class AuditMonetizationCommand extends Command
                 ->values()
                 ->all();
 
-            $exceeded = collect(
+            $capacityAlerts = collect(
                 data_get($usage, 'resources', [])
             )
                 ->filter(
-                    fn (array $resource): bool =>
-                        ($resource['status'] ?? null) === 'exceeded'
+                    fn (array $resource): bool => in_array(
+                        $resource['status'] ?? null,
+                        ['exhausted', 'exceeded'],
+                        true
+                    )
                 )
-                ->keys()
+                ->map(
+                    fn (array $resource, string $key): string =>
+                        $key
+                        . (($resource['status'] ?? null) === 'exceeded'
+                            ? ' (superato)'
+                            : ' (esaurito)')
+                )
                 ->values()
                 ->all();
 
@@ -101,7 +110,9 @@ final class AuditMonetizationCommand extends Command
                 data_get($usage, 'raw.ocr_runs_this_month', 0),
                 data_get($usage, 'raw.open_product_cases_count', 0),
                 data_get($metrics, 'practices_concluded', 0),
-                $exceeded === [] ? 'OK' : implode(', ', $exceeded),
+                $capacityAlerts === []
+                    ? 'OK'
+                    : implode(', ', $capacityAlerts),
             ];
         }
 
@@ -115,7 +126,7 @@ final class AuditMonetizationCommand extends Command
             'OCR mese',
             'Pratiche aperte',
             'Pratiche concluse',
-            'Limiti superati',
+            'Capacità esaurite/superate',
         ], $rows);
 
         foreach ($anomalies as $anomaly) {

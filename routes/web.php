@@ -3,6 +3,7 @@
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Documents\DocumentFileDownloadController;
 use App\Http\Controllers\Documents\DocumentFilePreviewController;
+use App\Livewire\Account\GettingStarted;
 use App\Livewire\Account\PlanOverview;
 use App\Livewire\Documents\DocumentIndex;
 use App\Livewire\Documents\DocumentShow;
@@ -26,6 +27,13 @@ Route::get('/', function (PlanCatalogResolver $catalogResolver) {
             : [],
     ]);
 })->name('welcome');
+
+Route::view('/privacy', 'legal.privacy')
+    ->name('legal.privacy');
+Route::view('/terms', 'legal.terms')
+    ->name('legal.terms');
+Route::view('/document-processing', 'legal.document-processing')
+    ->name('legal.document-processing');
 
 Route::middleware([
     'auth:sanctum',
@@ -75,4 +83,6 @@ Route::middleware([
 
     Route::get('/account/plan', PlanOverview::class)
         ->name('account.plan');
+    Route::get('/account/getting-started', GettingStarted::class)
+        ->name('account.getting-started');
 });

@@ -4,6 +4,7 @@ namespace App\Livewire\Account;
 
 use App\Models\Team;
 use App\Models\User;
+use App\Services\Monetization\MonetizationNoticeResolver;
 use App\Services\Monetization\MonetizationValueMetricsResolver;
 use App\Services\Monetization\PlanCatalogResolver;
 use App\Services\Monetization\PlanEntitlementResolver;
@@ -24,6 +25,9 @@ final class PlanOverview extends Component
     /** @var array<string, mixed> */
     public array $valueMetrics = [];
 
+    /** @var array<string, mixed> */
+    public array $notice = [];
+
     /** @var list<array<string, mixed>> */
     public array $catalog = [];
 
@@ -36,7 +40,8 @@ final class PlanOverview extends Component
         PlanEntitlementResolver $entitlementResolver,
         UsageSnapshotResolver $usageSnapshotResolver,
         MonetizationValueMetricsResolver $valueMetricsResolver,
-        PlanCatalogResolver $catalogResolver
+        PlanCatalogResolver $catalogResolver,
+        MonetizationNoticeResolver $noticeResolver
     ): void {
         $user = Auth::user();
 
@@ -58,6 +63,7 @@ final class PlanOverview extends Component
         $this->entitlements = $entitlementResolver->resolve($team);
         $this->usageSnapshot = $usageSnapshotResolver->resolve($team);
         $this->valueMetrics = $valueMetricsResolver->resolve($team);
+        $this->notice = $noticeResolver->resolve($team);
         $this->catalog = $catalogResolver->resolve();
 
         $offers = config('monetization.one_time_offers', []);

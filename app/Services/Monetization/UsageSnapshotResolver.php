@@ -46,10 +46,18 @@ final class UsageSnapshotResolver
             ? 0
             : (int) ceil($storageBytes / 1024 / 1024);
 
-        $teamMembersCount = 1 + DB::table('team_user')
+        $teamMembersWithoutOwner = DB::table('team_user')
             ->where('team_id', $teamId)
             ->distinct()
             ->count('user_id');
+
+        $pendingInvitationsCount = DB::table('team_invitations')
+            ->where('team_id', $teamId)
+            ->count();
+
+        $teamMembersCount = 1
+            + $teamMembersWithoutOwner
+            + $pendingInvitationsCount;
 
         $openProductCasesCount = ProductCase::query()
             ->where('team_id', $teamId)
@@ -89,7 +97,8 @@ final class UsageSnapshotResolver
             MonetizationKeys::LIMIT_MAX_STORAGE_MB => 'Spazio archivio',
             MonetizationKeys::LIMIT_MAX_OCR_PER_MONTH => 'OCR mensili',
             MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS => 'Membri workspace',
-            MonetizationKeys::LIMIT_MAX_OPEN_PRODUCT_CASES => 'Pratiche aperte',
+            MonetizationKeys::LIMIT_MAX_OPEN_PRODUCT_CASES =>
+                'Pratiche aperte',
         ];
 
         $units = [
@@ -113,7 +122,10 @@ final class UsageSnapshotResolver
                 ? max(0, $limitValue - $used)
                 : null;
             $percentage = is_int($limitValue) && $limitValue > 0
-                ? min(999, (int) round(($used / $limitValue) * 100))
+                ? min(
+                    999,
+                    (int) round(($used / $limitValue) * 100)
+                )
                 : null;
 
             $warningThreshold = max(
@@ -130,8 +142,11 @@ final class UsageSnapshotResolver
             $status = match (true) {
                 ! $isConfigured => 'unconfigured',
                 $isUnlimited => 'unlimited',
-                is_int($limitValue) && $used >= $limitValue => 'exceeded',
-                is_int($percentage) && $percentage >= $warningThreshold => 'warning',
+                is_int($limitValue) && $used >= $limitValue =>
+                    'exceeded',
+                is_int($percentage)
+                    && $percentage >= $warningThreshold =>
+                    'warning',
                 default => 'available',
             };
 
@@ -146,9 +161,16 @@ final class UsageSnapshotResolver
                 'status' => $status,
                 'is_configured' => $isConfigured,
                 'is_unlimited' => $isUnlimited,
-                'reset_period' => data_get($limit, 'reset_period', 'none'),
+                'reset_period' => data_get(
+                    $limit,
+                    'reset_period',
+                    'none'
+                ),
                 'description' => data_get($limit, 'description'),
-                'plan_limit_id' => data_get($limit, 'plan_limit_id'),
+                'plan_limit_id' => data_get(
+                    $limit,
+                    'plan_limit_id'
+                ),
             ];
         }
 
@@ -162,10 +184,17 @@ final class UsageSnapshotResolver
                 'storage_bytes' => $storageBytes,
                 'storage_mb' => $storageMbPrecise,
                 'team_members_count' => $teamMembersCount,
-                'open_product_cases_count' => $openProductCasesCount,
+                'team_members_without_owner' =>
+                    $teamMembersWithoutOwner,
+                'pending_invitations_count' =>
+                    $pendingInvitationsCount,
+                'open_product_cases_count' =>
+                    $openProductCasesCount,
                 'ocr_runs_this_month' => $ocrRunsThisMonth,
-                'period_starts_at' => $periodStart->toDateString(),
-                'period_ends_at' => $periodEnd->toDateString(),
+                'period_starts_at' =>
+                    $periodStart->toDateString(),
+                'period_ends_at' =>
+                    $periodEnd->toDateString(),
             ],
             'enforcement_mode' => (string) config(
                 'monetization.enforcement_mode',

@@ -225,17 +225,17 @@
                                 $membersLimit = data_get($limits, 'max_team_members.value');
                             @endphp
 
-                            <article class="relative rounded-3xl border p-6 {{ $isRecommended ? 'border-slate-900 bg-slate-50 shadow-lg' : 'border-slate-200 bg-white shadow-sm' }}">
-                                @if ($isRecommended)
-                                    <span class="absolute right-5 top-5 rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white">
-                                        Evoluzione personale
-                                    </span>
-                                @endif
+                            <article class="rounded-3xl border p-6 {{ $isRecommended ? 'border-slate-900 bg-slate-50 shadow-lg' : 'border-slate-200 bg-white shadow-sm' }}">
+                                <div class="flex items-start justify-between gap-3">
+                                    <h3 class="text-xl font-bold text-slate-950">{{ $plan['name'] }}</h3>
 
-                                <p class="text-sm font-semibold uppercase tracking-wide text-slate-500">
-                                    {{ $plan['code'] ?? 'piano' }}
-                                </p>
-                                <h3 class="mt-2 text-xl font-bold text-slate-950">{{ $plan['name'] }}</h3>
+                                    @if ($isRecommended)
+                                        <span class="shrink-0 rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white">
+                                            Evoluzione personale
+                                        </span>
+                                    @endif
+                                </div>
+
                                 <p class="mt-2 text-sm font-semibold text-slate-700">{{ $plan['price_label'] }}</p>
                                 <p class="mt-4 text-sm leading-6 text-slate-600">{{ $plan['description'] }}</p>
 

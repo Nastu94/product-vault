@@ -111,6 +111,12 @@ final class TestMonetizationOverviewUiCommand extends Command
                 4,
                 count($component->catalog)
             );
+            $assertSame(
+                'component',
+                'four one-time offers exposed',
+                4,
+                count($component->oneTimeOffers)
+            );
 
             $html = $component
                 ->render()
@@ -119,6 +125,7 @@ final class TestMonetizationOverviewUiCommand extends Command
                     'usageSnapshot' => $component->usageSnapshot,
                     'valueMetrics' => $component->valueMetrics,
                     'catalog' => $component->catalog,
+                    'oneTimeOffers' => $component->oneTimeOffers,
                     'workspaceName' => $component->workspaceName,
                 ])
                 ->render();
@@ -149,6 +156,14 @@ final class TestMonetizationOverviewUiCommand extends Command
                     $html,
                     'Checkout e pagamenti non sono ancora attivi'
                 )
+            );
+            $assertSame(
+                'html',
+                'one-time offer catalog rendered',
+                true,
+                str_contains($html, 'data-testid="one-time-offers"')
+                    && str_contains($html, 'Fascicolo assistenza')
+                    && str_contains($html, 'Prezzo da definire')
             );
 
             $assertSame(

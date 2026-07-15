@@ -142,8 +142,10 @@ final class UsageSnapshotResolver
             $status = match (true) {
                 ! $isConfigured => 'unconfigured',
                 $isUnlimited => 'unlimited',
-                is_int($limitValue) && $used >= $limitValue =>
+                is_int($limitValue) && $used > $limitValue =>
                     'exceeded',
+                is_int($limitValue) && $used === $limitValue =>
+                    'exhausted',
                 is_int($percentage)
                     && $percentage >= $warningThreshold =>
                     'warning',

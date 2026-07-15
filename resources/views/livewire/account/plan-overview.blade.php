@@ -6,6 +6,7 @@
             $features = data_get($entitlements, 'features', []);
             $currentPlanCode = data_get($plan, 'code');
             $enforcementMode = data_get($usageSnapshot, 'enforcement_mode', 'observe');
+            $averageResolutionDays = data_get($valueMetrics, 'average_resolution_days');
         @endphp
 
         <section
@@ -27,7 +28,10 @@
                     </p>
 
                     <p class="mt-3 text-sm text-slate-500">
-                        Workspace: <span class="font-semibold text-slate-800">{{ $workspaceName }}</span>
+                        Workspace:
+                        <span class="font-semibold text-slate-800">
+                            {{ $workspaceName }}
+                        </span>
                     </p>
                 </div>
 
@@ -90,11 +94,19 @@
                                 </p>
 
                                 <p class="mt-2 text-2xl font-bold text-slate-950">
-                                    {{ $usedLabel }}@if($unit) <span class="text-sm font-semibold text-slate-500">{{ $unit }}</span>@endif
+                                    {{ $usedLabel }}
+                                    @if ($unit)
+                                        <span class="text-sm font-semibold text-slate-500">
+                                            {{ $unit }}
+                                        </span>
+                                    @endif
                                 </p>
 
                                 <p class="mt-1 text-xs text-slate-500">
-                                    Limite: {{ $limitLabel }}@if($unit && !($resource['is_unlimited'] ?? false)) {{ $unit }}@endif
+                                    Limite: {{ $limitLabel }}
+                                    @if ($unit && ! ($resource['is_unlimited'] ?? false))
+                                        {{ $unit }}
+                                    @endif
                                 </p>
                             </div>
 
@@ -118,7 +130,7 @@
                             </div>
                         @endif
 
-                        @if (!empty($resource['description']))
+                        @if (! empty($resource['description']))
                             <p class="mt-3 text-xs leading-5 text-slate-500">
                                 {{ $resource['description'] }}
                             </p>
@@ -141,23 +153,35 @@
                 <div class="mt-6 grid grid-cols-2 gap-3">
                     <div class="rounded-2xl bg-slate-50 p-4">
                         <p class="text-xs text-slate-500">Pratiche avviate</p>
-                        <p class="mt-2 text-2xl font-bold text-slate-950">{{ $valueMetrics['practices_started'] ?? 0 }}</p>
+                        <p class="mt-2 text-2xl font-bold text-slate-950">
+                            {{ data_get($valueMetrics, 'practices_started', 0) }}
+                        </p>
                     </div>
 
                     <div class="rounded-2xl bg-slate-50 p-4">
                         <p class="text-xs text-slate-500">Pratiche concluse</p>
-                        <p class="mt-2 text-2xl font-bold text-slate-950">{{ $valueMetrics['practices_concluded'] ?? 0 }}</p>
+                        <p class="mt-2 text-2xl font-bold text-slate-950">
+                            {{ data_get($valueMetrics, 'practices_concluded', 0) }}
+                        </p>
                     </div>
 
                     <div class="rounded-2xl bg-green-50 p-4 ring-1 ring-inset ring-green-200">
-                        <p class="text-xs text-green-700">Riparazioni, sostituzioni o rimborsi</p>
-                        <p class="mt-2 text-2xl font-bold text-slate-950">{{ $valueMetrics['successful_outcomes'] ?? 0 }}</p>
+                        <p class="text-xs text-green-700">
+                            Riparazioni, sostituzioni o rimborsi
+                        </p>
+                        <p class="mt-2 text-2xl font-bold text-slate-950">
+                            {{ data_get($valueMetrics, 'successful_outcomes', 0) }}
+                        </p>
                     </div>
 
                     <div class="rounded-2xl bg-slate-50 p-4">
-                        <p class="text-xs text-slate-500">Tempo medio di risoluzione</p>
+                        <p class="text-xs text-slate-500">
+                            Tempo medio di risoluzione
+                        </p>
                         <p class="mt-2 text-2xl font-bold text-slate-950">
-                            {{ $valueMetrics['average_resolution_days'] !== null ? $valueMetrics['average_resolution_days'] . ' gg' : '—' }}
+                            {{ $averageResolutionDays !== null
+                                ? $averageResolutionDays . ' gg'
+                                : '—' }}
                         </p>
                     </div>
                 </div>
@@ -179,14 +203,17 @@
                 <div class="mt-6 space-y-3">
                     @foreach ($features as $feature)
                         <div class="flex items-start justify-between gap-4 rounded-2xl bg-slate-50 p-4">
-                            <div>
-                                <p class="text-sm font-semibold text-slate-900">
-                                    {{ $feature['description'] ?? str_replace('_', ' ', $feature['key']) }}
-                                </p>
-                            </div>
+                            <p class="text-sm font-semibold text-slate-900">
+                                {{ $feature['description']
+                                    ?? str_replace('_', ' ', $feature['key']) }}
+                            </p>
 
-                            <span class="rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset {{ ($feature['enabled'] ?? false) ? 'bg-green-50 text-green-700 ring-green-600/20' : 'bg-slate-100 text-slate-500 ring-slate-500/20' }}">
-                                {{ ($feature['enabled'] ?? false) ? 'Inclusa' : 'Non inclusa' }}
+                            <span class="rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset {{ ($feature['enabled'] ?? false)
+                                ? 'bg-green-50 text-green-700 ring-green-600/20'
+                                : 'bg-slate-100 text-slate-500 ring-slate-500/20' }}">
+                                {{ ($feature['enabled'] ?? false)
+                                    ? 'Inclusa'
+                                    : 'Non inclusa' }}
                             </span>
                         </div>
                     @endforeach
@@ -209,7 +236,9 @@
 
             <div class="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 @foreach ($catalog as $catalogPlan)
-                    <article class="rounded-2xl border p-5 {{ $catalogPlan['code'] === $currentPlanCode ? 'border-slate-900 bg-slate-50' : 'border-slate-200 bg-white' }}">
+                    <article class="rounded-2xl border p-5 {{ $catalogPlan['code'] === $currentPlanCode
+                        ? 'border-slate-900 bg-slate-50'
+                        : 'border-slate-200 bg-white' }}">
                         <div class="flex items-start justify-between gap-3">
                             <h3 class="text-lg font-bold text-slate-950">
                                 {{ $catalogPlan['name'] }}
@@ -228,6 +257,48 @@
 
                         <p class="mt-3 text-xs leading-5 text-slate-500">
                             {{ $catalogPlan['description'] }}
+                        </p>
+                    </article>
+                @endforeach
+            </div>
+        </section>
+
+        <section
+            data-testid="one-time-offers"
+            class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+            <p class="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                Acquisti singoli
+            </p>
+
+            <h2 class="mt-2 text-xl font-bold text-slate-950">
+                Servizi operativi previsti
+            </h2>
+
+            <p class="mt-1 text-sm leading-6 text-slate-600">
+                Sono offerte indipendenti dall’abbonamento. Prezzi, checkout e concessione automatica non sono ancora attivi.
+            </p>
+
+            <div class="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                @foreach ($oneTimeOffers as $offer)
+                    <article class="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+                        <h3 class="text-base font-bold text-slate-950">
+                            {{ $offer['name'] ?? $offer['code'] }}
+                        </h3>
+
+                        <p class="mt-2 text-sm font-semibold text-slate-700">
+                            {{ is_int($offer['price_cents'] ?? null)
+                                ? number_format(
+                                    $offer['price_cents'] / 100,
+                                    2,
+                                    ',',
+                                    '.'
+                                ) . ' ' . ($offer['currency_code'] ?? 'EUR')
+                                : 'Prezzo da definire' }}
+                        </p>
+
+                        <p class="mt-3 text-xs leading-5 text-slate-500">
+                            {{ $offer['description'] ?? '' }}
                         </p>
                     </article>
                 @endforeach

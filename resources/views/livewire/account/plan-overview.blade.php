@@ -7,6 +7,13 @@
             $currentPlanCode = data_get($plan, 'code');
             $enforcementMode = data_get($usageSnapshot, 'enforcement_mode', 'observe');
             $averageResolutionDays = data_get($valueMetrics, 'average_resolution_days');
+            $noticeSeverity = data_get($notice, 'highest_severity');
+            $noticeItems = data_get($notice, 'items', []);
+            $noticePanelClasses = match ($noticeSeverity) {
+                'danger' => 'border-red-200 bg-red-50',
+                'critical' => 'border-orange-200 bg-orange-50',
+                default => 'border-yellow-200 bg-yellow-50',
+            };
         @endphp
 
         <section
@@ -54,6 +61,63 @@
                 </div>
             </div>
         </section>
+
+        @if (data_get($notice, 'has_alerts', false))
+            <section
+                data-testid="plan-overview-alerts"
+                class="rounded-3xl border p-6 shadow-sm {{ $noticePanelClasses }}"
+            >
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                        <p class="text-sm font-semibold uppercase tracking-wide text-slate-600">
+                            Stato capacità
+                        </p>
+
+                        <h2 class="mt-2 text-xl font-bold text-slate-950">
+                            {{ data_get($notice, 'title') }}
+                        </h2>
+
+                        <p class="mt-2 max-w-4xl text-sm leading-6 text-slate-700">
+                            {{ data_get($notice, 'message') }}
+                        </p>
+                    </div>
+
+                    <span class="inline-flex w-fit rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700 ring-1 ring-inset ring-slate-300">
+                        {{ count($noticeItems) }} {{ count($noticeItems) === 1 ? 'segnalazione' : 'segnalazioni' }}
+                    </span>
+                </div>
+
+                <div class="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    @foreach ($noticeItems as $item)
+                        <article class="rounded-2xl bg-white/80 p-4 ring-1 ring-inset ring-slate-200">
+                            <div class="flex items-start justify-between gap-3">
+                                <div>
+                                    <p class="text-sm font-semibold text-slate-950">
+                                        {{ $item['label'] }}
+                                    </p>
+
+                                    <p class="mt-1 text-xs leading-5 text-slate-600">
+                                        {{ $item['message'] }}
+                                    </p>
+                                </div>
+
+                                <span class="rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset {{ match ($item['status']) {
+                                    'exceeded' => 'bg-red-50 text-red-700 ring-red-600/20',
+                                    'exhausted' => 'bg-orange-50 text-orange-700 ring-orange-600/20',
+                                    default => 'bg-yellow-50 text-yellow-800 ring-yellow-600/20',
+                                } }}">
+                                    {{ match ($item['status']) {
+                                        'exceeded' => 'Superato',
+                                        'exhausted' => 'Esaurito',
+                                        default => 'Quasi esaurito',
+                                    } }}
+                                </span>
+                            </div>
+                        </article>
+                    @endforeach
+                </div>
+            </section>
+        @endif
 
         <section class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div>

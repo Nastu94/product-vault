@@ -27,6 +27,9 @@ final class PlanOverview extends Component
     /** @var list<array<string, mixed>> */
     public array $catalog = [];
 
+    /** @var list<array<string, mixed>> */
+    public array $oneTimeOffers = [];
+
     public string $workspaceName = '';
 
     public function mount(
@@ -56,6 +59,11 @@ final class PlanOverview extends Component
         $this->usageSnapshot = $usageSnapshotResolver->resolve($team);
         $this->valueMetrics = $valueMetricsResolver->resolve($team);
         $this->catalog = $catalogResolver->resolve();
+
+        $offers = config('monetization.one_time_offers', []);
+        $this->oneTimeOffers = is_array($offers)
+            ? array_values($offers)
+            : [];
     }
 
     public function render(): View

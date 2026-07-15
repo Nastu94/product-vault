@@ -4,6 +4,7 @@ namespace App\Console\Commands\ProductVault;
 
 use App\Models\Team;
 use App\Models\User;
+use App\Services\Release\MigrationReadinessProbe;
 use App\Services\Release\ReleaseReadinessInspector;
 use App\Services\Release\WorkspaceEnvironmentClassifier;
 use Illuminate\Console\Command;
@@ -22,7 +23,8 @@ final class TestReleaseReadinessCommand extends Command
 
     public function handle(
         ReleaseReadinessInspector $inspector,
-        WorkspaceEnvironmentClassifier $classifier
+        WorkspaceEnvironmentClassifier $classifier,
+        MigrationReadinessProbe $migrationProbe
     ): int {
         $rows = [];
         $failures = [];
@@ -132,6 +134,20 @@ final class TestReleaseReadinessCommand extends Command
                 'getting started route protected',
                 'pass',
                 data_get($gettingStartedCheck, 'status')
+            );
+
+            $migrationCheck = $migrationProbe->inspect();
+            $assertSame(
+                'database',
+                'migration probe exposed',
+                'pending_migrations',
+                $migrationCheck['key']
+            );
+            $assertSame(
+                'database',
+                'all migrations applied',
+                'pass',
+                $migrationCheck['status']
             );
 
             config([

@@ -130,6 +130,7 @@ final class GettingStarted extends Component
 
     public function render(): View
     {
-        return view('livewire.account.getting-started');
+        return view('livewire.account.getting-started')
+            ->layout('layouts.app');
     }
 }

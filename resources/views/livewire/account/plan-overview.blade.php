@@ -72,6 +72,7 @@
                         $status = $resource['status'] ?? 'available';
                         $statusClasses = match ($status) {
                             'exceeded' => 'bg-red-50 text-red-700 ring-red-600/20',
+                            'exhausted' => 'bg-orange-50 text-orange-700 ring-orange-600/20',
                             'warning' => 'bg-yellow-50 text-yellow-800 ring-yellow-600/20',
                             'unlimited' => 'bg-green-50 text-green-700 ring-green-600/20',
                             'unconfigured' => 'bg-slate-100 text-slate-600 ring-slate-500/20',
@@ -113,6 +114,7 @@
                             <span class="rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset {{ $statusClasses }}">
                                 {{ match ($status) {
                                     'exceeded' => 'Superato',
+                                    'exhausted' => 'Esaurito',
                                     'warning' => 'Quasi esaurito',
                                     'unlimited' => 'Illimitato',
                                     'unconfigured' => 'Da configurare',

@@ -98,21 +98,21 @@ final class TestMonetizationObserveHardeningCommand extends Command
             Auth::login($user);
 
             $snapshot = $snapshotResolver->resolve($team);
-            $documentsUsed = (int) data_get(
+            $membersUsed = (int) data_get(
                 $snapshot,
                 'resources.'
-                . MonetizationKeys::LIMIT_MAX_DOCUMENTS
+                . MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
                 . '.used',
-                0
+                1
             );
 
             PlanLimit::query()
                 ->where('plan_id', $freePlan->id)
                 ->where(
                     'limit_key',
-                    MonetizationKeys::LIMIT_MAX_DOCUMENTS
+                    MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
                 )
-                ->update(['limit_value' => $documentsUsed]);
+                ->update(['limit_value' => $membersUsed]);
 
             $exhaustedNotice = $noticeResolver->resolve($team);
 
@@ -123,7 +123,7 @@ final class TestMonetizationObserveHardeningCommand extends Command
                 collect(data_get($exhaustedNotice, 'items', []))
                     ->contains(
                         fn (array $item): bool =>
-                            $item['key'] === MonetizationKeys::LIMIT_MAX_DOCUMENTS
+                            $item['key'] === MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
                             && $item['status'] === 'exhausted'
                     )
             );
@@ -160,10 +160,10 @@ final class TestMonetizationObserveHardeningCommand extends Command
                 ->where('plan_id', $freePlan->id)
                 ->where(
                     'limit_key',
-                    MonetizationKeys::LIMIT_MAX_DOCUMENTS
+                    MonetizationKeys::LIMIT_MAX_TEAM_MEMBERS
                 )
                 ->update([
-                    'limit_value' => max(0, $documentsUsed - 1),
+                    'limit_value' => max(0, $membersUsed - 1),
                 ]);
 
             $exceededNotice = $noticeResolver->resolve($team);
@@ -187,6 +187,11 @@ final class TestMonetizationObserveHardeningCommand extends Command
                 $premiumPreview['can_assign_without_force']
             );
 
+            $planChangeAuditBefore = AuditLog::query()
+                ->where('team_id', $team->id)
+                ->where('action', 'workspace.plan_changed')
+                ->count();
+
             $assignmentService->assign(
                 team: $team,
                 targetPlan: $premiumPlan,
@@ -203,7 +208,7 @@ final class TestMonetizationObserveHardeningCommand extends Command
             $assertSame(
                 'assignment',
                 'plan change audited',
-                1,
+                $planChangeAuditBefore + 1,
                 AuditLog::query()
                     ->where('team_id', $team->id)
                     ->where('action', 'workspace.plan_changed')

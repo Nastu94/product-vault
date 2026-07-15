@@ -12,7 +12,14 @@ final class PlanEntitlementResolver
      */
     public function resolve(Team $team): array
     {
-        $team->loadMissing([
+        /*
+         * Ricarichiamo sempre il contratto del piano.
+         *
+         * Limiti e feature possono essere modificati da seed, backoffice o test
+         * nello stesso processo PHP. loadMissing() manterrebbe una relazione già
+         * caricata e potrebbe quindi restituire valori non più correnti.
+         */
+        $team->load([
             'plan.currency',
             'plan.limits',
             'plan.features',
